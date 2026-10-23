@@ -10,8 +10,6 @@ arch:
 # on the host's network namespace at the address the route points to.
 host_network: true
 init: false
-startup: application
-boot: auto
 options:
   listen_port: 8444
   state_port: 8124
