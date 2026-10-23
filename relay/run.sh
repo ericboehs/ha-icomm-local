@@ -26,6 +26,9 @@ if [ ! -f "$CERT_DIR/dhparams.pem" ] && [ -f ./dhparams-default.pem ]; then
   cp ./dhparams-default.pem "$CERT_DIR/dhparams.pem"
 fi
 export CERT_DIR
+# The write queue must outlive the container: /data is what survives a restart or an
+# add-on update. Keys and queue live side by side, and neither is in the image.
+export QUEUE_FILE="${QUEUE_FILE:-$DATA_DIR/pending.json}"
 
 # Add-on options arrive as JSON at /data/options.json; map to the relay's env.
 if [ -f "$DATA_DIR/options.json" ]; then

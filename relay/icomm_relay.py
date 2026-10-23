@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import logging
 import os
 import re
 import ssl
@@ -50,6 +52,8 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
+
+_LOGGER = logging.getLogger("icomm_relay")
 
 TEMP_F = 1.8 / 256.0
 
@@ -67,6 +71,7 @@ class PendingWrite:
     confirmed: float | None = None
     replaced_upstream: bool | None = None
     superseded: int | None = None
+    restored: bool = False
 
 # The register atlas, measured field by field. Offsets are into the five blocks
 # of the module's superBlockDyn1 telemetry (block lengths 8/146/230/52/52;
@@ -134,6 +139,11 @@ class Relay:
         self.pending: dict[str, PendingWrite] = {}
         self.last_write: dict | None = None
         self.writes_delivered = 0
+        self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
+        # A restored write older than this is dropped rather than delivered: an
+        # appliance that sat idle overnight should not surprise anyone at breakfast.
+        self.queue_max_age_s = int(os.environ.get("QUEUE_MAX_AGE_S", str(24 * 3600)))
+        self.queue_restored = 0
         # The local doorbell: answering once with 401 makes the module
         # re-register (measured), and a re-registration fetches the full
         # configuration -- which carries the setBlockParameter property a write
@@ -228,6 +238,62 @@ class Relay:
             self._confirm_pending()
         return await self.proxy(request)
 
+    # -- persistence ---------------------------------------------------
+    def _load_queue(self) -> None:
+        """Restore writes queued before a restart.
+
+        The queue used to live only in memory, so a restart silently dropped it --
+        demonstrated the hard way while waiting on an idle appliance. A write that
+        survived a restart is marked as such: an appliance can be idle for hours, so
+        a restored write is legitimate, but a human should be able to see that a
+        value came back from before the restart rather than from just now.
+        """
+        if not self.queue_file.exists():
+            return
+        try:
+            saved = json.loads(self.queue_file.read_text())
+        except (OSError, ValueError):
+            _LOGGER.warning("unreadable queue file %s; starting empty", self.queue_file)
+            return
+        now = time.time()
+        restored = 0
+        for kind, entry in (saved.get("pending") or {}).items():
+            queued = entry.get("queued") or now
+            if now - queued > self.queue_max_age_s:
+                # Older than the appliance could plausibly still care about. Dropping
+                # it beats surprising someone with a write from hours ago.
+                _LOGGER.warning("dropping expired %s write (%.0f s old)", kind, now - queued)
+                continue
+            write = PendingWrite(
+                kind=entry.get("kind", kind),
+                value=entry.get("value"),
+                frame=entry.get("frame", ""),
+                queued=queued,
+                attempts=entry.get("attempts", 0),
+                restored=True,
+            )
+            if write.frame:
+                self.pending[kind] = write
+                restored += 1
+        self.last_write = saved.get("last_write")
+        self.queue_restored = restored
+        if restored:
+            _LOGGER.info("restored %d queued write(s) from %s", restored, self.queue_file)
+
+    def _save_queue(self) -> None:
+        """Write the queue atomically: a half-written file must not look empty."""
+        payload = {
+            "pending": {kind: asdict(write) for kind, write in self.pending.items()},
+            "last_write": self.last_write,
+        }
+        try:
+            self.queue_file.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.queue_file.with_suffix(".tmp")
+            temporary.write_text(json.dumps(payload, indent=1))
+            temporary.replace(self.queue_file)      # atomic on the same filesystem
+        except OSError as err:
+            _LOGGER.warning("could not persist the write queue: %s", err)
+
     # -- the write path ------------------------------------------------
     def queue_write(self, kind: str, value) -> PendingWrite:
         """Accept a write, clamped to what the appliance itself allows.
@@ -256,6 +322,7 @@ class Relay:
         write = PendingWrite(kind=kind, value=value, frame=payload_frame,
                              superseded=superseded or None)
         self.pending[kind] = write
+        self._save_queue()
         return write
 
     def _confirm_pending(self) -> None:
@@ -275,9 +342,11 @@ class Relay:
                 write.confirmed = time.time()
                 self.writes_confirmed += 1
                 confirmed.append(kind)
-        for kind in confirmed:
-            write = self.pending.pop(kind)
-            self.last_write = {**asdict(write), "outcome": "confirmed"}
+        if confirmed:
+            for kind in confirmed:
+                write = self.pending.pop(kind)
+                self.last_write = {**asdict(write), "outcome": "confirmed"}
+            self._save_queue()
 
     def _inject(self, payload: bytes) -> bytes | None:
         """Put the oldest queued write into a command reply, if it is safe to.
@@ -306,6 +375,7 @@ class Relay:
         write.delivered = time.time()
         write.replaced_upstream = replaced
         self.writes_delivered += 1
+        self._save_queue()          # record the attempt, so a restart cannot replay it
         return rewritten.encode()
 
     # -- the Home-Assistant-facing side --------------------------------
@@ -333,6 +403,7 @@ class Relay:
     async def write_cancel_handler(self, request: web.Request) -> web.Response:
         dropped = {kind: asdict(w) for kind, w in self.pending.items()}
         self.pending.clear()
+        self._save_queue()
         return web.json_response({"cancelled": dropped})
 
     async def state_handler(self, request: web.Request) -> web.Response:
@@ -346,6 +417,8 @@ class Relay:
         }
         out["last_write"] = self.last_write
         out["health"] = self.health()
+        out["queue_file"] = str(self.queue_file)
+        out["queue_restored"] = self.queue_restored
         out["writes_delivered"] = self.writes_delivered
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
@@ -398,6 +471,7 @@ class Relay:
         await web.TCPSite(runner_module, "0.0.0.0", self.listen_port,
                          ssl_context=self.tls_context()).start()
 
+        self._load_queue()
         timeout = ClientTimeout(total=30)  # Ayla answers in ~100 ms when healthy
         self.client = ClientSession(timeout=timeout, raise_for_status=False)
         print(f"icomm_local relay: module on :{self.listen_port} (TLS), "
@@ -600,5 +674,7 @@ class Relay:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(Relay().run())

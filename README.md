@@ -46,6 +46,14 @@ a cloud write asked for 142 °F: the tank took 139. Delivery is *not* success; t
 write stays `pending` until telemetry shows it took effect, because a frame can be
 delivered and ignored (the BLE map's mode register at block 26 is exactly that).
 
+Queued writes are **persisted** (`QUEUE_FILE`, `/data/pending.json` in the add-on), so
+a restart no longer drops them — it used to, which was demonstrated while waiting on
+an idle appliance. The file is written atomically, a corrupt one is ignored rather
+than fatal, and a write older than `QUEUE_MAX_AGE_S` (default 24 h) is dropped on
+load instead of being delivered as a surprise. Restored writes report
+`restored: true` and `queue_restored` in the state API, so it is visible that a
+value came back from before the restart.
+
 Safety rules, all tested: setpoints clamp to the ceiling the appliance advertises
 (and to a hard cap, so a garbage `max_setpoint` cannot become an unbounded write);
 only the newest write per register survives; a stale appliance **holds** writes

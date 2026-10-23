@@ -9,10 +9,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=icomm
+StateDirectory=icomm-local
 WorkingDirectory=/opt/icomm-local/relay
 Environment=LISTEN_PORT=443
 Environment=STATE_PORT=8124
 Environment=UPSTREAM=proxy-ingress-usfield.aylanetworks.com
+# Queued writes survive restarts; the file is rewritten atomically.
+Environment=QUEUE_FILE=/var/lib/icomm-local/pending.json
 ExecStart=/opt/icomm-local/relay/.venv/bin/python icomm_relay.py
 Restart=always
 RestartSec=5

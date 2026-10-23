@@ -2,3 +2,5 @@ certs/
 *.pyc
 __pycache__/
 .venv/
+state/
+pending.json
