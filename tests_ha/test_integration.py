@@ -23,7 +23,7 @@ STATE = {
     "volts": 233, "air": 49.0, "rssi": -45, "last_telemetry_age": 12.0,
     "upstream_errors": 0, "pending": {}, "last_write": None,
     "health": {"state": "healthy", "reasons": [], "unobservable": ["ops UDP"]},
-    "doorbell": {"enabled": True, "rings": 0, "last": None}, "writes_confirmed": 0,
+    "lan": {"enabled": True, "registered": True}, "writes_confirmed": 0,
 }
 
 
@@ -73,7 +73,7 @@ async def test_entities_appear(hass: HomeAssistant, aioclient_mock) -> None:
 
 async def test_set_temperature_posts_to_the_relay(hass: HomeAssistant, aioclient_mock) -> None:
     await _setup(hass, aioclient_mock)
-    aioclient_mock.post(f"{URL}/write", json={"queued": {}, "pending": 1, "doorbell": True})
+    aioclient_mock.post(f"{URL}/write", json={"queued": {}, "pending": 1, "lan_registered": True})
     await hass.services.async_call(
         "water_heater", "set_temperature",
         {"entity_id": "water_heater.icomm_water_heater", "temperature": 140}, blocking=True)

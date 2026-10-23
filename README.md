@@ -96,7 +96,9 @@ dead:
 | 401 on a GET | an idle module issues no GETs at all, so it never fires |
 | **401 on a telemetry POST** | module retries **+6 s**, then resumes its cadence; **zero** `regtoken` fetches, **zero** polls — no re-registration |
 
-So writes ride the doorbell a cloud write rings, or wait for a natural poll. Note
+That dead end is what LAN mode bypasses: instead of making the module poll the
+*cloud*, the relay becomes a *local* command source the module polls every ~10 s
+(see "The local doorbell" below). Note
 that a *healthy idle* module shows the same trace as the researched "degraded" one —
 telemetry-only dials, 60–240 s apart, no polls — so the relay does not claim to
 detect a wedge from HTTPS shape alone.
@@ -111,17 +113,46 @@ detect a wedge from HTTPS shape alone.
 | `sensor.icomm_water_heater_relay_health` | healthy / idle / degraded / unknown, with reasons, remediation and what the relay *cannot* observe |
 | `sensor.icomm_water_heater_pending_write` | what is queued and not yet confirmed |
 
-## The cloud doorbell (optional)
+## The local doorbell: Ayla LAN mode (no account, no cloud writes)
 
-The module only fetches commands when Ayla tells it one is waiting, and every local
-way to make it poll has been tested and failed. With `aosmith_email` /
-`aosmith_password` set (add-on options, or `AOSMITH_EMAIL` / `AOSMITH_PASSWORD`),
-the relay sends the *same* write through A.O. Smith's API after queueing it: Ayla
-rings, the module polls through the relay, and the relay answers with its own frame.
-Writes then land in seconds. Each ring logs in and out (sessions are single-seat, so
-a held login would keep knocking the phone app off); writes are debounced 2 s so a
-slider makes one call. Leave the credentials empty to stay purely local — writes
-then wait for a poll the cloud starts for its own reasons.
+**Since 0.3.0, writes and telemetry work entirely on your LAN.** The relay arms
+the module's own Ayla Local Connect feature:
+
+1. When the module re-registers, the relay rewrites two booleans in Ayla's
+   registration reply (`lan-enabled`, `local-access-enabled`). Everything else
+   in that reply is forwarded byte-identical.
+2. Per Ayla's own agent source, an armed module then asks its cloud — the relay —
+   for `GET /devices/<key>/lan.json`, and accepts whatever key answers. The relay
+   answers with a **key it generated itself**, stored in `/data/lanip.json`
+   (0600). There is no A.O. Smith credential anywhere in this project.
+3. The module's LAN server arms (`local_reg.json` starts returning 202), the
+   relay registers itself and heartbeats every 10 s, and the module polls the
+   relay's **local** command endpoint on that heartbeat. Queued writes ride that
+   poll; telemetry arrives as encrypted property updates and is decoded exactly
+   like the cloud POSTs.
+
+Measured on the real tank: a 140 °F setpoint write delivered, acked
+(`ack_status: 200`) and confirmed in decrypted LAN telemetry in **about 6
+seconds** — with no A.O. Smith request involved. Cloud telemetry and the mobile
+app keep working in parallel, and the cloud poll path remains as the fallback
+for a module whose LAN session is not up.
+
+**One-time arming:** the module only asks for its LAN configuration when it
+re-registers, so after upgrading to 0.3.0 power-cycle the module once (the
+water heater's breaker, ~10 s). The tank keeps its heat and its own thermostat
+is unaffected. Watch `GET /state` → `lan`: `registered: true` and
+`session: true` mean the local doorbell is up. `registered: false` with
+`last_registration_result` of 404 means the module has not taken the rewritten
+config yet; 412 means it is armed but still needs the key.
+
+If the module already holds a LAN key this relay did not issue (for example
+from earlier experiments), it will not ask for a new one — libada only fetches
+`lan.json` when it has *no* stored key. See
+[docs/LAN_MODE.md](docs/LAN_MODE.md) for the protocol, the state fields, and
+recovery notes.
+
+To opt out of LAN mode entirely, set `LAN_MODE=0` (add-on: `lan_mode: false`);
+writes then wait for a cloud poll, as before.
 
 Timing once delivered: electric mode starts heating within ~30 s; heat pump has a
 ~3 min compressor delay (measured: watts 0 → 356 three minutes after acceptance).

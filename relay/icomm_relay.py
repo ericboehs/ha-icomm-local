@@ -34,6 +34,11 @@ Env:
   STATE_PORT=8124          localhost state API
   UPSTREAM=proxy-ingress-usfield.aylanetworks.com
   DEVICE_DSN=              optional, tags state with the DSN when known
+  LAN_MODE=1               Ayla Local Connect server (the local doorbell)
+  LAN_PORT=8888            port the module calls back on
+  MODULE_IP=               optional; otherwise learned from the DSN reply
+  RELAY_IP=                optional; address advertised for LAN callbacks
+  LANIP_FILE=              shared-key store (default: next to the write queue)
 """
 
 from __future__ import annotations
@@ -52,7 +57,7 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
-from icomm_doorbell import Doorbell
+from icomm_lan import LanServer
 
 _LOGGER = logging.getLogger("icomm_relay")
 
@@ -133,8 +138,6 @@ class Relay:
         # only on a trusted LAN.
         self.state_host = os.environ.get("STATE_HOST", "127.0.0.1")
         self.device_dsn = os.environ.get("DEVICE_DSN", "")
-        self.doorbell = Doorbell(os.environ.get("AOSMITH_EMAIL", ""),
-                                 os.environ.get("AOSMITH_PASSWORD", ""), self.device_dsn)
         self.state: dict = {"online": False}
         self.last_telemetry = 0.0
         self.started = time.time()
@@ -151,10 +154,14 @@ class Relay:
         # appliance that sat idle overnight should not surprise anyone at breakfast.
         self.queue_max_age_s = int(os.environ.get("QUEUE_MAX_AGE_S", str(24 * 3600)))
         self.queue_restored = 0
-        # The local doorbell: answering once with 401 makes the module
-        # re-register (measured), and a re-registration fetches the full
-        # configuration -- which carries the setBlockParameter property a write
-        # rides on. Left at 0 unless someone asks for a nudge.
+        # The local doorbell: Ayla Local Connect, with a key we mint ourselves
+        # (phase 28). LAN delivery and LAN telemetry; the cloud poll stays as
+        # the fallback. No A.O. Smith account anywhere.
+        self.lan = LanServer(self)
+        # The 401 nudge: an experiment, not a doorbell. Phase 24 measured that
+        # a 401 on a telemetry POST is simply retried and provokes no poll, so
+        # this is left at 0 unless someone explicitly asks. LAN mode is the
+        # mechanism that actually delivers writes promptly.
         self.nudges_left = 0
         self.nudge_on_telemetry = False
         self.debug_requests = os.environ.get("DEBUG_REQUESTS", "") == "1"
@@ -165,14 +172,6 @@ class Relay:
         # relay flips exactly those two values in a DSN config reply, and stashes
         # the original and rewritten bodies next to the queue file as evidence.
         self.dsn_lan_rewrite = os.environ.get("DSN_LAN_REWRITE", "") == "1"
-        # Second half of the LAN-mode experiment: per Ayla's libada source
-        # (client.c), an armed agent fetches GET /devices/<key>/lan.json and
-        # expects {"lanip":{"status":"enable","lanip_key_id":…,
-        # "lanip_key":…,"keep_alive":…,"auto_sync":…}} — status must read
-        # exactly "enable", the key must fit 32 bytes, ids/rates are u16. With
-        # LANIP_KEY set we answer that request locally with our own key.
-        self.lanip_key = os.environ.get("LANIP_KEY", "")
-        self.lanip_key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
@@ -246,7 +245,11 @@ class Relay:
     async def telemetry(self, request: web.Request) -> web.Response:
         """superBlockDyn1 POST: decode, then forward as if we were not here."""
         body = await request.read()
-        blocks = telemetry_blocks(body)
+        self._ingest_blocks(telemetry_blocks(body))
+        return await self.proxy(request)
+
+    def _ingest_blocks(self, blocks: list[bytes] | None) -> None:
+        """Decode a superBlockDyn1 report, from the cloud POST or the LAN."""
         if blocks and len(blocks) >= 5:
             try:
                 self.state = decode(blocks)
@@ -258,7 +261,43 @@ class Relay:
             except (IndexError, ValueError):
                 pass
             self._confirm_pending()
-        return await self.proxy(request)
+
+    async def ingest_lan_update(self, update: dict) -> None:
+        """A decrypted LAN property update: telemetry, or a write ack."""
+        data = update.get("data") or {}
+        if data.get("name") == "superBlockDyn1" and data.get("value"):
+            try:
+                self._ingest_blocks([bytes.fromhex(part)
+                                     for part in data["value"].split(",")])
+            except ValueError:
+                _LOGGER.warning("LAN telemetry undecodable")
+        elif "ack_status" in data:
+            _LOGGER.info("LAN write ack: status %s id %s",
+                         data.get("ack_status"), data.get("id"))
+
+    def take_pending_for_lan(self):
+        """Oldest queued write for the LAN poll; None when there is nothing.
+
+        No cloud-freshness gate here: the LAN session being alive is itself the
+        evidence the module is listening, and a LAN delivery works even when
+        the internet is down.
+        """
+        if not self.pending:
+            return None
+        write = self.pending[sorted(self.pending)[0]]
+        if write.delivered and time.time() - write.delivered < 60:
+            # The LAN poll comes every ~10 s; re-sending the same frame each
+            # time until telemetry confirms would hammer the appliance. One
+            # delivery, then a quiet retry window if confirmation never comes.
+            return None
+        self._mark_delivered(write)
+        return write
+
+    def _mark_delivered(self, write: PendingWrite) -> None:
+        write.attempts += 1
+        write.delivered = time.time()
+        self.writes_delivered += 1
+        self._save_queue()          # record the attempt, so a restart cannot replay it
 
     # -- persistence ---------------------------------------------------
     def _load_queue(self) -> None:
@@ -393,23 +432,18 @@ class Relay:
         rewritten, replaced = frames.rewrite_commands(text, write.frame)
         if rewritten == text:
             return None
-        write.attempts += 1
-        write.delivered = time.time()
         write.replaced_upstream = replaced
-        self.writes_delivered += 1
-        self._save_queue()          # record the attempt, so a restart cannot replay it
+        self._mark_delivered(write)
         return rewritten.encode()
 
     def _rewrite_dsn(self, payload: bytes) -> bytes | None:
         """Flip Ayla's factory LAN-mode switches in a DSN config reply.
 
-        Measured result (captures INDEX, phase 27): the module applies the
-        config and keeps operating normally, but the two flags are app-facing
-        metadata -- the LAN server stays closed (regtoken.json unchanged,
-        /local_reg.json still 404, no new ports, no further fetches). Kept
-        behind DSN_LAN_REWRITE for the next experiment: a lanip_key with
-        guessed field names is the only remaining lever. Only 200s are
-        rewritten; a reply without a switch passes through untouched.
+        Phase 27 showed the flags alone change nothing; phase 28 showed why:
+        the agent must also fetch lan.json, which the LAN server answers with
+        our own key. That combination arms the module's LAN server and gives
+        local writes and telemetry. Only 200s are rewritten; a reply without a
+        switch present passes through untouched.
         """
         text = payload.decode(errors="replace")
         switched = []
@@ -420,6 +454,7 @@ class Relay:
                 switched.append(element)
         if not switched:
             return None
+        self.lan.learn_module_ip(text)
         evidence = self.queue_file.parent
         evidence.mkdir(parents=True, exist_ok=True)
         (evidence / "dsn-original.xml").write_bytes(payload)
@@ -448,11 +483,10 @@ class Relay:
             write = self.queue_write(kind, body[kind])
         except ValueError as err:
             return web.json_response({"error": str(err)}, status=400)
-        # Without a poll the write just waits; the doorbell makes the cloud ask
-        # the module to poll, and the poll carries our frame.
-        self.doorbell.ring(kind, write.value)
+        # Delivery: the module's own 10-second LAN poll when the LAN session is
+        # up, otherwise the next cloud poll. Either way confirmation is telemetry.
         return web.json_response({"queued": asdict(write), "pending": len(self.pending),
-                                  "doorbell": self.doorbell.enabled})
+                                  "lan_registered": self.lan.registered})
 
     async def write_cancel_handler(self, request: web.Request) -> web.Response:
         dropped = {kind: asdict(w) for kind, w in self.pending.items()}
@@ -476,7 +510,7 @@ class Relay:
         out["writes_delivered"] = self.writes_delivered
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
-        out["doorbell"] = self.doorbell.status()
+        out["lan"] = self.lan.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -530,14 +564,16 @@ class Relay:
                          ssl_context=self.tls_context()).start()
 
         self._load_queue()
+        await self.lan.start()
         timeout = ClientTimeout(total=30)  # Ayla answers in ~100 ms when healthy
         self.client = ClientSession(timeout=timeout, raise_for_status=False)
         print(f"icomm_local relay: module on :{self.listen_port} (TLS), "
               f"state on {self.state_host}:{self.state_port}, upstream {self.upstream}, "
-              f"doorbell {'on' if self.doorbell.enabled else 'off'}")
+              f"LAN {'on :' + str(self.lan.port) if self.lan.enabled else 'off'}")
         try:
             await asyncio.Event().wait()
         finally:
+            await self.lan.stop()
             await self.client.close()
 
     # -- degraded-state detection --------------------------------------
@@ -712,12 +748,8 @@ class Relay:
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
         self._note_request(request.path)
-        if self.lanip_key and request.path.endswith("/lan.json"):
-            _LOGGER.warning("LANIP: answering %s locally with our own key",
-                            request.path)
-            return web.json_response({"lanip": {
-                "status": "enable", "lanip_key_id": self.lanip_key_id,
-                "lanip_key": self.lanip_key, "keep_alive": 30, "auto_sync": 1}})
+        if self.lan.enabled and request.path.endswith("/lan.json"):
+            return web.json_response(self.lan.lan_json())
         if "superBlockDyn1" in request.path:
             if self.nudges_left and self.nudge_on_telemetry:
                 # An idle module only ever POSTs telemetry, so this is the only
@@ -728,7 +760,7 @@ class Relay:
             return await self.telemetry(request)
         if "commands.xml" in request.path:
             return await self.proxy(request, transform=self._inject)
-        if self.dsn_lan_rewrite and "/dsns/" in request.path:
+        if (self.dsn_lan_rewrite or self.lan.enabled) and "/dsns/" in request.path:
             return await self.proxy(request, transform=self._rewrite_dsn)
         if self.nudges_left and request.method == "GET":
             self.nudges_left -= 1

@@ -1,7 +1,8 @@
 """The water heater entity: HA's native thermostat card, writing through the relay.
 
-A write is queued in the relay (and, if configured, the relay rings the cloud
-doorbell so the appliance polls). The target shown is the queued value until the
+A write is queued in the relay and delivered on the appliance's own LAN poll
+(about every 10 s once LAN mode is armed; otherwise the next cloud poll). The
+target shown is the queued value until the
 appliance's own telemetry confirms it -- otherwise the card would snap back to the
 old value for the seconds a write takes to land, and look broken.
 """
@@ -95,7 +96,7 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             "power_w": data.get("watts"),
             "pending": data.get("pending") or None,
             "relay_health": (data.get("health") or {}).get("state"),
-            "doorbell": (data.get("doorbell") or {}).get("enabled"),
+            "lan_registered": (data.get("lan") or {}).get("registered"),
         }
 
     async def async_set_temperature(self, **kwargs) -> None:

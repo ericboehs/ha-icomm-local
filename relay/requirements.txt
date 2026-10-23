@@ -1,2 +1,2 @@
 aiohttp>=3.9
-py-aosmith>=1.0.18,<2
+pycryptodome>=3.20

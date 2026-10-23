@@ -38,9 +38,12 @@ try:
     opts = json.load(open(sys.argv[1]))
 except (OSError, ValueError):
     opts = {}
+if opts.get("lan_mode") is False:
+    print("export LAN_MODE=0")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
-                 ("aosmith_email", "AOSMITH_EMAIL"), ("aosmith_password", "AOSMITH_PASSWORD")):
+                 ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),
+                 ("relay_ip", "RELAY_IP")):
     if opts.get(key) not in (None, ""):
         print(f"export {env}={shlex.quote(str(opts[key]))}")
 PY

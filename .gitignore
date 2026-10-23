@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 state/
 pending.json
+
+# LAN-mode shared key (never commit)
+lanip.json

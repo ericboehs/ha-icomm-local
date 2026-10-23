@@ -124,7 +124,7 @@ class RelayHealthSensor(_RelaySensor):
             "unobservable": health.get("unobservable"),
             "last_telemetry_age_s": data.get("last_telemetry_age"),
             "upstream_errors": data.get("upstream_errors"),
-            "doorbell": data.get("doorbell"),
+            "lan": data.get("lan"),
         }
 
 
