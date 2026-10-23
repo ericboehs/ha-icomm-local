@@ -1,0 +1,6 @@
+# Lets Home Assistant install this repo's add-ons:
+#   Settings -> Add-ons -> Add-on Store -> the three-dot menu -> Repositories
+#   -> paste https://github.com/ericboehs/ha-icomm-local
+name: iCOMM Local
+url: https://github.com/ericboehs/ha-icomm-local
+maintainer: ericboehs

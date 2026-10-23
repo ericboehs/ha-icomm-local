@@ -14,7 +14,7 @@ Two pieces, one repo:
 
 | Piece | What it is | Where it runs |
 |---|---|---|
-| `relay/` | a single-file asyncio service: TLS listener, upstream forward, telemetry decoder, localhost state API | any always-on host, port 443 |
+| `relay/` | a single-file asyncio service: TLS listener, upstream forward, telemetry decoder, localhost state API | any always-on host; also packaged as a Home Assistant add-on |
 | `custom_components/icomm_local/` | a Home Assistant integration that polls the relay and creates sensors | your HA config |
 
 ## What you get (phase 1, read-only)
@@ -58,10 +58,21 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 LISTEN_PORT=8444 .venv/bin/python icomm_relay.py
 ```
 
-For production, install as the provided systemd unit (`icomm-relay.service`),
-listening on 443 as a dedicated user.
+**On Home Assistant OS / Supervised**, install it as an add-on instead — it gets
+persistent storage for its keys (`/data/certs`), host networking, and restarts
+with HA:
 
-### 2. Steering the water heater to the relay
+1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories** → add
+   `https://github.com/ericboehs/ha-icomm-local`
+2. Install **iCOMM Local Relay**, then start it. Defaults: module listener
+   `8444`, state API `8124`.
+
+There is no need to take port 443 from whatever owns it: the DNAT rule below
+chooses the port, so `8444` is fine.
+
+On a plain Linux host, use the systemd unit (`relay/icomm-relay.service`).
+
+### 2. Steering the water heater to the relay (required)
 
 The module must send its cloud traffic to the relay host. It resolves its
 endpoints with public DNS (1.1.1.1 directly — it ignores the gateway's DNS, so
@@ -70,8 +81,8 @@ a DNS override will **not** work). The mechanism that does:
 ```bash
 # on the gateway (Ubiquiti example; any iptables router works)
 iptables -t nat -I PREROUTING 1 -s <module-ip> -p tcp --dport 443 \
-  -m comment --comment icomm-relay -j DNAT --to-destination <relay-host>:443
-iptables -t nat -I POSTROUTING 1 -s <module-ip> -d <relay-host> -p tcp --dport 443 \
+  -m comment --comment icomm-relay -j DNAT --to-destination <relay-host>:8444
+iptables -t nat -I POSTROUTING 1 -s <module-ip> -d <relay-host> -p tcp --dport 8444 \
   -m comment --comment icomm-relay -j SNAT --to-source <gateway-ip>
 conntrack -D -s <module-ip> -p tcp --dport 443   # break the old connection so it re-dials
 ```
@@ -82,9 +93,24 @@ relay (`iptables -t nat -D ...` or match on the `icomm-relay` comment).
 
 ### 3. The integration
 
-Copy `custom_components/icomm_local/` into your HA `config/custom_components/`,
-restart HA, add the *iCOMM Local* integration, and point it at the relay's state
-URL (default `http://127.0.0.1:8124`).
+With [HACS](https://hacs.xyz) installed (recommended): HACS → Integrations → ⋮ →
+**Custom repositories** → add `https://github.com/ericboehs/ha-icomm-local` as an
+*Integration*, then install **iCOMM Local** and restart HA.
+
+Without HACS: copy `custom_components/icomm_local/` into your HA
+`config/custom_components/` and restart.
+
+Then add the *iCOMM Local* integration and point it at the relay's state URL
+(default `http://127.0.0.1:8124`).
+
+## Verified against hardware
+
+- The relay terminates the module's TLS, decodes live telemetry, and forwards
+  upstream with zero errors (cloud and app unaffected).
+- A **queued cloud command was retrieved through the relay** — proof the poll
+  path survives the interception, which is what makes phase 3 (writes) viable.
+- The certificate is not validated *at all*: `CN=garbage.example`, no SAN, accepted.
+- Add-on entrypoint: fresh install up in ~1 s with keys minted into `/data/certs`.
 
 ## Status
 

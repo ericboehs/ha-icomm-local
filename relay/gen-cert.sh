@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Generate the TLS leaf the iCOMM module accepts: RSA-2048, signed SHA-256,
-# named *.aylanetworks.com. The module never validates the chain -- measured
-# across a day of handshakes -- so a self-signed leaf is enough. An ECDSA/P-384
-# leaf DEADLOCKS the handshake silently for 30 s at a time, which reads exactly
-# like a trust rejection; that trap cost an evening, so it is stated here plainly.
+# Generate the TLS leaf the iCOMM module accepts: RSA-2048, signed SHA-256.
+#
+# The module validates nothing about the certificate -- not the chain, not the
+# name, not the SAN. Measured: a leaf with CN=garbage.example and no SAN at all
+# was accepted on the first handshake, telemetry flowed, and a queued command
+# was even retrieved through it. The aylanetworks.com name below is kept only as
+# a harmless convention (it makes a packet capture look right); changing it costs
+# nothing. An ECDSA/P-384 leaf, by contrast, DEADLOCKS the handshake silently for
+# 30 s at a time, which reads exactly like a trust rejection -- that trap cost an
+# evening, so it is stated here plainly.
 #
 #   ./gen-cert.sh            # writes certs/aylanetworks.com.{crt,key}, dhparams.pem
 #
@@ -12,13 +17,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-mkdir -p certs
-[ -f certs/aylanetworks.com.key ] || openssl genrsa -out certs/aylanetworks.com.key 2048
-[ -f certs/aylanetworks.com.crt ] || openssl req -new -x509 -sha256 -days 825 \
-  -key certs/aylanetworks.com.key \
+# Keys live wherever CERT_DIR points: ./certs for a manual run, /data/certs
+# inside the add-on so they survive restarts and never ship in the image.
+CERT_DIR="${CERT_DIR:-certs}"
+mkdir -p "$CERT_DIR"
+[ -f $CERT_DIR/aylanetworks.com.key ] || openssl genrsa -out $CERT_DIR/aylanetworks.com.key 2048
+[ -f $CERT_DIR/aylanetworks.com.crt ] || openssl req -new -x509 -sha256 -days 825 \
+  -key $CERT_DIR/aylanetworks.com.key \
   -subj "/CN=*.aylanetworks.com/O=icomm_local relay" \
-  -out certs/aylanetworks.com.crt
-[ -f certs/dhparams.pem ] || openssl dhparam -out certs/dhparams.pem 2048 2>/dev/null
+  -out $CERT_DIR/aylanetworks.com.crt
+[ -f $CERT_DIR/dhparams.pem ] || openssl dhparam -out $CERT_DIR/dhparams.pem 2048 2>/dev/null
 
-echo "wrote certs/aylanetworks.com.crt (leaf), .key, dhparams.pem"
-echo "keep the key out of git: certs/ is in .gitignore"
+echo "wrote $CERT_DIR/aylanetworks.com.crt (leaf), .key, dhparams.pem"
+echo "keep the key out of images and git: keys stay in $CERT_DIR"

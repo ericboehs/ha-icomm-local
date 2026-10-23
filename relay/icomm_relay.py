@@ -12,12 +12,13 @@ the icomm_local Home Assistant integration to poll.
 
 Two listeners, one process:
 
-  * the TLS listener the module connects to (LISTEN_PORT, default 8444 in
-    development, 443 in production). Serves the certificate Ayla-shaped enough
-    for the module: any RSA-2048 leaf signed SHA-256 with a *.aylanetworks.com
-    name works -- the module never checks the chain. That is the measured,
-    load-bearing finding of the research this comes from
-    (github.com/ericboehs/aosmith-water-heater, ARCHITECTURE.md).
+  * the TLS listener the module connects to (LISTEN_PORT, default 8444; any port
+    works because the router's DNAT rule chooses it). It serves a self-signed
+    RSA-2048/SHA-256 leaf. The module checks nothing about that certificate --
+    not the chain, not the name, not the SAN: a leaf with CN=garbage.example and
+    no SAN at all was accepted on the first handshake. The only real constraint
+    is RSA/SHA-256 (an ECDSA P-384 leaf silently deadlocks the handshake). See
+    github.com/ericboehs/aosmith-water-heater, ARCHITECTURE.md.
   * the plain-HTTP state API (STATE_PORT, default 8124, localhost only) that the
     Home Assistant integration polls: GET /state, GET /health.
 
@@ -177,9 +178,10 @@ class Relay:
 
     # -- lifecycle ------------------------------------------------------
     def tls_context(self) -> ssl.SSLContext:
-        cert = os.environ.get("RELAY_CERT", "certs/aylanetworks.com.crt")
-        key = os.environ.get("RELAY_KEY", "certs/aylanetworks.com.key")
-        dhparams = os.environ.get("RELAY_DHPARAMS", "certs/dhparams.pem")
+        certs = os.environ.get("CERT_DIR", "certs")
+        cert = os.environ.get("RELAY_CERT", f"{certs}/aylanetworks.com.crt")
+        key = os.environ.get("RELAY_KEY", f"{certs}/aylanetworks.com.key")
+        dhparams = os.environ.get("RELAY_DHPARAMS", f"{certs}/dhparams.pem")
         for path in (cert, key):
             if not Path(path).exists():
                 raise SystemExit(f"missing {path} -- run relay/gen-cert.sh first")

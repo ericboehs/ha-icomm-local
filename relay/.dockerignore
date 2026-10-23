@@ -1,0 +1,6 @@
+# The add-on build context is this folder: keep keys, the dev venv and caches
+# out of the image. Keys are generated into /data/certs at first start.
+certs/
+.venv/
+__pycache__/
+*.pyc
