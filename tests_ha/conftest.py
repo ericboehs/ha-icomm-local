@@ -5,8 +5,9 @@ Kept out of tests/ so the relay suite stays dependency-light; this one needs HA.
 
 from pathlib import Path
 
-import custom_components
 import pytest
+
+import custom_components
 
 # The plugin ships its own `custom_components` package (testing_config), which
 # shadows the repo's. Extend its search path rather than fight the import order.
