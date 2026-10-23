@@ -553,8 +553,6 @@ class Relay:
         telemetry = list(self.telemetry_times)
         gaps = [b - a for a, b in zip(telemetry, telemetry[1:], strict=False)]
         median_gap = sorted(gaps)[len(gaps) // 2] if gaps else None
-        recent = dials[-3:]
-        single_request_dials = sum(1 for d in recent if d["requests"] == 1)
         polls = sum(d["polls"] for d in dials)
         silent = now - self.last_telemetry if self.last_telemetry else None
         interval = self.reporting_interval_s or IDLE_INTERVAL_DEFAULT
@@ -586,27 +584,27 @@ class Relay:
                 f"{self.state.get('water_top')} F water)",
                 breaker, {"calling_for_heat": True})
 
-        # Silence well beyond the interval it advertised for itself.
+        # Silence well beyond the interval it advertised for itself. Gentler
+        # remediation than a breaker: overrunning a six-hour cadence is suspicious but
+        # not proof, and reconnecting the client is cheaper than a power cycle.
         if silent is not None and silent > interval + 900:
             return degraded(
                 f"silent {silent / 3600:.1f} h, beyond its own ~{interval / 3600:.1f} h "
-                f"reporting interval", breaker)
+                f"reporting interval", wait)
 
-        # A queue that cannot drain. Only a fault when the appliance should be busy:
-        # polls are notify-driven, so a write waiting on an idle tank legitimately
-        # waits until something rings the bell -- hours, if the tank is satisfied.
-        # Calling that degraded would be the same false alarm in a new costume.
-        if self.pending and silent is not None and silent > 900 and self._calling_for_heat():
-            return degraded(
-                "a write is queued, the appliance is calling for heat, and it has not "
-                "asked for commands", wait)
+        # Deliberately NOT a fault: a queued write that is not being delivered.
+        # Observed on hardware -- the appliance reported telemetry every ~60 s while
+        # calling for heat and never polled, because polling is notify-driven and Ayla
+        # had nothing to tell it. Local writes wait for a poll that may not come; that
+        # is the cost of not needing the cloud account, not a malfunction.
 
-        # The researched degraded signature: one request per dial, minutes apart.
-        if (polls == 0 and single_request_dials == len(recent)
-                and median_gap is not None and median_gap > 150):
-            return degraded(
-                f"{single_request_dials}/{len(recent)} dials carried a single request, "
-                f"telemetry every ~{median_gap:.0f}s, no polls", breaker)
+        # Removed deliberately: the researched "degraded signature" (one request per
+        # dial, minutes apart, no polls) turned out to describe a HEALTHY idle module
+        # too. Measured on hardware: telemetry-only dials, 60-240 s apart, no polls,
+        # while the tank was fine and the appliance was answering normally. The
+        # symptom that actually separates wedged from idle -- ops keepalives stopping
+        # -- is not visible from a relay in the HTTPS path, so this module does not
+        # pretend to see it.
 
         if not self.last_telemetry:
             if now - self.started > 900:

@@ -85,13 +85,21 @@ symptom that actually distinguishes a wedged module — ops keepalives disappear
 is not visible to the relay at all, which is why it is listed as unobservable
 instead of being approximated from timing.
 
-**The honest limitation:** polls happen only when Ayla notifies the module that a
-command exists, so a queued write needs something to ring that bell. A plain
-reconnect does not poll (measured), and the local nudge (`POST /nudge`, which
-answers a request with 401 to force re-registration) cannot fire while the module is
-idle because an idle module issues no GETs — only telemetry POSTs. So today:
-writes ride the doorbell a cloud write rings, or wait for a natural poll. A fully
-local trigger is the open problem.
+**The honest limitation, now measured rather than suspected:** polls happen only when
+Ayla notifies the module that a command exists, so a queued write needs something to
+ring that bell. Three candidate local triggers have been tested and all three are
+dead:
+
+| Candidate trigger | Result |
+|---|---|
+| drop the connection (force a re-dial) | re-dials and posts telemetry, **never** fetches `commands.xml` |
+| 401 on a GET | an idle module issues no GETs at all, so it never fires |
+| **401 on a telemetry POST** | module retries **+6 s**, then resumes its cadence; **zero** `regtoken` fetches, **zero** polls — no re-registration |
+
+So writes ride the doorbell a cloud write rings, or wait for a natural poll. Note
+that a *healthy idle* module shows the same trace as the researched "degraded" one —
+telemetry-only dials, 60–240 s apart, no polls — so the relay does not claim to
+detect a wedge from HTTPS shape alone.
 
 ## How it works
 

@@ -87,16 +87,20 @@ def test_healthy_dials(relay: Relay, _clock) -> None:
     assert health["evidence"]["polls"] >= 3
 
 
-def test_degraded_signature(relay: Relay, _clock) -> None:
-    """Exactly one telemetry POST per dial, ~4 minutes apart, no polls."""
-    relay.state["water_top"] = relay.state["setpoint"] - 20
-    for _ in range(4):
-        _dial(relay, _clock, [TELEMETRY], gap=240)
+def test_single_request_dials_are_not_degraded(relay: Relay, _clock) -> None:
+    """The researched degraded shape also describes a healthy idle module.
+
+    Measured: telemetry-only dials, 60-240 s apart, zero polls, tank fine and the
+    appliance answering normally. An earlier version of this detector flagged that
+    combination, which would have raised the alarm on an ordinary quiet afternoon.
+    """
+    relay.state["water_top"] = relay.state["setpoint"] - 20      # calling for heat
+    for gap in (240, 60, 60, 240, 60):
+        _dial(relay, _clock, [TELEMETRY], gap=gap)
         relay.last_telemetry = _clock["now"]
+    _clock["now"] += 30                                          # still reporting
     health = relay.health()
-    assert health["state"] == "degraded"
-    assert any("single" in reason for reason in health["reasons"])
-    assert "breaker" in health["remediation"].lower()
+    assert health["state"] == "healthy", health
 
 
 def test_degraded_names_what_it_cannot_see(relay: Relay, _clock) -> None:
@@ -174,16 +178,23 @@ def test_pending_write_on_a_satisfied_quiet_tank_is_idle(relay: Relay, _clock) -
     assert any("queued" in reason for reason in health["reasons"])
 
 
-def test_pending_write_while_calling_for_heat_is_degraded(relay: Relay, _clock) -> None:
-    """Same queue, but now the appliance should be busily polling and is not."""
-    relay.state["water_top"] = relay.state["setpoint"] - 20
+def test_queued_write_without_polls_is_not_a_fault(relay: Relay, _clock) -> None:
+    """Observed on hardware: telemetry every ~60 s, calling for heat, no polls at all.
+
+    Polling is notify-driven, so a local write can sit indefinitely on a healthy
+    appliance. Treating that as degraded would be the third false alarm in this
+    series -- and the one most likely to be triggered, since it is the normal state
+    for anyone not using the cloud.
+    """
+    relay.state["water_top"] = relay.state["setpoint"] - 9      # calling for heat
     for _ in range(3):
-        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+        _dial(relay, _clock, [TELEMETRY], gap=60)               # telemetry, never a poll
         relay.last_telemetry = _clock["now"]
     relay.queue_write("setpoint", 140)
-    _clock["now"] += 901
+    _clock["now"] += 120                                        # still reporting
     health = relay.health()
-    assert health["state"] == "degraded"
+    assert health["state"] == "healthy", health
+    assert not any("queued" in reason for reason in health["reasons"])
 
 
 def test_reporting_interval_is_learned_from_the_config_reply(relay: Relay) -> None:
@@ -197,10 +208,11 @@ def test_reporting_interval_is_learned_from_the_config_reply(relay: Relay) -> No
 
 def test_degraded_holds_injection(relay: Relay, _clock) -> None:
     """The whole point: never inject into a module that has stopped listening."""
+    relay.state["water_top"] = relay.state["setpoint"] - 20
     for _ in range(4):
         _dial(relay, _clock, [TELEMETRY], gap=240)
         relay.last_telemetry = _clock["now"]
-    relay.state["water_top"] = relay.state["setpoint"] - 20
+    _clock["now"] += 601                 # silent while calling for heat
     relay.queue_write("setpoint", 140)
     assert relay._inject(b"<commands><properties/></commands>") is None
     assert relay.injections_held == 1
@@ -208,14 +220,16 @@ def test_degraded_holds_injection(relay: Relay, _clock) -> None:
 
 
 def test_recovery_clears_degraded(relay: Relay, _clock) -> None:
-    """After a breaker flip the module polls again; the detector must notice."""
+    """After intervention the module talks again; the detector must notice."""
+    relay.state["water_top"] = relay.state["setpoint"] - 20
     for _ in range(4):
         _dial(relay, _clock, [TELEMETRY], gap=240)
         relay.last_telemetry = _clock["now"]
+    _clock["now"] += 601
     assert relay.health()["state"] == "degraded"
 
-    # Re-registration, then a normal conversation.
+    # Telemetry resumes; silence is over.
     for _ in range(3):
-        _dial(relay, _clock, [REGTOKEN, TELEMETRY, POLL], gap=60)
+        _dial(relay, _clock, [TELEMETRY], gap=60)
         relay.last_telemetry = _clock["now"]
     assert relay.health()["state"] == "healthy"
