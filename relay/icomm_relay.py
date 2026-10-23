@@ -165,6 +165,14 @@ class Relay:
         # relay flips exactly those two values in a DSN config reply, and stashes
         # the original and rewritten bodies next to the queue file as evidence.
         self.dsn_lan_rewrite = os.environ.get("DSN_LAN_REWRITE", "") == "1"
+        # Second half of the LAN-mode experiment: per Ayla's libada source
+        # (client.c), an armed agent fetches GET /devices/<key>/lan.json and
+        # expects {"lanip":{"status":"enable","lanip_key_id":…,
+        # "lanip_key":…,"keep_alive":…,"auto_sync":…}} — status must read
+        # exactly "enable", the key must fit 32 bytes, ids/rates are u16. With
+        # LANIP_KEY set we answer that request locally with our own key.
+        self.lanip_key = os.environ.get("LANIP_KEY", "")
+        self.lanip_key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
@@ -704,6 +712,12 @@ class Relay:
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
         self._note_request(request.path)
+        if self.lanip_key and request.path.endswith("/lan.json"):
+            _LOGGER.warning("LANIP: answering %s locally with our own key",
+                            request.path)
+            return web.json_response({"lanip": {
+                "status": "enable", "lanip_key_id": self.lanip_key_id,
+                "lanip_key": self.lanip_key, "keep_alive": 30, "auto_sync": 1}})
         if "superBlockDyn1" in request.path:
             if self.nudges_left and self.nudge_on_telemetry:
                 # An idle module only ever POSTs telemetry, so this is the only

@@ -60,3 +60,23 @@ def test_one_switch_still_rewrites():
         out = relay._rewrite_dsn(
             b"<device><lan-enabled>false</lan-enabled></device>")
         assert out == b"<device><lan-enabled>true</lan-enabled></device>"
+
+
+async def test_lan_json_answered_locally_with_our_key():
+    """libada's client_get_lanip_key asks GET /devices/<key>/lan.json when
+    armed; with LANIP_KEY set the relay answers with a source-conformant
+    payload (status exactly "enable", u16 id, 30 s keep-alive)."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    relay = icomm_relay.Relay()   # _note_request tracks dial state
+    relay.lanip_key = "a" * 28
+    relay.lanip_key_id = 1
+    request = make_mocked_request("GET", "/devices/29689890/lan.json", app=web.Application())
+    response = await relay._route(request)
+    assert response.status == 200
+    import json
+    body = json.loads(response.body)
+    assert body == {"lanip": {"status": "enable", "lanip_key_id": 1,
+                              "lanip_key": "a" * 28, "keep_alive": 30,
+                              "auto_sync": 1}}
