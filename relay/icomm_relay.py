@@ -158,6 +158,13 @@ class Relay:
         self.nudges_left = 0
         self.nudge_on_telemetry = False
         self.debug_requests = os.environ.get("DEBUG_REQUESTS", "") == "1"
+        # The LAN-mode experiment (branch experiment/dsn-lan-rewrite): the
+        # module's own Ayla record ships with the OEM's factory kill switches
+        # -- <lan-enabled>false</lan-enabled> and
+        # <local-access-enabled>false</local-access-enabled>. With this set, the
+        # relay flips exactly those two values in a DSN config reply, and stashes
+        # the original and rewritten bodies next to the queue file as evidence.
+        self.dsn_lan_rewrite = os.environ.get("DSN_LAN_REWRITE", "") == "1"
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
@@ -385,6 +392,34 @@ class Relay:
         self._save_queue()          # record the attempt, so a restart cannot replay it
         return rewritten.encode()
 
+    def _rewrite_dsn(self, payload: bytes) -> bytes | None:
+        """Flip Ayla's factory LAN-mode switches in a DSN config reply.
+
+        Measured result (captures INDEX, phase 27): the module applies the
+        config and keeps operating normally, but the two flags are app-facing
+        metadata -- the LAN server stays closed (regtoken.json unchanged,
+        /local_reg.json still 404, no new ports, no further fetches). Kept
+        behind DSN_LAN_REWRITE for the next experiment: a lanip_key with
+        guessed field names is the only remaining lever. Only 200s are
+        rewritten; a reply without a switch passes through untouched.
+        """
+        text = payload.decode(errors="replace")
+        switched = []
+        for element in ("lan-enabled", "local-access-enabled"):
+            off = f"<{element}>false</{element}>"
+            if off in text:
+                text = text.replace(off, f"<{element}>true</{element}>")
+                switched.append(element)
+        if not switched:
+            return None
+        evidence = self.queue_file.parent
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "dsn-original.xml").write_bytes(payload)
+        (evidence / "dsn-rewritten.xml").write_text(text)
+        _LOGGER.warning("DSN rewrite: flipped %s in config reply (evidence in %s)",
+                        ", ".join(switched), evidence)
+        return text.encode()
+
     # -- the Home-Assistant-facing side --------------------------------
     async def write_handler(self, request: web.Request) -> web.Response:
         """POST /write {"setpoint": 140} or {"mode": "heat_pump"}.
@@ -464,7 +499,10 @@ class Relay:
 
     async def run(self) -> None:
         module_app = web.Application()
-        module_app.router.add_route("*", "/devices/{tail:.*}", self._route)
+        # Everything the module dials goes upstream verbatim; /dsns/ (fetched
+        # during re-registration) is the one path outside /devices and must not
+        # fall to a default 404 -- the module is mid-boot when it asks.
+        module_app.router.add_route("*", "/{tail:.*}", self._route)
         state_app = web.Application()
         state_app.router.add_get("/state", self.state_handler)
         state_app.router.add_get("/health", self.health_handler)
@@ -676,6 +714,8 @@ class Relay:
             return await self.telemetry(request)
         if "commands.xml" in request.path:
             return await self.proxy(request, transform=self._inject)
+        if self.dsn_lan_rewrite and "/dsns/" in request.path:
+            return await self.proxy(request, transform=self._rewrite_dsn)
         if self.nudges_left and request.method == "GET":
             self.nudges_left -= 1
             # No body, and nothing forwarded: this is the module's cue to
