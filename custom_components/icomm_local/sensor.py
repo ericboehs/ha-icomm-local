@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, MODES
 
 F = UnitOfTemperature.FAHRENHEIT
 
@@ -27,7 +27,6 @@ SPECS = [
     ("water_bottom", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
     ("max_setpoint", "Max setpoint", F, SensorDeviceClass.TEMPERATURE, None),
-    ("mode", "Mode", None, None, None),
     ("watts", "Power", UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("volts", "Line voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,
      SensorStateClass.MEASUREMENT),
@@ -43,7 +42,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         IcommSensor(coordinator, field, name, unit, device_class, state_class)
         for field, name, unit, device_class, state_class in SPECS
     ]
-    entities += [RelayHealthSensor(coordinator), PendingWriteSensor(coordinator)]
+    entities += [ModeSensor(coordinator), RelayHealthSensor(coordinator),
+                 PendingWriteSensor(coordinator)]
     async_add_entities(entities)
 
 
@@ -147,3 +147,27 @@ class PendingWriteSensor(_RelaySensor):
         data = self.coordinator.data or {}
         return {"pending": data.get("pending"), "last_write": data.get("last_write"),
                 "writes_confirmed": data.get("writes_confirmed")}
+
+
+class ModeSensor(IcommSensor):
+    """Operating mode as a translated enum: "Heat pump", not `heat_pump`.
+
+    Icons per state live in icons.json. A mode the relay has never seen (guest and
+    vacation were never captured) reads as unknown: an ENUM sensor that reports a
+    value outside its options raises inside Home Assistant, and an uncaptured mode
+    must not take the entity down.
+    """
+
+    _attr_translation_key = "mode"
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "mode", None, device_class=SensorDeviceClass.ENUM)
+        # The name comes from translations; unique_id unchanged, so the entity_id
+        # (sensor.icomm_water_heater_mode) and its history survive the upgrade.
+        del self._attr_name
+        self._attr_options = list(MODES)
+
+    @property
+    def native_value(self):
+        value = super().native_value
+        return value if value in MODES else None

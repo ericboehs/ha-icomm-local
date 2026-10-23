@@ -134,3 +134,37 @@ async def test_metric_home_converts_both_ways(hass: HomeAssistant, aioclient_moc
         {"entity_id": "water_heater.icomm_water_heater", "temperature": 60}, blocking=True)
     posts = [c for c in aioclient_mock.mock_calls if c[0] == "POST"]
     assert posts[-1][2] == {"setpoint": 140.0}                  # 60 C
+
+
+async def test_mode_is_a_translated_enum(hass: HomeAssistant, aioclient_mock) -> None:
+    """Raw `heat_pump` with an eye icon on the dashboard was the bug report."""
+    await _setup(hass, aioclient_mock)
+    state = hass.states.get("sensor.icomm_water_heater_mode")   # entity_id unchanged
+    assert state.state == "heat_pump"
+    assert state.attributes["device_class"] == "enum"
+    assert state.attributes["options"] == ["electric", "hybrid", "heat_pump"]
+    assert state.attributes["friendly_name"] == "iCOMM Water Heater Mode"
+    from homeassistant.helpers import entity_registry as er
+    entry = er.async_get(hass).async_get("sensor.icomm_water_heater_mode")
+    assert entry.translation_key == "mode"
+
+
+async def test_mode_icons_and_labels_ship(hass: HomeAssistant) -> None:
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "custom_components" / "icomm_local"
+    icons = json.loads((root / "icons.json").read_text())["entity"]["sensor"]["mode"]["state"]
+    labels = json.loads((root / "translations" / "en.json").read_text())
+    labels = labels["entity"]["sensor"]["mode"]["state"]
+    for mode in ("electric", "hybrid", "heat_pump"):
+        assert icons[mode].startswith("mdi:") and labels[mode]
+
+
+async def test_uncaptured_mode_reads_unknown_not_an_error(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """guest/vacation were never captured; an ENUM outside its options raises in HA."""
+    state = copy.deepcopy(STATE)
+    state["mode"] = "vacation"
+    await _setup(hass, aioclient_mock, state)
+    assert hass.states.get("sensor.icomm_water_heater_mode").state == "unknown"

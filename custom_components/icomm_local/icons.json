@@ -1,0 +1,14 @@
+{
+  "entity": {
+    "sensor": {
+      "mode": {
+        "default": "mdi:water-boiler",
+        "state": {
+          "heat_pump": "mdi:heat-pump",
+          "hybrid": "mdi:leaf",
+          "electric": "mdi:lightning-bolt"
+        }
+      }
+    }
+  }
+}

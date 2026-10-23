@@ -171,22 +171,17 @@ On a plain Linux host, use the systemd unit (`relay/icomm-relay.service`).
 
 ### 2. Steering the water heater to the relay (required)
 
-The module must send its cloud traffic to the relay host. It resolves its
-endpoints with public DNS (1.1.1.1 directly — it ignores the gateway's DNS, so
-a DNS override will **not** work). The mechanism that does:
+The module must send its cloud traffic to the relay host: a destination-NAT rule
+on the gateway (module's TCP 443 → `<relay-host>:8444`) plus a source-NAT rule for
+the hairpin return path. A DNS override does **not** work — the module asks 1.1.1.1
+directly.
 
-```bash
-# on the gateway (Ubiquiti example; any iptables router works)
-iptables -t nat -I PREROUTING 1 -s <module-ip> -p tcp --dport 443 \
-  -m comment --comment icomm-relay -j DNAT --to-destination <relay-host>:8444
-iptables -t nat -I POSTROUTING 1 -s <module-ip> -d <relay-host> -p tcp --dport 8444 \
-  -m comment --comment icomm-relay -j SNAT --to-source <gateway-ip>
-conntrack -D -s <module-ip> -p tcp --dport 443   # break the old connection so it re-dials
-```
+**[docs/STEERING.md](docs/STEERING.md)** has the full recipe, including native
+UniFi NAT rules (Policy Table → NAT) that survive reboots and firmware updates,
+the raw `iptables` version, and how to check it is working.
 
-**Black-hole warning:** if these rules are armed and the relay is down, the
-water heater has no cloud at all — silently. Remove the rules if you stop the
-relay (`iptables -t nat -D ...` or match on the `icomm-relay` comment).
+**Black-hole warning:** while the rules are active the relay is the water heater's
+only route to the cloud. If you stop the relay, disable the NAT rules too.
 
 ### 3. The integration
 
