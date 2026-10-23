@@ -29,6 +29,36 @@ The power number is *live*, not the app's derived figure: the telemetry carries
 the element's 4500 W when energised, the compressor's ~350 W when the heat pump
 runs, and 0 when idle.
 
+## Writes (working, cloud-assisted)
+
+Writes are delivered by rewriting the reply to the module's own command poll, so
+the appliance never learns where a command came from:
+
+```bash
+curl -X POST -d '{"setpoint": 139}' http://127.0.0.1:8124/write
+curl -X POST -d '{"mode": "electric"}' http://127.0.0.1:8124/write   # or hybrid, heat_pump
+curl -X POST http://127.0.0.1:8124/write/cancel                     # give up on queued writes
+```
+
+A queued write is delivered on the module's next `commands.xml` poll, replacing
+whatever Ayla had queued for that reply — verified by queueing 139 °F locally while
+a cloud write asked for 142 °F: the tank took 139. Delivery is *not* success; the
+write stays `pending` until telemetry shows it took effect, because a frame can be
+delivered and ignored (the BLE map's mode register at block 26 is exactly that).
+
+Safety rules, all tested: setpoints clamp to the ceiling the appliance advertises
+(and to a hard cap, so a garbage `max_setpoint` cannot become an unbounded write);
+only the newest write per register survives; a stale appliance **holds** writes
+rather than injecting into a device that ignores them.
+
+**The honest limitation:** polls happen only when Ayla notifies the module that a
+command exists, so a queued write needs something to ring that bell. A plain
+reconnect does not poll (measured), and the local nudge (`POST /nudge`, which
+answers a request with 401 to force re-registration) cannot fire while the module is
+idle because an idle module issues no GETs — only telemetry POSTs. So today:
+writes ride the doorbell a cloud write rings, or wait for a natural poll. A fully
+local trigger is the open problem.
+
 ## How it works
 
 The iCOMM module dials `proxy-ingress-usfield.aylanetworks.com` on its own
@@ -111,13 +141,27 @@ Then add the *iCOMM Local* integration and point it at the relay's state URL
   path survives the interception, which is what makes phase 3 (writes) viable.
 - The certificate is not validated *at all*: `CN=garbage.example`, no SAN, accepted.
 - Add-on entrypoint: fresh install up in ~1 s with keys minted into `/data/certs`.
+- **A write delivered by the relay**: local 139 °F beat the cloud's 142 °F, confirmed
+  by telemetry 0.6 s later. All seven frames Ayla ever sent are reproduced byte for
+  byte by the encoder (that is a test, not a claim).
+- 60 tests, no mocking of the appliance: real captured payloads and real handshakes,
+  including a TLS 1.2 DHE handshake and a refused TLS 1.3 one.
 
 ## Status
 
-Phase 1 (read-only relay + sensors) — working against a live HPS10-50H45DV.
-Phase 2 (resilience: degraded-state detection, safe fallbacks) and phase 3
-(writes: setpoint and mode, delivered on the module's own polls) are designed in
-the research repo's `PLUGIN.md` and land here next.
+- **Phase 1, read-only relay + sensors** — verified against a live HPS10-50H45DV.
+- **Phase 3, writes** — mechanism proven (see above); no fully local trigger yet.
+- **Phase 2, resilience** — degraded-state detection gates injection, but the
+  richer symptom table from the research repo's `PLUGIN.md` is not implemented.
+- The Home Assistant integration is read-only: writes are exposed over the relay's
+  HTTP API today, not as HA services yet.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && python -m pytest
+```
 
 ## License
 

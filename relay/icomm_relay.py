@@ -125,6 +125,11 @@ class Relay:
         self.pending: dict[str, PendingWrite] = {}
         self.last_write: dict | None = None
         self.writes_delivered = 0
+        # The local doorbell: answering once with 401 makes the module
+        # re-register (measured), and a re-registration fetches the full
+        # configuration -- which carries the setBlockParameter property a write
+        # rides on. Left at 0 unless someone asks for a nudge.
+        self.nudges_left = 0
         self.writes_confirmed = 0
         self.injections_held = 0
         # Pinned Entrust G2 for upstream verification: certifi dropped it, so
@@ -351,6 +356,7 @@ class Relay:
         state_app = web.Application()
         state_app.router.add_get("/state", self.state_handler)
         state_app.router.add_get("/health", self.health_handler)
+        state_app.router.add_post("/nudge", self.nudge_handler)
         state_app.router.add_post("/write", self.write_handler)
         state_app.router.add_post("/write/cancel", self.write_cancel_handler)
 
@@ -374,12 +380,33 @@ class Relay:
         finally:
             await self.client.close()
 
+    async def nudge_handler(self, request: web.Request) -> web.Response:
+        """POST /nudge -- ask the module to re-register, without the cloud.
+
+        Delivery otherwise waits for Ayla to notify the module that a command
+        exists. A 401 on a normal request sends it through re-registration
+        instead, whose configuration fetch we can answer with a queued write.
+        Kept explicit and counted: churning a module that self-heals slowly is
+        not something to do on a timer.
+        """
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        self.nudges_left = int(body.get("attempts", 1))
+        return web.json_response({"nudges_left": self.nudges_left})
+
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
         if "superBlockDyn1" in request.path:
             return await self.telemetry(request)
         if "commands.xml" in request.path:
             return await self.proxy(request, transform=self._inject)
+        if self.nudges_left and request.method == "GET":
+            self.nudges_left -= 1
+            # No body, and nothing forwarded: this is the module's cue to
+            # re-register, not a failure to paper over.
+            return web.Response(status=401, text="")
         return await self.proxy(request)
 
 
