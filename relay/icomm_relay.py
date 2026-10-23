@@ -441,6 +441,23 @@ class Relay:
         reasons: list[str] = []
         unobservable = ["ops keepalives (UDP, gateway-side)", "GraphQL write status (app API)"]
 
+        # Silence is checked before the "too few dials" shortcut on purpose: a
+        # wedged module is the case that must never report as merely unknown. It
+        # answers ARP and ICMP and sends nothing at all -- no telemetry, no polls,
+        # not even the ops keepalives -- so there may be no dials to study.
+        if silent is not None and silent > 900:
+            return {
+                "state": "degraded",
+                "reasons": [f"no telemetry for {silent / 60:.0f} minutes"],
+                "remediation": (
+                    "Flip the water heater's breaker off for ~30 seconds, then on. "
+                    "It re-registers and fetches everything Ayla had queued, so "
+                    "nothing is lost. Retrying writes cannot fix this state."
+                ),
+                "evidence": {"dials": len(dials), "polls": polls,
+                             "silent_s": round(silent)},
+                "unobservable": unobservable,
+            }
         if len(dials) < 3:
             return {"state": "unknown", "reasons": ["too few dials observed yet"],
                     "evidence": {"dials": len(dials)}, "unobservable": unobservable}
@@ -451,8 +468,6 @@ class Relay:
             reasons.append(
                 f"{single_request_dials}/{len(recent)} dials carried a single "
                 f"request, telemetry every ~{median_gap:.0f}s, no polls")
-        if silent is not None and silent > 900:
-            reasons.append(f"no telemetry for {silent / 60:.0f} minutes")
         if self.pending and silent is not None and silent > 600:
             reasons.append("a write is queued and the appliance is not listening")
 

@@ -41,7 +41,24 @@ def _dial(relay: Relay, clock, paths: list[str], gap: float) -> None:
 
 
 def test_unknown_before_enough_dials(relay: Relay, _clock) -> None:
+    relay.last_telemetry = _clock["now"]
     assert relay.health()["state"] == "unknown"
+
+
+def test_wedged_module_is_degraded_not_unknown(relay: Relay, _clock) -> None:
+    """The bug this test exists for: a totally silent module reported "unknown".
+
+    Observed on hardware -- the module answered ARP and ICMP from the gateway and
+    sent nothing at all, not even ops keepalives. With no dials to study, the
+    too-few-dials shortcut swallowed it, and "unknown" is precisely the answer that
+    does not tell a human to flip the breaker.
+    """
+    relay.last_telemetry = _clock["now"]
+    _clock["now"] += 901
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert health["evidence"]["dials"] == 0
+    assert "breaker" in health["remediation"].lower()
 
 
 def test_healthy_dials(relay: Relay, _clock) -> None:
