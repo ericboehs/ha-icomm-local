@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-import homeassistant.helpers.config_validation as cv
 
 STEP_SCHEMA = vol.Schema(
     {vol.Required(CONF_URL, default="http://127.0.0.1:8124"): cv.string}

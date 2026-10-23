@@ -1,0 +1,14 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# aiohttp's TestServer binds ephemeral ports; keep the suite hermetic and quick.
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The CRC table and captured payloads are recovered artefacts; leave them alone.
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

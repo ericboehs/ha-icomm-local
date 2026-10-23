@@ -39,15 +39,32 @@ Env:
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import os
 import ssl
 import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
 
 TEMP_F = 1.8 / 256.0
+
+
+@dataclass
+class PendingWrite:
+    """A write waiting for the appliance to ask for it."""
+
+    kind: str          # "setpoint" or "mode"
+    value: object      # degrees F, or the mode name
+    frame: str         # the encoded frame, in the spaced hex Ayla uses
+    queued: float = field(default_factory=time.time)
+    attempts: int = 0
+    delivered: float | None = None
+    confirmed: float | None = None
+    replaced_upstream: bool | None = None
+    superseded: int | None = None
 
 # The register atlas, measured field by field. Offsets are into the five blocks
 # of the module's superBlockDyn1 telemetry (block lengths 8/146/230/52/52;
@@ -102,6 +119,14 @@ class Relay:
         self.started = time.time()
         self.upstream_errors = 0
         self.client: ClientSession | None = None
+        # Writes wait here until the appliance asks for them. Only the newest
+        # request per register survives: the appliance applies one frame at a
+        # time, and delivering a stale queued value after a newer one is a bug.
+        self.pending: dict[str, PendingWrite] = {}
+        self.last_write: dict | None = None
+        self.writes_delivered = 0
+        self.writes_confirmed = 0
+        self.injections_held = 0
         # Pinned Entrust G2 for upstream verification: certifi dropped it, so
         # default verification fails against Ayla's ingress. Public CA cert.
         ca = Path(__file__).parent / "upstream-entrust-g2.pem"
@@ -109,12 +134,14 @@ class Relay:
         self.upstream_ssl = ssl.create_default_context(cafile=str(ca)) if ca.exists() else None
 
     # -- the module-facing side ---------------------------------------
-    async def proxy(self, request: web.Request) -> web.Response:
-        """Forward a request upstream verbatim; decode telemetry as it passes.
+    async def proxy(self, request: web.Request,
+                    transform=None) -> web.Response:
+        """Forward a request upstream verbatim, optionally rewriting the reply.
 
-        The appliance's cloud view must stay intact (the mobile app depends on
-        it), so the response is returned exactly as Ayla sent it. Nothing is
-        modified in phase 1.
+        The appliance's cloud view must stay intact -- the mobile app depends on
+        it -- so replies are returned exactly as Ayla sent them, with one
+        exception: a command poll may carry a locally queued write instead of
+        (never in addition to) whatever Ayla had queued for it.
         """
         body = await request.read()
         headers = {
@@ -129,6 +156,10 @@ class Relay:
                 ssl=self.upstream_ssl,
             ) as upstream:
                 payload = await upstream.read()
+                if transform is not None and upstream.status == 200:
+                    rewritten = transform(payload)
+                    if rewritten is not None:
+                        payload = rewritten
                 response = web.Response(status=upstream.status, body=payload)
                 for k, v in upstream.headers.items():
                     if k.lower() not in {"content-length", "transfer-encoding",
@@ -142,8 +173,16 @@ class Relay:
             if request.method == "POST":
                 return web.Response(status=200, text="")
             if "commands.xml" in request.path:
+                # A synthetic empty reply is the only one Ayla's outage gives us;
+                # it is also a perfectly good carrier for a queued write.
+                synthetic = ("<commands>\n  <properties/>\n  <schedules/>\n"
+                             "  <cmds/>\n</commands>\n")
+                if transform is not None:
+                    rewritten = transform(synthetic.encode())
+                    if rewritten is not None:
+                        synthetic = rewritten.decode(errors="replace")
                 return web.Response(status=200, text_type="application/xml",
-                                    text="<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n")
+                                    text=synthetic)
             return web.Response(status=503, text="")
 
     async def telemetry(self, request: web.Request) -> web.Response:
@@ -160,13 +199,124 @@ class Relay:
                 self.last_telemetry = time.time()
             except (IndexError, ValueError):
                 pass
+            self._confirm_pending()
         return await self.proxy(request)
 
+    # -- the write path ------------------------------------------------
+    def queue_write(self, kind: str, value) -> PendingWrite:
+        """Accept a write, clamped to what the appliance itself allows.
+
+        The limits come from the appliance's telemetry, not from a hard-coded
+        policy: this relay must not be the reason a tank is asked to do something
+        its own controller advertises as out of range.
+        """
+        if kind == "setpoint":
+            ceiling = min(float(self.state.get("max_setpoint") or 150.0),
+                          frames.HARD_MAX_SETPOINT)
+            value = float(value)
+            if not frames.MIN_SETPOINT <= value <= ceiling:
+                raise ValueError(
+                    f"setpoint {value} outside {frames.MIN_SETPOINT}-{ceiling} F")
+            payload_frame = frames.as_text(frames.setpoint_frame(value))
+        elif kind == "mode":
+            value = str(value)
+            payload_frame = frames.as_text(frames.mode_frame(value))
+        else:
+            raise ValueError(f"unknown write kind {kind!r}")
+
+        superseded = 0
+        if kind in self.pending:
+            superseded = (self.pending[kind].superseded or 0) + 1
+        write = PendingWrite(kind=kind, value=value, frame=payload_frame,
+                             superseded=superseded or None)
+        self.pending[kind] = write
+        return write
+
+    def _confirm_pending(self) -> None:
+        """Retire a write once telemetry shows it took effect.
+
+        Confirmation is the appliance's own report, never our own ack: a frame can
+        be delivered and ignored (the BLE register at block 26 is exactly that).
+        """
+        confirmed = []
+        for kind, write in self.pending.items():
+            if kind == "setpoint":
+                got = self.state.get("setpoint")
+                took = got is not None and abs(float(got) - float(write.value)) <= 0.5
+            else:
+                took = self.state.get("mode") == write.value
+            if took:
+                write.confirmed = time.time()
+                self.writes_confirmed += 1
+                confirmed.append(kind)
+        for kind in confirmed:
+            write = self.pending.pop(kind)
+            self.last_write = {**asdict(write), "outcome": "confirmed"}
+
+    def _inject(self, payload: bytes) -> bytes | None:
+        """Put the oldest queued write into a command reply, if it is safe to.
+
+        Gated on freshness on purpose: an appliance in its degraded state ignores
+        queued commands entirely (and the cure for that is a breaker flip, not
+        more writes), so holding is the honest response rather than pretending a
+        write was delivered into a hole.
+        """
+        if not self.pending:
+            return None
+        if not self.last_telemetry or time.time() - self.last_telemetry > 600:
+            self.injections_held += 1
+            return None
+        write = self.pending[sorted(self.pending)[0]]
+        text = payload.decode(errors="replace")
+        rewritten, replaced = frames.rewrite_commands(text, write.frame)
+        if rewritten == text:
+            return None
+        write.attempts += 1
+        write.delivered = time.time()
+        write.replaced_upstream = replaced
+        self.writes_delivered += 1
+        return rewritten.encode()
+
     # -- the Home-Assistant-facing side --------------------------------
+    async def write_handler(self, request: web.Request) -> web.Response:
+        """POST /write {"setpoint": 140} or {"mode": "heat_pump"}.
+
+        Queues, never delivers: delivery happens on the appliance's own schedule,
+        when it asks for commands. A write that is queued is not a write that
+        happened, so the response says `queued`, and `GET /state` reports whether
+        the appliance ever confirmed it.
+        """
+        try:
+            body = await request.json()
+        except ValueError:
+            return web.json_response({"error": "expected JSON"}, status=400)
+        kind = "setpoint" if "setpoint" in body else "mode" if "mode" in body else None
+        if kind is None:
+            return web.json_response({"error": "give setpoint or mode"}, status=400)
+        try:
+            write = self.queue_write(kind, body[kind])
+        except ValueError as err:
+            return web.json_response({"error": str(err)}, status=400)
+        return web.json_response({"queued": asdict(write), "pending": len(self.pending)})
+
+    async def write_cancel_handler(self, request: web.Request) -> web.Response:
+        dropped = {kind: asdict(w) for kind, w in self.pending.items()}
+        self.pending.clear()
+        return web.json_response({"cancelled": dropped})
+
     async def state_handler(self, request: web.Request) -> web.Response:
         out = dict(self.state)
-        out["last_telemetry_age"] = round(time.time() - self.last_telemetry, 1) if self.last_telemetry else None
+        age = round(time.time() - self.last_telemetry, 1) if self.last_telemetry else None
+        out["last_telemetry_age"] = age
         out["upstream_errors"] = self.upstream_errors
+        out["pending"] = {
+            kind: {k: v for k, v in asdict(write).items() if v is not None}
+            for kind, write in self.pending.items()
+        }
+        out["last_write"] = self.last_write
+        out["writes_delivered"] = self.writes_delivered
+        out["writes_confirmed"] = self.writes_confirmed
+        out["injections_held"] = self.injections_held
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -201,6 +351,8 @@ class Relay:
         state_app = web.Application()
         state_app.router.add_get("/state", self.state_handler)
         state_app.router.add_get("/health", self.health_handler)
+        state_app.router.add_post("/write", self.write_handler)
+        state_app.router.add_post("/write/cancel", self.write_cancel_handler)
 
         runner_state = web.AppRunner(state_app)
         await runner_state.setup()
@@ -223,15 +375,14 @@ class Relay:
             await self.client.close()
 
     async def _route(self, request: web.Request) -> web.Response:
-        """The module's three requests; telemetry gets decoded on the way."""
+        """The module's requests; telemetry gets decoded, polls may get a write."""
         if "superBlockDyn1" in request.path:
             return await self.telemetry(request)
+        if "commands.xml" in request.path:
+            return await self.proxy(request, transform=self._inject)
         return await self.proxy(request)
 
 
 if __name__ == "__main__":
-    relay = Relay()
-    try:
-        asyncio.run(relay.run())
-    except KeyboardInterrupt:
-        pass
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(Relay().run())

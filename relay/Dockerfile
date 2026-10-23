@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY icomm_relay.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
+COPY icomm_relay.py icomm_frames.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
 RUN chmod +x /app/gen-cert.sh /app/run.sh
 
 CMD ["/app/run.sh"]

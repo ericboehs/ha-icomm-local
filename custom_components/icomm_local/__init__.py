@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 
 from aiohttp import ClientError
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-    UpdateFailed,
-)
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
 from .const import DOMAIN, POLL_SECONDS
 
 
@@ -24,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     async def fetch() -> dict:
         try:
             resp = await session.get(f"{url}/state", timeout_seconds=5)
-        except (ClientError, asyncio.TimeoutError) as err:
+        except (TimeoutError, ClientError) as err:
             raise UpdateFailed(f"relay unreachable: {err}") from err
         if resp.status != 200:
             raise UpdateFailed(f"relay returned {resp.status}")
