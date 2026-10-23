@@ -39,7 +39,8 @@ try:
 except (OSError, ValueError):
     opts = {}
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
-                 ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN")):
+                 ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
+                 ("aosmith_email", "AOSMITH_EMAIL"), ("aosmith_password", "AOSMITH_PASSWORD")):
     if opts.get(key) not in (None, ""):
         print(f"export {env}={shlex.quote(str(opts[key]))}")
 PY

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from aiohttp import ClientError
+from aiohttp import ClientError, ClientTimeout
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -13,6 +13,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DOMAIN, POLL_SECONDS, TIMEOUT_SECONDS
 from .services import async_setup_services
 
+PLATFORMS = ["sensor", "water_heater"]
+
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     url = entry.data[CONF_URL].rstrip("/")
@@ -20,7 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     async def fetch() -> dict:
         try:
-            resp = await session.get(f"{url}/state", timeout_seconds=TIMEOUT_SECONDS)
+            resp = await session.get(f"{url}/state", timeout=ClientTimeout(total=TIMEOUT_SECONDS))
         except (TimeoutError, ClientError) as err:
             raise UpdateFailed(f"relay unreachable: {err}") from err
         if resp.status != 200:
@@ -44,12 +46,12 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     if not hass.services.has_service(DOMAIN, "set_setpoint"):
         await async_setup_services(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
-    unload = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    unload = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload:
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:

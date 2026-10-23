@@ -52,6 +52,7 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
+from icomm_doorbell import Doorbell
 
 _LOGGER = logging.getLogger("icomm_relay")
 
@@ -127,7 +128,13 @@ class Relay:
         self.upstream = os.environ.get("UPSTREAM", "proxy-ingress-usfield.aylanetworks.com")
         self.listen_port = int(os.environ.get("LISTEN_PORT", "8444"))
         self.state_port = int(os.environ.get("STATE_PORT", "8124"))
+        # Loopback by default: the add-on shares the host network with HA. A dev
+        # relay on another machine sets 0.0.0.0 -- the API is unauthenticated, so
+        # only on a trusted LAN.
+        self.state_host = os.environ.get("STATE_HOST", "127.0.0.1")
         self.device_dsn = os.environ.get("DEVICE_DSN", "")
+        self.doorbell = Doorbell(os.environ.get("AOSMITH_EMAIL", ""),
+                                 os.environ.get("AOSMITH_PASSWORD", ""), self.device_dsn)
         self.state: dict = {"online": False}
         self.last_telemetry = 0.0
         self.started = time.time()
@@ -398,7 +405,11 @@ class Relay:
             write = self.queue_write(kind, body[kind])
         except ValueError as err:
             return web.json_response({"error": str(err)}, status=400)
-        return web.json_response({"queued": asdict(write), "pending": len(self.pending)})
+        # Without a poll the write just waits; the doorbell makes the cloud ask
+        # the module to poll, and the poll carries our frame.
+        self.doorbell.ring(kind, write.value)
+        return web.json_response({"queued": asdict(write), "pending": len(self.pending),
+                                  "doorbell": self.doorbell.enabled})
 
     async def write_cancel_handler(self, request: web.Request) -> web.Response:
         dropped = {kind: asdict(w) for kind, w in self.pending.items()}
@@ -422,6 +433,7 @@ class Relay:
         out["writes_delivered"] = self.writes_delivered
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
+        out["doorbell"] = self.doorbell.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -462,7 +474,7 @@ class Relay:
 
         runner_state = web.AppRunner(state_app)
         await runner_state.setup()
-        await web.TCPSite(runner_state, "127.0.0.1", self.state_port).start()
+        await web.TCPSite(runner_state, self.state_host, self.state_port).start()
 
         runner_module = web.AppRunner(module_app)
         await runner_module.setup()
@@ -475,7 +487,8 @@ class Relay:
         timeout = ClientTimeout(total=30)  # Ayla answers in ~100 ms when healthy
         self.client = ClientSession(timeout=timeout, raise_for_status=False)
         print(f"icomm_local relay: module on :{self.listen_port} (TLS), "
-              f"state on 127.0.0.1:{self.state_port}, upstream {self.upstream}")
+              f"state on {self.state_host}:{self.state_port}, upstream {self.upstream}, "
+              f"doorbell {'on' if self.doorbell.enabled else 'off'}")
         try:
             await asyncio.Event().wait()
         finally:

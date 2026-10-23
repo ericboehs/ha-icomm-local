@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.1.0"
+version: "0.2.0"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -17,10 +17,16 @@ options:
   state_port: 8124
   upstream: proxy-ingress-usfield.aylanetworks.com
   device_dsn: ""
+  aosmith_email: ""
+  aosmith_password: ""
 schema:
   listen_port: port
   state_port: port
   upstream: str
   device_dsn: str?
+  # Optional cloud doorbell: lets a write from HA land in seconds instead of waiting
+  # for a natural poll. Leave empty to stay purely local.
+  aosmith_email: str?
+  aosmith_password: password?
 map:
   - share:ro

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from aiohttp import ClientError
+from aiohttp import ClientError, ClientTimeout
 from homeassistant import config_entries
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
@@ -19,7 +19,7 @@ async def _relay_reachable(hass: HomeAssistant, url: str) -> dict | None:
     """The relay answers /health with {"ok": true} when it is running."""
     session = async_get_clientsession(hass)
     try:
-        resp = await session.get(f"{url.rstrip('/')}/health", timeout_seconds=5)
+        resp = await session.get(f"{url.rstrip('/')}/health", timeout=ClientTimeout(total=5))
     except (ClientError, TimeoutError):
         return None
     if resp.status != 200:

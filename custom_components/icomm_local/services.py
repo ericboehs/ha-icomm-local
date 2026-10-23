@@ -40,8 +40,9 @@ def _coordinator(hass: HomeAssistant):
     return next(iter(entries.values()))
 
 
-async def _post(hass: HomeAssistant, path: str, payload: dict | None = None) -> dict:
-    coordinator = _coordinator(hass)
+async def _post(hass: HomeAssistant, path: str, payload: dict | None = None,
+                coordinator=None) -> dict:
+    coordinator = coordinator or _coordinator(hass)
     session = async_get_clientsession(hass)
     url = f"{coordinator.relay_url}{path}"
     try:

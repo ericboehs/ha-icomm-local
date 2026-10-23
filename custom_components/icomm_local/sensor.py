@@ -39,13 +39,17 @@ SPECS = [
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback):
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities: list[SensorEntity] = [
         IcommSensor(coordinator, field, name, unit, device_class, state_class)
         for field, name, unit, device_class, state_class in SPECS
-    )
+    ]
+    entities += [RelayHealthSensor(coordinator), PendingWriteSensor(coordinator)]
+    async_add_entities(entities)
 
 
 class IcommSensor(CoordinatorEntity, SensorEntity):
+    # Entity names are relative to the device: sensor.icomm_water_heater_power.
+    _attr_has_entity_name = True
     def __init__(self, coordinator, field, name, unit=None, device_class=None,
                  state_class=None):
         super().__init__(coordinator)
@@ -77,6 +81,69 @@ class IcommSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         return {
             "identifiers": {("icomm_local", "water_heater")},
-            "name": "Water Heater (iCOMM local)",
+            "name": "iCOMM Water Heater",
             "manufacturer": "A. O. Smith",
         }
+
+
+DEVICE_INFO = {
+    "identifiers": {("icomm_local", "water_heater")},
+    "name": "iCOMM Water Heater",
+    "manufacturer": "A. O. Smith",
+}
+
+
+class _RelaySensor(CoordinatorEntity, SensorEntity):
+    """About the relay rather than the tank: available whenever the relay answers."""
+
+    _attr_has_entity_name = True
+
+    @property
+    def device_info(self):
+        return DEVICE_INFO
+
+
+class RelayHealthSensor(_RelaySensor):
+    """healthy / idle / degraded / unknown -- with what the relay cannot see."""
+
+    _attr_unique_id = "icomm_local_health"
+    _attr_name = "Relay health"
+    _attr_icon = "mdi:heart-pulse"
+
+    @property
+    def native_value(self):
+        return ((self.coordinator.data or {}).get("health") or {}).get("state")
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        health = data.get("health") or {}
+        return {
+            "reasons": health.get("reasons"),
+            "remediation": health.get("remediation"),
+            "unobservable": health.get("unobservable"),
+            "last_telemetry_age_s": data.get("last_telemetry_age"),
+            "upstream_errors": data.get("upstream_errors"),
+            "doorbell": data.get("doorbell"),
+        }
+
+
+class PendingWriteSensor(_RelaySensor):
+    """What is queued and not yet confirmed by the tank's own telemetry."""
+
+    _attr_unique_id = "icomm_local_pending"
+    _attr_name = "Pending write"
+    _attr_icon = "mdi:timer-sand"
+
+    @property
+    def native_value(self):
+        pending = (self.coordinator.data or {}).get("pending") or {}
+        if not pending:
+            return "none"
+        return ", ".join(f"{kind} {w.get('value')}" for kind, w in sorted(pending.items()))
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        return {"pending": data.get("pending"), "last_write": data.get("last_write"),
+                "writes_confirmed": data.get("writes_confirmed")}

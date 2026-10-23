@@ -101,6 +101,31 @@ that a *healthy idle* module shows the same trace as the researched "degraded" o
 telemetry-only dials, 60–240 s apart, no polls — so the relay does not claim to
 detect a wedge from HTTPS shape alone.
 
+
+## Home Assistant entities
+
+| Entity | What it is |
+|---|---|
+| `water_heater.icomm_water_heater` | thermostat card: target temperature + mode (electric / heat_pump / eco = hybrid). Shows the queued target until telemetry confirms it. |
+| `sensor.icomm_water_heater_*` | water top/bottom, setpoint, max setpoint, mode, power, line voltage, air at unit, Wi-Fi RSSI |
+| `sensor.icomm_water_heater_relay_health` | healthy / idle / degraded / unknown, with reasons, remediation and what the relay *cannot* observe |
+| `sensor.icomm_water_heater_pending_write` | what is queued and not yet confirmed |
+
+## The cloud doorbell (optional)
+
+The module only fetches commands when Ayla tells it one is waiting, and every local
+way to make it poll has been tested and failed. With `aosmith_email` /
+`aosmith_password` set (add-on options, or `AOSMITH_EMAIL` / `AOSMITH_PASSWORD`),
+the relay sends the *same* write through A.O. Smith's API after queueing it: Ayla
+rings, the module polls through the relay, and the relay answers with its own frame.
+Writes then land in seconds. Each ring logs in and out (sessions are single-seat, so
+a held login would keep knocking the phone app off); writes are debounced 2 s so a
+slider makes one call. Leave the credentials empty to stay purely local — writes
+then wait for a poll the cloud starts for its own reasons.
+
+Timing once delivered: electric mode starts heating within ~30 s; heat pump has a
+~3 min compressor delay (measured: watts 0 → 356 three minutes after acceptance).
+
 ## How it works
 
 The iCOMM module dials `proxy-ingress-usfield.aylanetworks.com` on its own

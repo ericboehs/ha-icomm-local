@@ -35,3 +35,18 @@ jobs:
         uses: frenck/action-addon-linter@v2
         with:
           path: "./relay"
+
+  # The integration inside real Home Assistant. Added after a TypeError that no
+  # other test could see (`timeout_seconds=` is not an aiohttp keyword) would have
+  # broken the very first refresh on a real install.
+  ha-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install Home Assistant test harness
+        run: pip install pytest-homeassistant-custom-component
+      - name: Test
+        run: python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto
