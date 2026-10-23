@@ -1,0 +1,11 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "The icomm_local relay must be running and reachable.",
+        "data": {"url": "Relay state URL (e.g. http://127.0.0.1:8124)"}
+      }
+    },
+    "error": {"cannot_connect": "Could not reach the relay at that URL."}
+  }
+}
