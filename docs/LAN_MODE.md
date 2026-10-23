@@ -73,15 +73,23 @@ should not delete that file after the module has learned it.
   the rewritten config was never fetched — re-register again. 412 means the
   module is armed but has no key — it should then fetch `lan.json`; watch for
   `key_served: true`.
-- **If key exchanges fail with "bad LAN signature":** the module holds a key
-  this relay did not issue (e.g. from an earlier experiment whose key was never
-  saved). It will not ask for a replacement on its own. The known-clean
-  recovery is a fresh relay key *plus* getting the module back to a keyless
-  state, and the clean way to force that is not yet established (the agent
-  wipes its key only on local config changes, never over the network). Until
-  it is, the cloud poll path remains the fallback for such a module. Treat
-  deleting `/data/lanip.json` on an armed system as the same problem in
-  miniature: don't.
+- **If the module holds a key this relay did not issue** (an earlier
+  experiment, or a deleted `/data/lanip.json`): it will not ask for a
+  replacement — `lan.json` is only fetched when keyless. Measured on the real
+  tank: Wi-Fi re-provisioning does **not** clear the stored key, and neither
+  does the Wi-Fi radio factory reset (handbook p. 69, 10-second hold).
+  The symptom is registration succeeding (202, not 412) while key exchanges
+  repeat every heartbeat and no telemetry arrives.
+
+  **The repair is `lanip_push`.** Ayla's own reverse-REST command,
+  `PUT lanip.json`, sets *and saves* a new key — the cloud-pushed rotation
+  mechanism, delivered by the relay inside a `commands.xml` reply. Enable
+  `lanip_push` in the add-on options (or `LANIP_PUSH=1`), then get the module
+  to poll: a power-cycle works, and so does any cloud-originated write. The
+  relay pushes on each poll until the module's
+  `PUT …/lanip.json?cmd_id=N&status=204` ack arrives, then stops. After that,
+  the next heartbeat's key exchange succeeds and the LAN session comes up.
+  Turn the option off again afterwards.
 - **Opting out:** `lan_mode: false` (or `LAN_MODE=0`) disables the server and
   the DSN rewrite; writes then wait for a cloud poll, and nothing about the
   module's configuration changes back. To disarm the module itself you would

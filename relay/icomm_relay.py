@@ -172,6 +172,14 @@ class Relay:
         # relay flips exactly those two values in a DSN config reply, and stashes
         # the original and rewritten bodies next to the queue file as evidence.
         self.dsn_lan_rewrite = os.environ.get("DSN_LAN_REWRITE", "") == "1"
+        # LAN key repair/rotation: Ayla's own reverse-REST command. A
+        # PUT lanip.json inside a commands.xml reply sets AND SAVES a new key
+        # (libada's client_lanip_json_put), which is the only network-reachable
+        # way to replace a key the module already holds. Pushed on each poll
+        # until the module's PUT .../lanip.json?cmd_id=N&status=204 ack arrives.
+        self.lanip_push = os.environ.get("LANIP_PUSH", "") == "1"
+        self.lanip_cmd_id = 0
+        self.lanip_push_acked = False
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
@@ -435,6 +443,45 @@ class Relay:
         write.replaced_upstream = replaced
         self._mark_delivered(write)
         return rewritten.encode()
+
+    def _transform_commands(self, payload: bytes) -> bytes | None:
+        """Apply the queued write (if any) and the lanip push (if armed)."""
+        rewritten = self._inject(payload)
+        if rewritten is not None:
+            payload = rewritten
+        return self._maybe_push_lanip(payload)
+
+    def _maybe_push_lanip(self, payload: bytes) -> bytes | None:
+        """Deliver Ayla's key-rotation command: PUT lanip.json in <cmds>.
+
+        XML shapes per libada's parsers: <resource> takes no leading slash (the
+        agent prepends it), <uri> keeps it (the agent strips the first char),
+        <data> is the raw JSON body, one command per poll. The agent answers
+        with PUT /devices/<key>/lanip.json?cmd_id=N&status=204, which is the
+        confirmation that the key was actually saved.
+        """
+        if not self.lanip_push or self.lanip_push_acked or not self.lan.enabled:
+            return None
+        text = payload.decode(errors="replace")
+        if "<commands" not in text:
+            return None
+        self.lanip_cmd_id += 1
+        body = json.dumps({"lanip": {"status": "enable",
+                                     "lanip_key_id": self.lan.key_id,
+                                     "lanip_key": self.lan.key,
+                                     "keep_alive": 30, "auto_sync": 1}})
+        cmd = (f"<cmd><id>{self.lanip_cmd_id}</id><method>PUT</method>"
+               f"<resource>lanip.json</resource><uri>/lanip.json</uri>"
+               f"<data>{body}</data></cmd>")
+        if "<cmds/>" in text:
+            text = text.replace("<cmds/>", f"<cmds>{cmd}</cmds>", 1)
+        elif "</cmds>" in text:
+            text = text.replace("</cmds>", f"{cmd}</cmds>", 1)
+        else:
+            return None
+        _LOGGER.warning("LANIP PUSH: delivering PUT lanip.json (cmd %s)",
+                        self.lanip_cmd_id)
+        return text.encode()
 
     def _rewrite_dsn(self, payload: bytes) -> bytes | None:
         """Flip Ayla's factory LAN-mode switches in a DSN config reply.
@@ -759,7 +806,15 @@ class Relay:
                 return web.Response(status=401, text="")
             return await self.telemetry(request)
         if "commands.xml" in request.path:
-            return await self.proxy(request, transform=self._inject)
+            return await self.proxy(request, transform=self._transform_commands)
+        if self.lanip_push and request.method == "PUT" and "lanip.json" in request.path:
+            # The module's reverse-REST ack: /devices/<key>/lanip.json?cmd_id=N&status=M
+            if "status=204" in request.query_string or "status=200" in request.query_string:
+                self.lanip_push_acked = True
+                _LOGGER.warning("LANIP PUSH ACKED: %s -- the module saved our key",
+                                request.query_string)
+            else:
+                _LOGGER.warning("lanip command response: %s", request.query_string)
         if (self.dsn_lan_rewrite or self.lan.enabled) and "/dsns/" in request.path:
             return await self.proxy(request, transform=self._rewrite_dsn)
         if self.nudges_left and request.method == "GET":
