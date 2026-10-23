@@ -31,6 +31,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The image is Alpine (busybox sh, no bash): every script must be POSIX.
+      - name: Scripts are POSIX sh
+        run: shellcheck -s sh relay/*.sh
+      - name: Scripts run under busybox sh, as in the image
+        run: |
+          docker run --rm -v "$PWD/relay:/r" -e CERT_DIR=/tmp/c alpine:3 \
+            sh -c 'apk add -q --no-cache openssl && cp /r/dhparams-default.pem /tmp/dh.pem 2>/dev/null; mkdir -p /tmp/c && cp /tmp/dh.pem /tmp/c/dhparams.pem 2>/dev/null; /r/gen-cert.sh && openssl x509 -in /tmp/c/aylanetworks.com.crt -noout -subject'
       - name: Validate the add-on configuration
         uses: frenck/action-addon-linter@v2
         with:
