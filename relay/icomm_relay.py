@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import ssl
 import time
 from collections import deque
@@ -71,6 +72,13 @@ class PendingWrite:
 # of the module's superBlockDyn1 telemetry (block lengths 8/146/230/52/52;
 # block[0] is a header). icomm/README.md in the research repo is the evidence.
 MODE_PAIRS = {(100, 1): "electric", (0, 4): "hybrid", (0, 5): "heat_pump"}
+
+# How long silence stays plausible with no evidence to the contrary. Six hours is
+# the appliance's own measured reporting interval; being generous is deliberate,
+# because a false alarm trains the user to ignore the real one.
+IDLE_INTERVAL_DEFAULT = 6 * 3600
+REPORTING_INTERVAL = re.compile(
+    r"<name>\s*superBlockDynDataUpdateRate\s*</name>\s*<value>\s*(\d+)\s*</value>")
 
 
 def fahrenheit(raw: bytes) -> float:
@@ -138,6 +146,9 @@ class Relay:
         self.telemetry_times: deque[float] = deque(maxlen=12)
         self.dials: deque[dict] = deque(maxlen=6)
         self._dial: dict | None = None
+        # The appliance advertises how often it reports; learned from the config
+        # reply. Until then assume nothing, and treat silence generously.
+        self.reporting_interval_s: int | None = None
         self.writes_confirmed = 0
         self.injections_held = 0
         # Pinned Entrust G2 for upstream verification: certifi dropped it, so
@@ -169,6 +180,8 @@ class Relay:
                 ssl=self.upstream_ssl,
             ) as upstream:
                 payload = await upstream.read()
+                if upstream.status == 200 and "commands.xml" in request.path:
+                    self._learn_reporting_interval(payload.decode(errors="replace"))
                 if transform is not None and upstream.status == 200:
                     rewritten = transform(payload)
                     if rewritten is not None:
@@ -419,6 +432,25 @@ class Relay:
         if "superBlockDyn1" in path:
             self.telemetry_times.append(now)
 
+    def _learn_reporting_interval(self, xml: str) -> None:
+        """Pick up `superBlockDynDataUpdateRate` (seconds) from a config reply.
+
+        Measured at 21601 -- about six hours -- which is why a satisfied tank can be
+        legitimately silent for a long time. Treating that silence as a fault is how
+        a detector cries wolf; the appliance tells us its own cadence, so use it.
+        """
+        found = REPORTING_INTERVAL.search(xml)
+        if found:
+            with contextlib.suppress(ValueError):
+                self.reporting_interval_s = int(found.group(1))
+
+    def _calling_for_heat(self) -> bool:
+        water = self.state.get("water_top")
+        setpoint = self.state.get("setpoint")
+        if water is None or setpoint is None:
+            return False
+        return float(setpoint) - float(water) >= 2.0
+
     def _dial_shape(self) -> list[dict]:
         dials = list(self.dials)
         if self._dial is not None:
@@ -428,10 +460,19 @@ class Relay:
     def health(self) -> dict:
         """Is the appliance behaving, and if not, what should a human do?
 
-        Only the symptoms the relay can actually see are used. Ops keepalives ride a
-        UDP channel through the gateway (visible in a capture, not here) and the
-        GraphQL message belongs to the app's API, so both are reported as
-        unobservable rather than guessed at.
+        The hard part is that silence is usually not a fault. This appliance reports
+        on events and on its own interval (`superBlockDynDataUpdateRate`, measured at
+        ~6 hours), so a satisfied tank that says nothing for hours is normal. Calling
+        that degraded would train the user to ignore the one alarm that matters.
+
+        So a fault needs positive evidence: silence while calling for heat, a queue
+        that cannot drain, dials that shrink to a single request, or silence far
+        beyond the interval the appliance itself advertised.
+
+        Only symptoms in the relay's view are used. Ops keepalives ride UDP straight
+        through the gateway -- measured present during a long HTTPS silence -- and the
+        GraphQL message belongs to the app's API, so both are listed as unobservable
+        rather than guessed at.
         """
         now = time.time()
         dials = self._dial_shape()
@@ -442,83 +483,74 @@ class Relay:
         single_request_dials = sum(1 for d in recent if d["requests"] == 1)
         polls = sum(d["polls"] for d in dials)
         silent = now - self.last_telemetry if self.last_telemetry else None
-
-        reasons: list[str] = []
+        interval = self.reporting_interval_s or IDLE_INTERVAL_DEFAULT
+        evidence = {
+            "dials": len(dials),
+            "polls": polls,
+            "median_telemetry_gap_s": None if median_gap is None else round(median_gap),
+            "silent_s": None if silent is None else round(silent),
+            "reporting_interval_s": interval,
+        }
         unobservable = ["ops keepalives (UDP, gateway-side)", "GraphQL write status (app API)"]
 
-        # Silence is checked before the "too few dials" shortcut on purpose: a
-        # wedged module is the case that must never report as merely unknown. It
-        # answers ARP and ICMP and sends nothing at all -- no telemetry, no polls,
-        # not even the ops keepalives -- so there may be no dials to study.
-        #
-        # A relay that has never heard from the module at all is the same silence
-        # seen from a younger process. Measured the hard way: dropping the module's
-        # connection (a relay restart) costs ~20+ minutes before it talks again, so
-        # "nothing yet" is a real state that must not read as "unknown".
-        if silent is None and now - self.started > 900:
-            return {
-                "state": "degraded",
-                "reasons": ["no telemetry since the relay started"],
-                "remediation": (
-                    "Check that the module is steered here, then wait: after a "
-                    "dropped connection it can stay silent for 20+ minutes. If it "
-                    "stays silent longer, reconnect it in the router's client list "
-                    "or flip the breaker."
-                ),
-                "evidence": {"dials": len(dials), "uptime_s": round(now - self.started)},
-                "unobservable": unobservable,
-            }
-        if silent is not None and silent > 900:
-            return {
-                "state": "degraded",
-                "reasons": [f"no telemetry for {silent / 60:.0f} minutes"],
-                "remediation": (
-                    "Flip the water heater's breaker off for ~30 seconds, then on. "
-                    "It re-registers and fetches everything Ayla had queued, so "
-                    "nothing is lost. Retrying writes cannot fix this state."
-                ),
-                "evidence": {"dials": len(dials), "polls": polls,
-                             "silent_s": round(silent)},
-                "unobservable": unobservable,
-            }
+        def degraded(reason: str, remediation: str, extra: dict | None = None) -> dict:
+            return {"state": "degraded", "reasons": [reason], "remediation": remediation,
+                    "evidence": {**evidence, **(extra or {})}, "unobservable": unobservable}
+
+        breaker = ("Flip the water heater's breaker off for ~30 seconds, then on. It "
+                   "re-registers and fetches everything Ayla had queued, so nothing is "
+                   "lost. Retrying writes cannot fix this state.")
+        wait = (f"Wait: the appliance reports on its own schedule (~{interval} s). If it is "
+                "calling for heat and still silent, reconnect it in the router's client "
+                "list, or flip the breaker.")
+
+        # Positive evidence first: silence while it should be busy.
+        if silent is not None and silent > 600 and self._calling_for_heat():
+            return degraded(
+                f"silent {silent / 60:.0f} min while calling for heat "
+                f"({self.state.get('setpoint')} F setpoint, "
+                f"{self.state.get('water_top')} F water)",
+                breaker, {"calling_for_heat": True})
+
+        # Silence well beyond the interval it advertised for itself.
+        if silent is not None and silent > interval + 900:
+            return degraded(
+                f"silent {silent / 3600:.1f} h, beyond its own ~{interval / 3600:.1f} h "
+                f"reporting interval", breaker)
+
+        # A queue that cannot drain while the module is otherwise quiet.
+        if self.pending and silent is not None and silent > 900:
+            return degraded(
+                "a write is queued and the appliance has not asked for commands",
+                wait)
+
+        # The researched degraded signature: one request per dial, minutes apart.
+        if (polls == 0 and single_request_dials == len(recent)
+                and median_gap is not None and median_gap > 150):
+            return degraded(
+                f"{single_request_dials}/{len(recent)} dials carried a single request, "
+                f"telemetry every ~{median_gap:.0f}s, no polls", breaker)
+
+        if not self.last_telemetry:
+            if now - self.started > 900:
+                return degraded("no telemetry since the relay started",
+                                "Check that the module is steered here, then wait: an "
+                                "idle appliance can be silent for hours.")
+            return {"state": "unknown", "reasons": ["nothing heard yet"],
+                    "evidence": evidence, "unobservable": unobservable}
+
         if len(dials) < 3:
             return {"state": "unknown", "reasons": ["too few dials observed yet"],
-                    "evidence": {"dials": len(dials)}, "unobservable": unobservable}
+                    "evidence": evidence, "unobservable": unobservable}
 
-        # The signature: one request per dial, minutes apart, no polls at all.
-        if (single_request_dials == len(recent) and polls == 0
-                and median_gap is not None and median_gap > 150):
-            reasons.append(
-                f"{single_request_dials}/{len(recent)} dials carried a single "
-                f"request, telemetry every ~{median_gap:.0f}s, no polls")
-        if self.pending and silent is not None and silent > 600:
-            reasons.append("a write is queued and the appliance is not listening")
+        # Silence, but a plausible reason for it.
+        if silent is not None and silent > 900:
+            return {"state": "idle",
+                    "reasons": [f"quiet for {silent / 60:.0f} min; reports every "
+                                f"~{interval} s or on events"],
+                    "evidence": evidence, "unobservable": unobservable}
 
-        if reasons:
-            return {
-                "state": "degraded",
-                "reasons": reasons,
-                "remediation": (
-                    "Flip the water heater's breaker off for ~30 seconds, then on. "
-                    "It re-registers and fetches everything Ayla had queued, so "
-                    "nothing is lost. Retrying writes cannot fix this state."
-                ),
-                "evidence": {
-                    "dials": len(dials),
-                    "polls": polls,
-                    "median_telemetry_gap_s": (None if median_gap is None
-                                               else round(median_gap)),
-                    "silent_s": None if silent is None else round(silent),
-                },
-                "unobservable": unobservable,
-            }
-        return {"state": "healthy", "reasons": [],
-                "evidence": {
-                    "dials": len(dials),
-                    "polls": polls,
-                    "median_telemetry_gap_s": (None if median_gap is None
-                                               else round(median_gap)),
-                },
+        return {"state": "healthy", "reasons": [], "evidence": evidence,
                 "unobservable": unobservable}
 
     async def nudge_handler(self, request: web.Request) -> web.Response:

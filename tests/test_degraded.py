@@ -89,6 +89,7 @@ def test_healthy_dials(relay: Relay, _clock) -> None:
 
 def test_degraded_signature(relay: Relay, _clock) -> None:
     """Exactly one telemetry POST per dial, ~4 minutes apart, no polls."""
+    relay.state["water_top"] = relay.state["setpoint"] - 20
     for _ in range(4):
         _dial(relay, _clock, [TELEMETRY], gap=240)
         relay.last_telemetry = _clock["now"]
@@ -107,30 +108,74 @@ def test_degraded_names_what_it_cannot_see(relay: Relay, _clock) -> None:
     for _ in range(4):
         _dial(relay, _clock, [TELEMETRY], gap=240)
         relay.last_telemetry = _clock["now"]
+    relay.state["water_top"] = relay.state["setpoint"] - 20
     unobservable = " ".join(relay.health()["unobservable"])
     assert "keepalive" in unobservable and "GraphQL" in unobservable
 
 
-def test_silence_alone_is_degraded(relay: Relay, _clock) -> None:
-    """No telemetry for 15 minutes is bad even if the dials looked normal."""
+def test_satisfied_tank_going_quiet_is_idle_not_degraded(relay: Relay, _clock) -> None:
+    """The bug this replaces: a satisfied tank was reported as needing a breaker flip.
+
+    The appliance reports on its own schedule (measured ~6 h) plus on events, so a
+    tank holding temperature is legitimately silent for hours. Alarming on that
+    trains the user to ignore the alarm that matters.
+    """
+    relay.state["water_top"] = relay.state["setpoint"]     # up to temperature
     for _ in range(3):
-        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
-    relay.last_telemetry = _clock["now"]
-    _clock["now"] += 901
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=3600)
+        relay.last_telemetry = _clock["now"]
+    _clock["now"] += 1800                                  # 30 quiet minutes
     health = relay.health()
-    assert health["state"] == "degraded"
-    assert any("no telemetry" in reason for reason in health["reasons"])
+    assert health["state"] == "idle"
+    assert "remediation" not in health
 
 
-def test_pending_write_plus_silence_is_degraded(relay: Relay, _clock) -> None:
+def test_silence_while_calling_for_heat_is_degraded(relay: Relay, _clock) -> None:
+    """Positive evidence: the appliance should be busy and is not."""
+    relay.state["water_top"] = relay.state["setpoint"] - 20   # 20 F below target
     for _ in range(3):
         _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
-    relay.last_telemetry = _clock["now"]
-    relay.queue_write("setpoint", 140)
+        relay.last_telemetry = _clock["now"]
     _clock["now"] += 601
     health = relay.health()
     assert health["state"] == "degraded"
+    assert any("calling for heat" in reason for reason in health["reasons"])
+    assert health["evidence"]["calling_for_heat"] is True
+
+
+def test_silence_beyond_its_own_interval_is_degraded(relay: Relay, _clock) -> None:
+    """Quiet longer than the cadence it advertised for itself is a fault."""
+    relay.state["water_top"] = relay.state["setpoint"]
+    relay.reporting_interval_s = 21601                     # the measured value
+    for _ in range(3):
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+        relay.last_telemetry = _clock["now"]
+    _clock["now"] += 21601 + 901
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert any("reporting interval" in reason for reason in health["reasons"])
+
+
+def test_pending_write_on_a_satisfied_quiet_tank_is_degraded(relay: Relay, _clock) -> None:
+    """A queue that cannot drain is evidence, even when the tank has nothing to say."""
+    relay.state["water_top"] = relay.state["setpoint"]
+    for _ in range(3):
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+        relay.last_telemetry = _clock["now"]
+    relay.queue_write("setpoint", 140)
+    _clock["now"] += 901
+    health = relay.health()
+    assert health["state"] == "degraded"
     assert any("queued" in reason for reason in health["reasons"])
+
+
+def test_reporting_interval_is_learned_from_the_config_reply(relay: Relay) -> None:
+    """The appliance states its own cadence; guessing it was the earlier mistake."""
+    assert relay.reporting_interval_s is None
+    relay._learn_reporting_interval(
+        "<commands><properties><property><name>superBlockDynDataUpdateRate</name>"
+        "<value>21601</value></property></properties></commands>")
+    assert relay.reporting_interval_s == 21601
 
 
 def test_degraded_holds_injection(relay: Relay, _clock) -> None:
@@ -138,6 +183,7 @@ def test_degraded_holds_injection(relay: Relay, _clock) -> None:
     for _ in range(4):
         _dial(relay, _clock, [TELEMETRY], gap=240)
         relay.last_telemetry = _clock["now"]
+    relay.state["water_top"] = relay.state["setpoint"] - 20
     relay.queue_write("setpoint", 140)
     assert relay._inject(b"<commands><properties/></commands>") is None
     assert relay.injections_held == 1

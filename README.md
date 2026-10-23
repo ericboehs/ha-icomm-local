@@ -51,18 +51,31 @@ Safety rules, all tested: setpoints clamp to the ceiling the appliance advertise
 only the newest write per register survives; a stale appliance **holds** writes
 rather than injecting into a device that ignores them.
 
-### Restarts are expensive — treat them as rare
+### Silence is usually idleness, not a fault
 
-Dropping the module's connection makes it go quiet for a long time: measured
-recovery after a relay restart is **20+ minutes**, and once it went silent for
-about an hour. The module answers ARP and ICMP throughout, so it looks alive on the
-network while sending nothing at all — not even its own ops keepalives.
+This appliance reports on events and on its own schedule — the configuration it
+fetches at registration says `superBlockDynDataUpdateRate = 21601`, about six
+hours — and it only polls for commands when Ayla says a command exists. A tank
+holding temperature therefore goes completely quiet on HTTPS for long stretches
+while remaining perfectly healthy: its ops keepalives (UDP, straight through the
+router) keep flowing the whole time.
 
-So a relay restart (including an add-on update) has a real cost: the appliance's
-cloud bridge is dark for the duration, and writes cannot be delivered. The state
-API says so instead of pretending (`health.state == "degraded"` with a remediation),
-and a module can also be nudged back sooner by reconnecting it in the router's
-client list — on UniFi that is a client kick, which does not interrupt heating.
+That makes silence ambiguous, and the relay's health model refuses to guess:
+
+| Observation | Verdict |
+|---|---|
+| quiet, tank satisfied, within its advertised interval | `idle` — normal |
+| quiet while calling for heat (20 F below setpoint) | `degraded` — intervene |
+| quiet longer than its own reporting interval + 15 min | `degraded` — intervene |
+| a write queued and the appliance not asking for commands | `degraded` — wait or reconnect |
+| one request per dial, minutes apart, no polls | `degraded` — the researched signature |
+
+An earlier version of this file claimed a relay restart costs 20+ minutes of
+silence. That was wrong: the silence was the module being idle, and the claim was
+an inference from two samples that happened to be quiet for unrelated reasons. The
+symptom that actually distinguishes a wedged module — ops keepalives disappearing —
+is not visible to the relay at all, which is why it is listed as unobservable
+instead of being approximated from timing.
 
 **The honest limitation:** polls happen only when Ayla notifies the module that a
 command exists, so a queued write needs something to ring that bell. A plain
