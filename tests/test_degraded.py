@@ -13,7 +13,7 @@ from icomm_relay import Relay, decode
 
 TELEMETRY = "/devices/1/properties/superBlockDyn1/datapoints.xml"
 POLL = "/devices/1/commands.xml?signal=-50"
-REGTOKEN = "/dsns/AC000W019949045/regtoken.xml"
+REGTOKEN = "/dsns/AC000W000000000/regtoken.xml"
 
 
 @pytest.fixture
