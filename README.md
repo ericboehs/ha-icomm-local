@@ -51,6 +51,19 @@ Safety rules, all tested: setpoints clamp to the ceiling the appliance advertise
 only the newest write per register survives; a stale appliance **holds** writes
 rather than injecting into a device that ignores them.
 
+### Restarts are expensive — treat them as rare
+
+Dropping the module's connection makes it go quiet for a long time: measured
+recovery after a relay restart is **20+ minutes**, and once it went silent for
+about an hour. The module answers ARP and ICMP throughout, so it looks alive on the
+network while sending nothing at all — not even its own ops keepalives.
+
+So a relay restart (including an add-on update) has a real cost: the appliance's
+cloud bridge is dark for the duration, and writes cannot be delivered. The state
+API says so instead of pretending (`health.state == "degraded"` with a remediation),
+and a module can also be nudged back sooner by reconnecting it in the router's
+client list — on UniFi that is a client kick, which does not interrupt heating.
+
 **The honest limitation:** polls happen only when Ayla notifies the module that a
 command exists, so a queued write needs something to ring that bell. A plain
 reconnect does not poll (measured), and the local nudge (`POST /nudge`, which

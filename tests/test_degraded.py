@@ -45,6 +45,21 @@ def test_unknown_before_enough_dials(relay: Relay, _clock) -> None:
     assert relay.health()["state"] == "unknown"
 
 
+def test_never_heard_from_is_degraded_after_a_while(relay: Relay, _clock) -> None:
+    """A young relay that has heard nothing is the same silence, not "unknown".
+
+    Restarting the relay drops the module's connection, and measured recovery after
+    that is 20+ minutes, so this state has to be named rather than hidden.
+    """
+    relay.started = _clock["now"]
+    relay.last_telemetry = 0.0
+    assert relay.health()["state"] == "unknown"          # too early to say
+    _clock["now"] += 901
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert any("since the relay started" in reason for reason in health["reasons"])
+
+
 def test_wedged_module_is_degraded_not_unknown(relay: Relay, _clock) -> None:
     """The bug this test exists for: a totally silent module reported "unknown".
 

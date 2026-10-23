@@ -132,6 +132,7 @@ class Relay:
         # rides on. Left at 0 unless someone asks for a nudge.
         self.nudges_left = 0
         self.nudge_on_telemetry = False
+        self.debug_requests = os.environ.get("DEBUG_REQUESTS", "") == "1"
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
@@ -403,6 +404,10 @@ class Relay:
         injections starve silently in that state.
         """
         now = time.time()
+        if self.debug_requests:
+            # Off by default: the log is for diagnosing a conversation, and every
+            # request in it is one more chance to leak a DSN into a log file.
+            print(f"  {now:.0f} {path}", flush=True)
         if self._dial is None or now - self._dial["last"] > 10.0:
             if self._dial is not None:
                 self.dials.append(self._dial)
@@ -445,6 +450,24 @@ class Relay:
         # wedged module is the case that must never report as merely unknown. It
         # answers ARP and ICMP and sends nothing at all -- no telemetry, no polls,
         # not even the ops keepalives -- so there may be no dials to study.
+        #
+        # A relay that has never heard from the module at all is the same silence
+        # seen from a younger process. Measured the hard way: dropping the module's
+        # connection (a relay restart) costs ~20+ minutes before it talks again, so
+        # "nothing yet" is a real state that must not read as "unknown".
+        if silent is None and now - self.started > 900:
+            return {
+                "state": "degraded",
+                "reasons": ["no telemetry since the relay started"],
+                "remediation": (
+                    "Check that the module is steered here, then wait: after a "
+                    "dropped connection it can stay silent for 20+ minutes. If it "
+                    "stays silent longer, reconnect it in the router's client list "
+                    "or flip the breaker."
+                ),
+                "evidence": {"dials": len(dials), "uptime_s": round(now - self.started)},
+                "unobservable": unobservable,
+            }
         if silent is not None and silent > 900:
             return {
                 "state": "degraded",
