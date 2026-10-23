@@ -43,6 +43,7 @@ import contextlib
 import os
 import ssl
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -130,6 +131,12 @@ class Relay:
         # configuration -- which carries the setBlockParameter property a write
         # rides on. Left at 0 unless someone asks for a nudge.
         self.nudges_left = 0
+        self.nudge_on_telemetry = False
+        # Conversation shape, for the degraded-state detector: the module talks in
+        # dials, so requests are grouped into them and their shape remembered.
+        self.telemetry_times: deque[float] = deque(maxlen=12)
+        self.dials: deque[dict] = deque(maxlen=6)
+        self._dial: dict | None = None
         self.writes_confirmed = 0
         self.injections_held = 0
         # Pinned Entrust G2 for upstream verification: certifi dropped it, so
@@ -271,6 +278,11 @@ class Relay:
         if not self.last_telemetry or time.time() - self.last_telemetry > 600:
             self.injections_held += 1
             return None
+        if self.health()["state"] == "degraded":
+            # Injecting into a module that has stopped listening starves silently
+            # and looks like a write bug. Hold, and let the state API say why.
+            self.injections_held += 1
+            return None
         write = self.pending[sorted(self.pending)[0]]
         text = payload.decode(errors="replace")
         rewritten, replaced = frames.rewrite_commands(text, write.frame)
@@ -319,6 +331,7 @@ class Relay:
             for kind, write in self.pending.items()
         }
         out["last_write"] = self.last_write
+        out["health"] = self.health()
         out["writes_delivered"] = self.writes_delivered
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
@@ -380,6 +393,96 @@ class Relay:
         finally:
             await self.client.close()
 
+    # -- degraded-state detection --------------------------------------
+    def _note_request(self, path: str) -> None:
+        """Track the shape of the conversation: dials, their requests, and polls.
+
+        A healthy module does at least two things per dial (telemetry plus a poll)
+        and keeps coming back. A degraded one does exactly one telemetry POST per
+        dial on a ~4 minute cadence, and polls never happen -- which is why
+        injections starve silently in that state.
+        """
+        now = time.time()
+        if self._dial is None or now - self._dial["last"] > 10.0:
+            if self._dial is not None:
+                self.dials.append(self._dial)
+            self._dial = {"start": now, "last": now, "requests": 0, "polls": 0}
+        self._dial["last"] = now
+        self._dial["requests"] += 1
+        if "commands.xml" in path:
+            self._dial["polls"] += 1
+        if "superBlockDyn1" in path:
+            self.telemetry_times.append(now)
+
+    def _dial_shape(self) -> list[dict]:
+        dials = list(self.dials)
+        if self._dial is not None:
+            dials.append(self._dial)
+        return dials
+
+    def health(self) -> dict:
+        """Is the appliance behaving, and if not, what should a human do?
+
+        Only the symptoms the relay can actually see are used. Ops keepalives ride a
+        UDP channel through the gateway (visible in a capture, not here) and the
+        GraphQL message belongs to the app's API, so both are reported as
+        unobservable rather than guessed at.
+        """
+        now = time.time()
+        dials = self._dial_shape()
+        telemetry = list(self.telemetry_times)
+        gaps = [b - a for a, b in zip(telemetry, telemetry[1:], strict=False)]
+        median_gap = sorted(gaps)[len(gaps) // 2] if gaps else None
+        recent = dials[-3:]
+        single_request_dials = sum(1 for d in recent if d["requests"] == 1)
+        polls = sum(d["polls"] for d in dials)
+        silent = now - self.last_telemetry if self.last_telemetry else None
+
+        reasons: list[str] = []
+        unobservable = ["ops keepalives (UDP, gateway-side)", "GraphQL write status (app API)"]
+
+        if len(dials) < 3:
+            return {"state": "unknown", "reasons": ["too few dials observed yet"],
+                    "evidence": {"dials": len(dials)}, "unobservable": unobservable}
+
+        # The signature: one request per dial, minutes apart, no polls at all.
+        if (single_request_dials == len(recent) and polls == 0
+                and median_gap is not None and median_gap > 150):
+            reasons.append(
+                f"{single_request_dials}/{len(recent)} dials carried a single "
+                f"request, telemetry every ~{median_gap:.0f}s, no polls")
+        if silent is not None and silent > 900:
+            reasons.append(f"no telemetry for {silent / 60:.0f} minutes")
+        if self.pending and silent is not None and silent > 600:
+            reasons.append("a write is queued and the appliance is not listening")
+
+        if reasons:
+            return {
+                "state": "degraded",
+                "reasons": reasons,
+                "remediation": (
+                    "Flip the water heater's breaker off for ~30 seconds, then on. "
+                    "It re-registers and fetches everything Ayla had queued, so "
+                    "nothing is lost. Retrying writes cannot fix this state."
+                ),
+                "evidence": {
+                    "dials": len(dials),
+                    "polls": polls,
+                    "median_telemetry_gap_s": (None if median_gap is None
+                                               else round(median_gap)),
+                    "silent_s": None if silent is None else round(silent),
+                },
+                "unobservable": unobservable,
+            }
+        return {"state": "healthy", "reasons": [],
+                "evidence": {
+                    "dials": len(dials),
+                    "polls": polls,
+                    "median_telemetry_gap_s": (None if median_gap is None
+                                               else round(median_gap)),
+                },
+                "unobservable": unobservable}
+
     async def nudge_handler(self, request: web.Request) -> web.Response:
         """POST /nudge -- ask the module to re-register, without the cloud.
 
@@ -394,11 +497,20 @@ class Relay:
         except ValueError:
             body = {}
         self.nudges_left = int(body.get("attempts", 1))
-        return web.json_response({"nudges_left": self.nudges_left})
+        self.nudge_on_telemetry = bool(body.get("on_telemetry", False))
+        return web.json_response({"nudges_left": self.nudges_left,
+                                  "on_telemetry": self.nudge_on_telemetry})
 
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
+        self._note_request(request.path)
         if "superBlockDyn1" in request.path:
+            if self.nudges_left and self.nudge_on_telemetry:
+                # An idle module only ever POSTs telemetry, so this is the only
+                # request a 401 can reach. Its cue to re-register -- and a
+                # re-registration fetches the configuration a write rides on.
+                self.nudges_left -= 1
+                return web.Response(status=401, text="")
             return await self.telemetry(request)
         if "commands.xml" in request.path:
             return await self.proxy(request, transform=self._inject)

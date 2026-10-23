@@ -1,0 +1,126 @@
+"""The degraded-state detector: the signature of a module that stopped listening.
+
+The healthy and degraded shapes here are transcribed from the research repo's
+conversation captures: healthy dials carry telemetry plus a poll and keep coming
+back; degraded dials carry exactly one telemetry POST on a ~4 minute cadence and
+never poll.
+"""
+
+from __future__ import annotations
+
+import pytest
+from icomm_relay import Relay, decode
+
+TELEMETRY = "/devices/1/properties/superBlockDyn1/datapoints.xml"
+POLL = "/devices/1/commands.xml?signal=-50"
+REGTOKEN = "/dsns/AC000W019949045/regtoken.xml"
+
+
+@pytest.fixture
+def relay(blocks_heat_pump: list[bytes]) -> Relay:
+    relay = Relay()
+    relay.state = decode(blocks_heat_pump)
+    relay.last_telemetry = 1_000_000.0
+    return relay
+
+
+@pytest.fixture(autouse=True)
+def _clock(monkeypatch: pytest.MonkeyPatch):
+    """A movable clock, so dial spacing is exact."""
+    import icomm_relay
+    state = {"now": 1_000_000.0}
+    monkeypatch.setattr(icomm_relay.time, "time", lambda: state["now"])
+    return state
+
+
+def _dial(relay: Relay, clock, paths: list[str], gap: float) -> None:
+    """One dial: `paths` requested in quick succession, then silence for `gap`."""
+    for path in paths:
+        relay._note_request(path)
+    clock["now"] += gap
+
+
+def test_unknown_before_enough_dials(relay: Relay, _clock) -> None:
+    assert relay.health()["state"] == "unknown"
+
+
+def test_healthy_dials(relay: Relay, _clock) -> None:
+    """Telemetry plus a poll, about a minute apart, repeatedly."""
+    for _ in range(4):
+        _clock["now"] += 5
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+        relay.last_telemetry = _clock["now"]
+    health = relay.health()
+    assert health["state"] == "healthy"
+    assert health["evidence"]["polls"] >= 3
+
+
+def test_degraded_signature(relay: Relay, _clock) -> None:
+    """Exactly one telemetry POST per dial, ~4 minutes apart, no polls."""
+    for _ in range(4):
+        _dial(relay, _clock, [TELEMETRY], gap=240)
+        relay.last_telemetry = _clock["now"]
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert any("single" in reason for reason in health["reasons"])
+    assert "breaker" in health["remediation"].lower()
+
+
+def test_degraded_names_what_it_cannot_see(relay: Relay, _clock) -> None:
+    """Two of the documented symptoms are outside the relay's view; say so.
+
+    Ops keepalives are UDP through the gateway and the GraphQL message belongs to
+    the app's API. Reporting them as observed would be a lie the user acts on.
+    """
+    for _ in range(4):
+        _dial(relay, _clock, [TELEMETRY], gap=240)
+        relay.last_telemetry = _clock["now"]
+    unobservable = " ".join(relay.health()["unobservable"])
+    assert "keepalive" in unobservable and "GraphQL" in unobservable
+
+
+def test_silence_alone_is_degraded(relay: Relay, _clock) -> None:
+    """No telemetry for 15 minutes is bad even if the dials looked normal."""
+    for _ in range(3):
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+    relay.last_telemetry = _clock["now"]
+    _clock["now"] += 901
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert any("no telemetry" in reason for reason in health["reasons"])
+
+
+def test_pending_write_plus_silence_is_degraded(relay: Relay, _clock) -> None:
+    for _ in range(3):
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+    relay.last_telemetry = _clock["now"]
+    relay.queue_write("setpoint", 140)
+    _clock["now"] += 601
+    health = relay.health()
+    assert health["state"] == "degraded"
+    assert any("queued" in reason for reason in health["reasons"])
+
+
+def test_degraded_holds_injection(relay: Relay, _clock) -> None:
+    """The whole point: never inject into a module that has stopped listening."""
+    for _ in range(4):
+        _dial(relay, _clock, [TELEMETRY], gap=240)
+        relay.last_telemetry = _clock["now"]
+    relay.queue_write("setpoint", 140)
+    assert relay._inject(b"<commands><properties/></commands>") is None
+    assert relay.injections_held == 1
+    assert relay.health()["state"] == "degraded"
+
+
+def test_recovery_clears_degraded(relay: Relay, _clock) -> None:
+    """After a breaker flip the module polls again; the detector must notice."""
+    for _ in range(4):
+        _dial(relay, _clock, [TELEMETRY], gap=240)
+        relay.last_telemetry = _clock["now"]
+    assert relay.health()["state"] == "degraded"
+
+    # Re-registration, then a normal conversation.
+    for _ in range(3):
+        _dial(relay, _clock, [REGTOKEN, TELEMETRY, POLL], gap=60)
+        relay.last_telemetry = _clock["now"]
+    assert relay.health()["state"] == "healthy"

@@ -1,0 +1,40 @@
+set_setpoint:
+  name: Set setpoint
+  description: >-
+    Queue a tank setpoint. The write is delivered on the appliance's next command
+    poll and is only reported as applied once its own telemetry agrees, so allow
+    minutes. Values outside the appliance's advertised range are rejected.
+  fields:
+    temperature:
+      name: Temperature
+      description: Target water temperature in degrees Fahrenheit.
+      required: true
+      example: 140
+      selector:
+        number:
+          min: 95
+          max: 160
+          step: 1
+          unit_of_measurement: "°F"
+
+set_mode:
+  name: Set mode
+  description: >-
+    Queue a heating mode. Electric and heat pump draw very differently, and a mode
+    change is visible in the next telemetry as the mode register plus the power draw.
+  fields:
+    mode:
+      name: Mode
+      description: Which heating mode to select.
+      required: true
+      selector:
+        select:
+          options:
+            - electric
+            - hybrid
+            - heat_pump
+
+cancel_writes:
+  name: Cancel queued writes
+  description: >-
+    Drop everything waiting to be delivered. Nothing already applied is undone.
