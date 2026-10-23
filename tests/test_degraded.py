@@ -156,8 +156,13 @@ def test_silence_beyond_its_own_interval_is_degraded(relay: Relay, _clock) -> No
     assert any("reporting interval" in reason for reason in health["reasons"])
 
 
-def test_pending_write_on_a_satisfied_quiet_tank_is_degraded(relay: Relay, _clock) -> None:
-    """A queue that cannot drain is evidence, even when the tank has nothing to say."""
+def test_pending_write_on_a_satisfied_quiet_tank_is_idle(relay: Relay, _clock) -> None:
+    """A write waiting on an idle tank is expected, not a fault.
+
+    Polls are notify-driven, so a queued write sits until something rings the bell --
+    potentially hours. The state stays `idle` and says the write is queued, because
+    alarming here would repeat the false-alarm mistake in a new costume.
+    """
     relay.state["water_top"] = relay.state["setpoint"]
     for _ in range(3):
         _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
@@ -165,8 +170,20 @@ def test_pending_write_on_a_satisfied_quiet_tank_is_degraded(relay: Relay, _cloc
     relay.queue_write("setpoint", 140)
     _clock["now"] += 901
     health = relay.health()
-    assert health["state"] == "degraded"
+    assert health["state"] == "idle"
     assert any("queued" in reason for reason in health["reasons"])
+
+
+def test_pending_write_while_calling_for_heat_is_degraded(relay: Relay, _clock) -> None:
+    """Same queue, but now the appliance should be busily polling and is not."""
+    relay.state["water_top"] = relay.state["setpoint"] - 20
+    for _ in range(3):
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=60)
+        relay.last_telemetry = _clock["now"]
+    relay.queue_write("setpoint", 140)
+    _clock["now"] += 901
+    health = relay.health()
+    assert health["state"] == "degraded"
 
 
 def test_reporting_interval_is_learned_from_the_config_reply(relay: Relay) -> None:

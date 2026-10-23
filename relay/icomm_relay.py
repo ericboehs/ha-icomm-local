@@ -518,11 +518,14 @@ class Relay:
                 f"silent {silent / 3600:.1f} h, beyond its own ~{interval / 3600:.1f} h "
                 f"reporting interval", breaker)
 
-        # A queue that cannot drain while the module is otherwise quiet.
-        if self.pending and silent is not None and silent > 900:
+        # A queue that cannot drain. Only a fault when the appliance should be busy:
+        # polls are notify-driven, so a write waiting on an idle tank legitimately
+        # waits until something rings the bell -- hours, if the tank is satisfied.
+        # Calling that degraded would be the same false alarm in a new costume.
+        if self.pending and silent is not None and silent > 900 and self._calling_for_heat():
             return degraded(
-                "a write is queued and the appliance has not asked for commands",
-                wait)
+                "a write is queued, the appliance is calling for heat, and it has not "
+                "asked for commands", wait)
 
         # The researched degraded signature: one request per dial, minutes apart.
         if (polls == 0 and single_request_dials == len(recent)
@@ -545,9 +548,13 @@ class Relay:
 
         # Silence, but a plausible reason for it.
         if silent is not None and silent > 900:
-            return {"state": "idle",
-                    "reasons": [f"quiet for {silent / 60:.0f} min; reports every "
-                                f"~{interval} s or on events"],
+            reasons = [f"quiet for {silent / 60:.0f} min; reports every ~{interval} s "
+                       f"or on events"]
+            if self.pending:
+                reasons.append(
+                    f"{len(self.pending)} write(s) queued; delivered on the next command "
+                    f"poll, which needs Ayla to notify the appliance")
+            return {"state": "idle", "reasons": reasons,
                     "evidence": evidence, "unobservable": unobservable}
 
         return {"state": "healthy", "reasons": [], "evidence": evidence,
