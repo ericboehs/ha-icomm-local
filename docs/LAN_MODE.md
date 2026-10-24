@@ -81,15 +81,21 @@ should not delete that file after the module has learned it.
   The symptom is registration succeeding (202, not 412) while key exchanges
   repeat every heartbeat and no telemetry arrives.
 
-  **The repair is `lanip_push`.** Ayla's own reverse-REST command,
-  `PUT lanip.json`, sets *and saves* a new key — the cloud-pushed rotation
-  mechanism, delivered by the relay inside a `commands.xml` reply. Enable
-  `lanip_push` in the add-on options (or `LANIP_PUSH=1`), then get the module
-  to poll: a power-cycle works, and so does any cloud-originated write. The
-  relay pushes on each poll until the module's
-  `PUT …/lanip.json?cmd_id=N&status=204` ack arrives, then stops. After that,
-  the next heartbeat's key exchange succeeds and the LAN session comes up.
-  Turn the option off again afterwards.
+  **The relay repairs this by itself.** It recognises the signature (three
+  key exchanges with no update between them; `/state` → `lan.needs_key_push`)
+  and answers with Ayla's own reverse-REST command, `PUT lanip.json`, inside
+  the next `commands.xml` reply. That command sets *and saves* a new key — the
+  cloud-pushed rotation mechanism. The module acks it
+  (`PUT …/lanip.json?cmd_id=N&status=200`, answered locally, never forwarded to
+  Ayla), and the next heartbeat's key exchange holds. Measured on the real
+  tank: acked 50 ms after delivery, LAN telemetry flowing 7 s later.
+
+  The push rides a *cloud* poll, which an idle module makes rarely; a
+  power-cycle forces one immediately (the boot sequence always polls).
+  `LANIP_PUSH=1` forces the push regardless, for testing.
+- **After a relay restart:** the module's address is persisted next to the
+  key, so LAN mode resumes on the next heartbeat instead of waiting for a
+  re-registration that can be hours away.
 - **Opting out:** `lan_mode: false` (or `LAN_MODE=0`) disables the server and
   the DSN rewrite; writes then wait for a cloud poll, and nothing about the
   module's configuration changes back. To disarm the module itself you would

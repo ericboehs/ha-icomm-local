@@ -188,3 +188,32 @@ async def test_lan_delivery_stops_after_three_unconfirmed_attempts(tmp_path):
     write.delivered = 0.0
     assert server.relay.take_pending_for_lan() is None
     assert write.attempts == 3
+
+
+def test_module_address_survives_a_relay_restart(tmp_path, monkeypatch):
+    """Live finding: after an add-on update the relay sat dark until the module
+    re-registered, because <lan-ip> only arrives in the DSN reply."""
+    monkeypatch.setenv("QUEUE_FILE", str(tmp_path / "pending.json"))
+    monkeypatch.delenv("LANIP_KEY", raising=False)
+    first = Relay().lan
+    first.learn_module_ip("<device><lan-ip>10.0.1.187</lan-ip></device>")
+    second = Relay().lan
+    assert second.module_ip == "10.0.1.187"
+    assert second.key == first.key
+    assert (tmp_path / "lanip.json").stat().st_mode & 0o777 == 0o600
+
+
+async def test_repeated_exchanges_without_updates_flag_a_foreign_key(tmp_path):
+    server = _server(tmp_path)
+    for _ in range(2):
+        await server._key_exchange(_exchange_request())
+    assert server.needs_key_push is False
+    await server._key_exchange(_exchange_request())
+    assert server.needs_key_push is True
+
+
+def _exchange_request():
+    class _Request:
+        async def json(self):
+            return {"key_exchange": EXCHANGE}
+    return _Request()

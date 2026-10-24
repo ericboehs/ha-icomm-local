@@ -40,8 +40,6 @@ except (OSError, ValueError):
     opts = {}
 if opts.get("lan_mode") is False:
     print("export LAN_MODE=0")
-if opts.get("lanip_push") is True:
-    print("export LANIP_PUSH=1")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),

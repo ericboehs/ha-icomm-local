@@ -177,6 +177,8 @@ class Relay:
         # (libada's client_lanip_json_put), which is the only network-reachable
         # way to replace a key the module already holds. Pushed on each poll
         # until the module's PUT .../lanip.json?cmd_id=N&status=204 ack arrives.
+        # Forced push (testing/override); normally the LAN server decides,
+        # by detecting a module that holds a foreign key.
         self.lanip_push = os.environ.get("LANIP_PUSH", "") == "1"
         self.lanip_cmd_id = 0
         self.lanip_push_acked = False
@@ -469,7 +471,11 @@ class Relay:
         with PUT /devices/<key>/lanip.json?cmd_id=N&status=204, which is the
         confirmation that the key was actually saved.
         """
-        if not self.lanip_push or self.lanip_push_acked or not self.lan.enabled:
+        if not self.lan.enabled:
+            return None
+        if self.lan.needs_key_push:
+            self.lanip_push_acked = False       # a fresh need re-arms the push
+        elif not self.lanip_push or self.lanip_push_acked:
             return None
         text = payload.decode(errors="replace")
         if "<commands" not in text:
@@ -816,14 +822,19 @@ class Relay:
             return await self.telemetry(request)
         if "commands.xml" in request.path:
             return await self.proxy(request, transform=self._transform_commands)
-        if self.lanip_push and request.method == "PUT" and "lanip.json" in request.path:
+        if request.method == "PUT" and "lanip.json" in request.path:
             # The module's reverse-REST ack: /devices/<key>/lanip.json?cmd_id=N&status=M
             if "status=204" in request.query_string or "status=200" in request.query_string:
                 self.lanip_push_acked = True
+                self.lan.needs_key_push = False
+                self.lan.exchanges_since_update = 0
                 _LOGGER.warning("LANIP PUSH ACKED: %s -- the module saved our key",
                                 request.query_string)
             else:
                 _LOGGER.warning("lanip command response: %s", request.query_string)
+            # Our command, our ack: Ayla never issued it, and answered the
+            # forwarded ack with a 404 in the live repair. Keep it local.
+            return web.Response(status=200, text="")
         if (self.dsn_lan_rewrite or self.lan.enabled) and "/dsns/" in request.path:
             return await self.proxy(request, transform=self._rewrite_dsn)
         if self.nudges_left and request.method == "GET":

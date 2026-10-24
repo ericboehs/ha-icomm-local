@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.3.2"
+version: "0.3.3"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -16,7 +16,6 @@ options:
   upstream: proxy-ingress-usfield.aylanetworks.com
   device_dsn: ""
   lan_mode: true
-  lanip_push: false
   lan_port: 8888
   module_ip: ""
   relay_ip: ""
@@ -28,9 +27,6 @@ schema:
   # Local doorbell: Ayla Local Connect with a relay-minted key. No A.O. Smith
   # account. The module polls this relay locally every ~10 s once armed.
   lan_mode: bool
-  # One-time repair: push our key to the module with Ayla's own PUT lanip.json
-  # command. Needed only if the module holds a key this relay did not issue.
-  lanip_push: bool
   lan_port: port
   # Usually learned from the module's own registration reply; set only if the
   # module is on another subnet or callback detection picks the wrong address.

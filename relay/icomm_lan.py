@@ -123,6 +123,11 @@ class LanServer:
         self.last_heartbeat = 0.0
         self.last_registration_result = ""
         self.registration_failures = 0
+        # Foreign-key detection: a module holding a key we did not issue still
+        # registers (202) and starts key exchanges, but can never decrypt our
+        # replies, so it re-exchanges every heartbeat and sends no updates.
+        self.exchanges_since_update = 0
+        self.needs_key_push = False
         self._client: ClientSession | None = None
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
@@ -143,6 +148,9 @@ class LanServer:
             saved = json.loads(self.key_file.read_text())
             if saved.get("lanip_key"):
                 self.key_id = int(saved.get("lanip_key_id", self.key_id))
+                # The module's address is only announced at re-registration,
+                # which can be hours after a relay restart: remember it.
+                self.module_ip = self.module_ip or saved.get("module_ip")
                 return saved["lanip_key"]
         except (OSError, ValueError):
             pass
@@ -158,6 +166,18 @@ class LanServer:
                             "a module that already learned it", err)
         return key
 
+    def _persist(self) -> None:
+        """Rewrite the key file with the learned module address (still 0600)."""
+        if os.environ.get("LANIP_KEY"):
+            return                      # dev override: nothing of ours on disk
+        try:
+            self.key_file.write_text(json.dumps({
+                "lanip_key": self.key, "lanip_key_id": self.key_id,
+                "module_ip": self.module_ip}))
+            os.chmod(self.key_file, 0o600)
+        except OSError as err:
+            _LOGGER.warning("LAN mode: could not persist module address: %s", err)
+
     def lan_json(self) -> dict:
         """Answer the agent's GET /devices/<key>/lan.json with our own key."""
         self.key_served_at = time.time()
@@ -169,9 +189,10 @@ class LanServer:
     def learn_module_ip(self, dsn_xml: str) -> None:
         """The registration doc carries the module's own LAN address."""
         found = LAN_IP_RE.search(dsn_xml)
-        if found and not self.module_ip:
+        if found and found.group(1) != self.module_ip:
             self.module_ip = found.group(1)
             _LOGGER.info("LAN mode: module is at %s", self.module_ip)
+            self._persist()
 
     # -- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -210,7 +231,8 @@ class LanServer:
                 if self.last_update else None,
                 "updates": self.updates, "writes_delivered": self.writes_delivered,
                 "last_registration_result": self.last_registration_result,
-                "registration_failures": self.registration_failures}
+                "registration_failures": self.registration_failures,
+                "needs_key_push": self.needs_key_push}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
@@ -270,7 +292,16 @@ class LanServer:
                             exchange.get("key_id"))
             return web.Response(status=404)
         self.session = Session(self.key.encode(), exchange)
-        _LOGGER.warning("LAN mode: key exchange accepted; session keys derived")
+        self.exchanges_since_update += 1
+        if self.exchanges_since_update >= 3 and not self.needs_key_push:
+            # Three exchanges, no update between them: the module's key is
+            # not ours. Ask the relay to push ours with Ayla's PUT lanip.json.
+            self.needs_key_push = True
+            _LOGGER.warning("LAN mode: module keeps re-exchanging with no updates "
+                            "-- it holds a key we did not issue; pushing ours on "
+                            "the next cloud poll")
+        else:
+            _LOGGER.info("LAN mode: key exchange accepted; session keys derived")
         return web.json_response(self.session.response())
 
     async def _commands(self, request: web.Request) -> web.Response:
@@ -301,5 +332,7 @@ class LanServer:
             return web.Response(status=400)
         self.updates += 1
         self.last_update = time.time()
+        self.exchanges_since_update = 0
+        self.needs_key_push = False
         await self.relay.ingest_lan_update(update)
         return web.Response()
