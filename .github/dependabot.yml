@@ -1,17 +1,21 @@
 version: 2
 updates:
+  # The root scan also covers relay/requirements.txt (what the add-on image
+  # installs). A second /relay entry opened duplicate PRs.
   - package-ecosystem: pip
-    directory: /relay            # what the add-on image installs
+    directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: pip
-    directory: /                 # dev and test tooling
-    schedule:
-      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /relay
     schedule:
