@@ -429,6 +429,11 @@ class LanServer:
         except (ValueError, KeyError, TypeError) as err:
             _LOGGER.warning("LAN mode: undecryptable update: %s", err)
             return web.Response(status=400)
+        if not self.session_verified and self.relay.pending:
+            # A write queued while the session was re-keying waited for this
+            # proof; deliver it now rather than on the next ~10 s heartbeat.
+            self.session_verified = True
+            self.wake()
         self.session_verified = True
         self.updates += 1
         self.last_update = time.time()

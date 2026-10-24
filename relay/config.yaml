@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.4.2"
+version: "0.4.3"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local

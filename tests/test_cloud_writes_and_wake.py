@@ -77,3 +77,21 @@ def test_cloud_injection_survives_the_transform_without_a_key_push(tmp_path, blo
     out = relay._transform_commands(empty, "/devices/1/commands.xml")
     assert out is not None and b"setBlockParameter" in out
     assert relay.pending["setpoint"].delivery_path == "cloud"
+
+
+async def test_write_queued_during_a_rekey_is_woken_when_the_session_verifies(tmp_path):
+    """Live: a key exchange 30 ms after a write cost a full 10 s heartbeat."""
+    from test_lan import EXCHANGE, SECRET, module_directions
+    from test_security import MODULE, _body, _from, _module_message
+
+    lan = _server(tmp_path)
+    lan._wake_event = asyncio.Event()
+    lan.registered = True
+    lan.session_verified = False                 # fresh session after a re-key
+    lan.relay.queue_write("setpoint", 141)
+    lan._wake_event.clear()                      # the queue-time wake was spent
+    tx, _ = module_directions(SECRET.encode(), EXCHANGE, lan.session.random_2, lan.session.time_2)
+    body = _module_message(tx, {"seq_no": 1, "data": {"name": "x", "value": "1"}})
+    await lan._datapoint(_from(MODULE, "POST", "/local_lan/property/datapoint.json",
+                               payload=_body(body)))
+    assert lan.session_verified and lan._wake_event.is_set()
