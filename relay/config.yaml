@@ -30,7 +30,8 @@ schema:
   lan_mode: bool
   lan_port: port
   # Usually learned from the module's own registration reply; set only if the
-  # module is on another subnet or callback detection picks the wrong address.
+  # relay should know it before the module's next registration, or callback
+  # detection picks the wrong address. The module must be on the same subnet.
   module_ip: str?
   relay_ip: str?
   # The module-facing ports answer only the module: the gateway's address (the

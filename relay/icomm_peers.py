@@ -14,6 +14,14 @@ is steered some other way, it connects directly from its own address. Port 8888
 (Local Connect) is only ever called back by the module itself, from its own
 address, after the relay registers with it.
 
+Untrusted peers on :8444 are not refused. They get plain proxying to Ayla: no
+local answers (lan.json, the lanip ack), no telemetry ingest, no write
+injection, no DSN rewrite. A misconfigured but legitimate module, for example
+one whose SNAT source is not the host's default gateway, therefore keeps its
+cloud connection instead of being blacked out. It just gets no local features,
+and the log says why. A stranger gains nothing it could not get by talking to
+Ayla directly. Untrusted peers on :8888 are refused with 403.
+
 Trusted peers:
 
   :8444  loopback, the host's default gateway(s), the module's learned
@@ -42,6 +50,7 @@ from aiohttp import web
 
 _LOGGER = logging.getLogger("icomm_peers")
 LOOPBACK = {"127.0.0.1", "::1"}
+TRUSTED = web.RequestKey("icomm_trusted", bool)
 
 
 def normalize(address: str | None) -> str:
@@ -81,8 +90,15 @@ class PeerPolicy:
         self.extra = {normalize(p.strip()) for p in raw.split(",")
                       if p.strip() and p.strip() != "*"}
         self.gateways = default_gateways()
+        self._gateways_read = time.time()
         self.rejected: dict[str, int] = {}
         self._warned: dict[str, float] = {}
+
+    def _refresh_gateways(self) -> None:
+        """The add-on can start before the host has its default route."""
+        if time.time() - self._gateways_read > 60:
+            self._gateways_read = time.time()
+            self.gateways = default_gateways()
 
     def _base(self) -> set[str]:
         module = self._module_ip()
@@ -91,7 +107,10 @@ class PeerPolicy:
     def cloud_allowed(self, remote: str | None) -> bool:
         """:8444, the impersonated Ayla cloud."""
         peer = normalize(remote)
-        return self.allow_all or peer in self._base() or peer in self.gateways
+        if self.allow_all or peer in self._base() or peer in self.gateways:
+            return True
+        self._refresh_gateways()
+        return peer in self.gateways
 
     def lan_allowed(self, remote: str | None) -> bool:
         """:8888, Local Connect: only the module calls back here."""
@@ -101,23 +120,35 @@ class PeerPolicy:
         return {"gateways": sorted(self.gateways), "extra": sorted(self.extra),
                 "allow_all": self.allow_all, "rejected": dict(self.rejected)}
 
-    def middleware(self, allowed, port_label: str):
+    def note_untrusted(self, request: web.Request, port_label: str, action: str) -> None:
+        peer = normalize(request.remote) or "?"
+        if peer in self.rejected or len(self.rejected) < 64:      # bounded
+            self.rejected[peer] = self.rejected.get(peer, 0) + 1
+        now = time.time()
+        if now - self._warned.get(peer, 0) > 3600:
+            if len(self._warned) > 256:
+                self._warned.clear()
+            self._warned[peer] = now
+            _LOGGER.warning(
+                "%s %s %s from %s on %s: not a trusted peer (gateways %s, module %s). "
+                "If %s is your router/gateway, add it to the trusted_peers option; "
+                "if it is the water heater, set module_ip.", action, request.method,
+                request.path, peer, port_label, sorted(self.gateways) or "none detected",
+                self._module_ip() or "unknown", peer)
+
+    def middleware(self, allowed, port_label: str, refuse: bool = True):
+        """refuse=True: 403 for untrusted peers. False: mark request[TRUSTED]."""
         policy = self
 
         @web.middleware
         async def check(request: web.Request, handler):
-            if not allowed(request.remote):
-                peer = normalize(request.remote) or "?"
-                policy.rejected[peer] = policy.rejected.get(peer, 0) + 1
-                now = time.time()
-                if now - policy._warned.get(peer, 0) > 3600:
-                    policy._warned[peer] = now
-                    _LOGGER.warning(
-                        "refused %s %s from %s on %s: not the module or the "
-                        "gateway. If this IS the module, set the add-on's "
-                        "module_ip or trusted_peers option.", request.method,
-                        request.path, peer, port_label)
-                return web.Response(status=403)
+            trusted = allowed(request.remote)
+            request[TRUSTED] = trusted
+            if not trusted:
+                policy.note_untrusted(request, port_label,
+                                      "refused" if refuse else "plain-proxying")
+                if refuse:
+                    return web.Response(status=403)
             return await handler(request)
 
         return check

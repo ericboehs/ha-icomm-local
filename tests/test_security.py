@@ -50,27 +50,51 @@ def _relay(tmp_path, monkeypatch, **env) -> Relay:
     return relay
 
 
-async def _through(relay: Relay, allowed, handler, request):
-    return await relay.peers.middleware(allowed, "test")(request, handler)
-
-
 # -- S1/S2: the impersonated cloud answers only the module -------------------
 
-async def test_lan_json_key_is_refused_to_a_lan_stranger(tmp_path, monkeypatch):
+async def test_lan_json_key_is_never_given_to_a_lan_stranger(tmp_path, monkeypatch):
+    """A stranger on :8444 gets plain proxying to Ayla, never our key."""
     relay = _relay(tmp_path, monkeypatch)
-    response = await _through(relay, relay.peers.cloud_allowed, relay._route,
-                              _from(STRANGER, "GET", "/devices/x/lan.json"))
-    assert response.status == 403
-    assert SECRET not in (response.text or "")
+    proxied = []
+
+    async def fake_proxy(request, transform=None):
+        proxied.append((request.path, transform))
+        return web.Response(status=401)
+
+    relay.proxy = fake_proxy
+    check = relay.peers.middleware(relay.peers.cloud_allowed, ":8444", refuse=False)
+    response = await check(_from(STRANGER, "GET", "/devices/x/lan.json"), relay._route)
+    assert response.status == 401                       # Ayla's answer, not ours
+    assert proxied == [("/devices/x/lan.json", None)]   # no local answer, no transform
     assert relay.lan.key_served_at == 0.0
     assert relay.peers.rejected == {STRANGER: 1}
 
 
+async def test_stranger_telemetry_and_polls_get_no_local_behavior(tmp_path, monkeypatch,
+                                                                  blocks_electric):
+    relay = _relay(tmp_path, monkeypatch)
+    relay.queue_write("setpoint", 140)
+    transforms = []
+
+    async def fake_proxy(request, transform=None):
+        transforms.append(transform)
+        return web.Response()
+
+    relay.proxy = fake_proxy
+    check = relay.peers.middleware(relay.peers.cloud_allowed, ":8444", refuse=False)
+    for path in ("/devices/x/commands.xml", "/devices/x/properties/superBlockDyn1/datapoints.xml",
+                 "/dsns/x.xml"):
+        await check(_from(STRANGER, "GET", path), relay._route)
+    assert transforms == [None, None, None]
+    assert relay.state == {"online": False}
+    assert relay.pending["setpoint"].attempts == 0
+
+
 async def test_lan_json_still_served_to_the_module_through_the_gateway(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch)
+    check = relay.peers.middleware(relay.peers.cloud_allowed, ":8444", refuse=False)
     for peer in (GATEWAY, MODULE):
-        response = await _through(relay, relay.peers.cloud_allowed, relay._route,
-                                  _from(peer, "GET", "/devices/x/lan.json"))
+        response = await check(_from(peer, "GET", "/devices/x/lan.json"), relay._route)
         assert response.status == 200
         assert json.loads(response.body)["lanip"]["lanip_key"] == SECRET
 
@@ -78,11 +102,16 @@ async def test_lan_json_still_served_to_the_module_through_the_gateway(tmp_path,
 async def test_stranger_cannot_fake_the_lanip_ack(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch)
     relay.lan.needs_key_push = True
-    response = await _through(
-        relay, relay.peers.cloud_allowed, relay._route,
-        _from(STRANGER, "PUT", "/devices/x/lanip.json?cmd_id=1&status=204"))
-    assert response.status == 403
+
+    async def fake_proxy(request, transform=None):
+        return web.Response(status=404)
+
+    relay.proxy = fake_proxy
+    check = relay.peers.middleware(relay.peers.cloud_allowed, ":8444", refuse=False)
+    await check(_from(STRANGER, "PUT", "/devices/x/lanip.json?cmd_id=1&status=204"),
+                relay._route)
     assert relay.lan.needs_key_push is True
+    assert relay.lanip_push_acked is False
 
 
 def test_trusted_peers_extends_and_star_disables(tmp_path, monkeypatch):
@@ -180,8 +209,14 @@ def test_cloud_injection_is_capped(tmp_path, blocks_electric):
     relay.health = lambda: {"state": "healthy"}
     relay.queue_write("setpoint", 140)
     reply = b"<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n"
-    injected = [relay._inject(reply) is not None for _ in range(MAX_ATTEMPTS + 2)]
-    assert injected == [True] * MAX_ATTEMPTS + [False, False]
+    write = relay.pending["setpoint"]
+    assert relay._inject(reply) is not None
+    assert relay._inject(reply) is None                 # inside the 60 s retry window
+    injected = []
+    for _ in range(MAX_ATTEMPTS + 1):
+        write.delivered = 0.0                           # pretend the window passed
+        injected.append(relay._inject(reply) is not None)
+    assert injected == [True] * (MAX_ATTEMPTS - 1) + [False, False]
 
 
 def test_exhausted_write_is_retired_after_the_window(tmp_path):
@@ -258,3 +293,59 @@ async def test_nudge_is_clamped_and_bad_bodies_are_400(tmp_path):
     assert (await relay.nudge_handler(post("/nudge", {"attempts": "x"}))).status == 400
     assert (await relay.write_handler(post("/write", [140]))).status == 400
     assert (await relay.write_handler(post("/write", {"setpoint": None}))).status == 400
+
+
+# -- second review ---------------------------------------------------------------
+
+def test_foreign_key_session_gets_no_lan_writes_so_cloud_keeps_its_attempts(tmp_path,
+                                                                           blocks_electric):
+    """A module holding a foreign key completes exchanges but never sends an
+    authentic update. LAN copies into it vanish, so none are sent."""
+    lan = _server(tmp_path)
+    relay = lan.relay
+    lan.session_verified = False
+    relay.queue_write("setpoint", 140)
+    assert relay.take_pending_for_lan() is None
+    assert relay.pending["setpoint"].attempts == 0
+    relay._ingest_blocks(blocks_electric)
+    relay.health = lambda: {"state": "healthy"}
+    reply = b"<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n"
+    assert relay._inject(reply) is not None             # cloud fallback still delivers
+
+
+async def test_authentic_update_verifies_the_session(tmp_path):
+    lan = _server(tmp_path)
+    lan.session_verified = False
+    tx, _ = module_directions(SECRET.encode(), EXCHANGE, lan.session.random_2,
+                              lan.session.time_2)
+    message = _module_message(tx, {"seq_no": 1, "data": {"name": "x", "value": "1"}})
+    request = _from(MODULE, "POST", "/local_lan/property/datapoint.json", payload=_body(message))
+    assert (await lan._datapoint(request)).status == 200
+    assert lan.session_verified is True
+
+
+def test_rejected_write_is_not_retried(tmp_path):
+    relay = _server(tmp_path).relay
+    write = relay.queue_write("setpoint", 141)
+    write.command_id = "abc"
+    write.attempts, write.delivered = 1, 0.0
+    relay._record_ack("abc", "400")                     # strings normalised
+    assert write.ack_status == 400 and write.status == "rejected"
+    assert relay.take_pending_for_lan() is None
+
+
+def test_retired_write_confirmed_late_is_recorded(tmp_path):
+    relay = _server(tmp_path).relay
+    relay.last_write = {"kind": "setpoint", "value": 138.0, "outcome": "not_applied"}
+    relay.state["setpoint"] = 138.0
+    relay._confirm_pending()
+    assert relay.last_write["outcome"] == "confirmed"
+    assert relay.last_write["earlier_outcome"] == "not_applied"
+
+
+def test_gateways_reread_when_an_unknown_peer_arrives(tmp_path, monkeypatch):
+    relay = _relay(tmp_path, monkeypatch)
+    relay.peers.gateways = set()
+    relay.peers._gateways_read = 0.0
+    monkeypatch.setattr("icomm_peers.default_gateways", lambda: {GATEWAY})
+    assert relay.peers.cloud_allowed(GATEWAY)

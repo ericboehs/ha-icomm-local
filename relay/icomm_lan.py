@@ -129,6 +129,9 @@ class LanServer:
         self.key_served_at = 0.0          # when we last answered lan.json
         self.registered = False
         self.session: Session | None = None
+        # True once the current session has delivered one authenticated update:
+        # proof the module holds our key, so LAN writes will not vanish.
+        self.session_verified = False
         self.seq_no = 0
         self.updates = 0
         self.writes_delivered = 0
@@ -249,7 +252,8 @@ class LanServer:
     def status(self) -> dict:
         now = time.time()
         return {"enabled": self.enabled, "registered": self.registered,
-                "session": self.session is not None, "module_ip": self.module_ip,
+                "session": self.session is not None,
+                "session_verified": self.session_verified, "module_ip": self.module_ip,
                 "port": self.port, "key_id": self.key_id,
                 "key_served": bool(self.key_served_at),
                 "last_heartbeat_age": round(now - self.last_heartbeat, 1)
@@ -337,6 +341,7 @@ class LanServer:
             self.session = Session(self.key.encode(), exchange)
         except (KeyError, TypeError, AttributeError):
             return web.Response(status=400)
+        self.session_verified = False
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
         if self.exchanges_since_update >= 3 and not self.needs_key_push:
@@ -403,9 +408,10 @@ class LanServer:
             return web.Response(status=400)
         try:
             update = self.session.dev.decrypt_validate(await request.json())
-        except (ValueError, KeyError) as err:
+        except (ValueError, KeyError, TypeError) as err:
             _LOGGER.warning("LAN mode: undecryptable update: %s", err)
             return web.Response(status=400)
+        self.session_verified = True
         self.updates += 1
         self.last_update = time.time()
         self.exchanges_since_update = 0

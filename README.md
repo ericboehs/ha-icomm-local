@@ -102,9 +102,11 @@ Then Settings → Devices & services → **Add integration** → *iCOMM Local*, 
 Set the temperature or mode from the water heater card, or call the services.
 A write moves through `queued → delivered → acknowledged → confirmed`, shown
 by the *Pending write* sensor and the water heater's `write_status` attribute.
-Only the tank's own telemetry counts as **confirmed**. If the tank accepts a
-write three times but keeps reporting the old value, the write ends as
-`not_applied`. Setpoints are clamped to the maximum the tank advertises.
+Only the tank's own telemetry counts as **confirmed**. A write gets up to three
+deliveries. If the tank accepts it three times but keeps reporting the old
+value, it ends as `not_applied`; an error ack ends it as `rejected`. Fifteen
+minutes later it leaves the queue. Setpoints are clamped to the maximum the
+tank advertises. All statuses: [docs/LAN_MODE.md](docs/LAN_MODE.md#write-status).
 
 If the tank has not reported for 10+ minutes, the entities keep their
 last-known values with `stale: true`, and a warning appears under
@@ -120,7 +122,7 @@ Check the add-on log first, then the relay's state from the HA host:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Add-on log shows no requests from the heater at all | NAT rules not matching | Check the router's DNAT counter; check the heater IP; break the old connection (STEERING.md: *Checking it works*) or power-cycle the heater |
-| Log: `refused ... from <ip>: not the module or the gateway` | the relay does not recognize the peer as the module | If `<ip>` is your gateway or heater, set the add-on option `module_ip` or `trusted_peers` |
+| Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, set `module_ip` |
 | `lan.last_registration_result: PUT 404` / `POST 404` | Local Connect not armed yet | Power-cycle the heater (install step 3) |
 | `PUT 412` | armed, waiting for the key | Wait a minute; if it persists, power-cycle |
 | `lan.needs_key_push: true` | the module holds a key this relay did not issue | Automatic: the relay pushes its key on the next cloud poll. See [docs/LAN_MODE.md](docs/LAN_MODE.md) |
@@ -146,7 +148,8 @@ Do it in this order:
 3. Uninstall the add-on. This deletes `/data/lanip.json`. The module keeps that
    now-orphaned Local Connect key, which is harmless: the app does not use
    Local Connect. If you reinstall later, the relay detects the foreign key and
-   replaces it automatically.
+   pushes its new one on the next cloud poll. Power-cycle the heater to force
+   that poll. Until then, writes go through the cloud path.
 
 ## Without the add-on (HA Container, Core, or another host)
 
@@ -157,7 +160,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 QUEUE_FILE=$PWD/state/pending.json STATE_HOST=0.0.0.0 .venv/bin/python icomm_relay.py
 ```
 
-Python 3.10+, on the same subnet as the heater. Use `STATE_HOST=0.0.0.0` only if
+Python 3.10+, on the same subnet as the heater. On a host without
+`/proc/net/route` (not Linux), the gateway cannot be detected: set
+`TRUSTED_PEERS=<gateway-ip>`. Use `STATE_HOST=0.0.0.0` only if
 Home Assistant runs on another machine: the state API is unauthenticated, so
 keep it on a trusted LAN. A systemd unit is in `relay/icomm-relay.service`.
 
@@ -185,9 +190,10 @@ Add-on options, or environment variables when running the relay directly:
 
 ## Security
 
-- The module-facing ports (8444, 8888) bind all interfaces but answer only the
+- The module-facing ports (8444, 8888) bind all interfaces but trust only the
   module: the gateway's address (the NAT rules make it arrive from there), the
-  module's own address, and loopback. Everyone else gets 403.
+  module's own address, and loopback. On 8444, anyone else is just forwarded to
+  Ayla, with no key, telemetry, writes or rewrites. On 8888, anyone else gets 403.
 - The state API is unauthenticated and on loopback by default.
 - The relay's TLS certificate is self-signed. The module does not validate it.
   The relay *does* verify Ayla's real certificate on the upstream side.

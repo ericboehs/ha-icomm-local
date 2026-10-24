@@ -50,7 +50,8 @@ should not delete that file after the module has learned it.
   `data.properties[0].property = {base_type:"string", name:"setBlockParameter",
   value:"BD 40 …", id:<8 chars>}` — the same golden frames the cloud path uses.
   A delivered write is not re-sent every poll: if telemetry has not confirmed
-  it after 60 s, delivery is retried at most three times.
+  it after 60 s, it is retried, up to three deliveries in total across the LAN
+  and cloud paths (see *Write status*).
 - **Telemetry:** the module POSTs encrypted updates to
   `/local_lan/property/datapoint.json`. `superBlockDyn1` is decoded exactly
   like the cloud POST; `ack_status` is logged as a delivery ack.
@@ -88,11 +89,23 @@ sensor shows it (`setpoint 140.0: acknowledged`):
 | `acknowledged` | the module acked *this* delivery (LAN ack id matches the property id we sent) |
 | `confirmed` | the tank's own telemetry reports the value; the write leaves `pending` and lands in `last_write` |
 | `not_applied` | acked on all three attempts, yet fresh telemetry still reports the old value (`observed_after_ack`) |
+| `rejected` | the module answered the property with an error `ack_status`; not retried |
 
 `reports_after_ack` / `observed_after_ack` show what the tank said after the
 ack, so "acked but ignored" is visible instead of looking stuck. Cloud
 deliveries have no per-command ack, so they go straight from `delivered` to
 `confirmed`.
+
+A write gets **three deliveries in total, across both paths**, at least 60 s
+apart. LAN copies are only sent into a session that has produced one
+authenticated update. A module holding a foreign key completes key exchanges
+but can never decrypt our replies, so copies sent into it would only use up the
+cloud fallback's attempts. Fifteen minutes after its last delivery, an
+exhausted write leaves `pending` and is recorded in `last_write` with outcome
+`not_applied`, `rejected` or `unconfirmed` (cloud only, no ack). A write still
+queued after `QUEUE_MAX_AGE_S` is retired as `expired`. If the tank later
+reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
+`earlier_outcome` recording the first verdict.
 
 ## What `/state` tells you
 

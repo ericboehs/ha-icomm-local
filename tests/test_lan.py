@@ -82,6 +82,7 @@ def _server(tmp_path) -> LanServer:
         server = relay.lan
         assert isinstance(server, LanServer)
         server.session = Session(SECRET.encode(), EXCHANGE)
+        server.session_verified = True                   # the module has proven our key
         server.last_update = __import__("time").time()   # fresh unless a test says otherwise
         return server
     finally:

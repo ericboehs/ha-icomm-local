@@ -61,7 +61,7 @@ from pathlib import Path
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
 from icomm_lan import LanServer
-from icomm_peers import PeerPolicy
+from icomm_peers import TRUSTED, PeerPolicy
 
 _LOGGER = logging.getLogger("icomm_relay")
 
@@ -345,7 +345,10 @@ class Relay:
         for write in self.pending.values():
             if command_id and write.command_id == command_id:
                 write.acked = time.time()
-                write.ack_status = status
+                try:
+                    write.ack_status = int(status)
+                except (TypeError, ValueError):
+                    write.ack_status = -1
                 write.reports_after_ack = 0
                 write.observed_after_ack = None
                 self._save_queue()
@@ -358,6 +361,12 @@ class Relay:
         evidence the module is listening, and a LAN delivery works even when
         the internet is down.
         """
+        # Only into a session that has proven it can talk to us: a module with
+        # a foreign key completes key exchanges but cannot decrypt our replies,
+        # and every copy sent into it would use up the delivery cap the cloud
+        # fallback needs (second review).
+        if not self.lan.session_verified:
+            return None
         # The LAN poll comes every ~10 s; re-sending the same frame each time
         # until telemetry confirms would hammer the appliance. One delivery,
         # then a quiet 60 s retry window if confirmation never comes.
@@ -377,7 +386,7 @@ class Relay:
         self._expire_pending()
         now = time.time()
         for write in sorted(self.pending.values(), key=lambda w: w.queued):
-            if write.attempts >= MAX_ATTEMPTS:
+            if write.attempts >= MAX_ATTEMPTS or write.status == "rejected":
                 continue
             if retry_after and write.delivered and now - write.delivered < retry_after:
                 continue
@@ -541,8 +550,27 @@ class Relay:
             for kind in confirmed:
                 write = self.pending.pop(kind)
                 self.last_write = {**write.public(), "outcome": "confirmed"}
+        elif self._late_confirmation():
+            observed = True
         if confirmed or observed:
             self._save_queue()
+
+    def _late_confirmation(self) -> bool:
+        """A retired write that the tank applied after all: say so."""
+        last = self.last_write or {}
+        if last.get("outcome") not in ("not_applied", "unconfirmed", "expired", "rejected"):
+            return False
+        if last.get("kind") in self.pending:
+            return False                # a newer write for the register owns it now
+        got = self.state.get(last.get("kind"))
+        if last.get("kind") == "setpoint":
+            took = got is not None and abs(float(got) - float(last.get("value", -999))) <= 0.5
+        else:
+            took = got is not None and got == last.get("value")
+        if took:
+            self.last_write = {**last, "outcome": "confirmed",
+                               "confirmed_late": time.time(), "earlier_outcome": last["outcome"]}
+        return took
 
     def _inject(self, payload: bytes) -> bytes | None:
         """Put the oldest queued write into a command reply, if it is safe to.
@@ -562,7 +590,9 @@ class Relay:
             # and looks like a write bug. Hold, and let the state API say why.
             self.injections_held += 1
             return None
-        write = self._next_write()
+        # Same 60 s window as the LAN path, so a cloud poll seconds after a LAN
+        # delivery does not re-send it and use up an attempt.
+        write = self._next_write(retry_after=60.0)
         if write is None:
             return None
         text = payload.decode(errors="replace")
@@ -724,7 +754,8 @@ class Relay:
         # Only the module (via the gateway's SNAT, or directly) may talk to the
         # impersonated cloud: lan.json alone hands out the LAN key.
         module_app = web.Application(middlewares=[
-            self.peers.middleware(self.peers.cloud_allowed, f":{self.listen_port}")])
+            self.peers.middleware(self.peers.cloud_allowed, f":{self.listen_port}",
+                                  refuse=False)])
         # Everything the module dials goes upstream verbatim; /dsns/ (fetched
         # during re-registration) is the one path outside /devices and must not
         # fall to a default 404 -- the module is mid-boot when it asks.
@@ -938,6 +969,10 @@ class Relay:
 
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
+        if not request.get(TRUSTED, True):
+            # Not the module or the gateway: forward untouched, with none of
+            # the local behavior (the key, telemetry, writes, DSN rewrite).
+            return await self.proxy(request)
         self._note_request(request.path)
         if self.lan.enabled and request.path.endswith("/lan.json"):
             return web.json_response(self.lan.lan_json())
