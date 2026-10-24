@@ -10,6 +10,15 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-10-24
+
+### Added
+- **Active setpoint**: the target the tank is heating to right now, decoded
+  from telemetry (block 1, offset 80). In vacation it drops to 50 °F while the
+  setpoint keeps the value to return to. The water heater's dial now shows
+  50 °F during vacation, as the A.O. Smith app does. A new *Active setpoint*
+  sensor and an `active_setpoint` attribute expose it everywhere.
+
 ## [0.4.10] - 2026-10-24
 
 ### Added
@@ -209,7 +218,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...HEAD
+[0.4.11]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...v0.4.8

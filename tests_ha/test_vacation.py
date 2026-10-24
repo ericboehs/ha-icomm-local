@@ -19,7 +19,8 @@ ENTITY = "water_heater.icomm_water_heater"
 
 def _vacation(days: int = 1) -> dict:
     state = copy.deepcopy(STATE)
-    state.update(mode="vacation", mode_raw=f"{days}/2", vacation_days=days)
+    state.update(mode="vacation", mode_raw=f"{days}/2", vacation_days=days,
+                 active_setpoint=50.0)
     return state
 
 
@@ -129,3 +130,39 @@ async def test_set_mode_service_refuses_bad_days(hass: HomeAssistant, aioclient_
         await hass.services.async_call("icomm_local", "set_mode", data,
                                        blocking=True, return_response=True)
     assert _posts(aioclient_mock) == []
+
+
+async def test_vacation_dial_shows_the_50_degree_target(
+        hass: HomeAssistant, aioclient_mock) -> None:
+    """As the app does: the tank holds 50 F in vacation, setpoint kept at 150."""
+    await _setup(hass, aioclient_mock, _vacation(2))
+    heater = hass.states.get(ENTITY)
+    assert heater.attributes["temperature"] == 50
+    assert heater.attributes["confirmed_setpoint"] == 150.0
+    assert heater.attributes["active_setpoint"] == 50.0
+    assert hass.states.get("sensor.icomm_water_heater_active_setpoint").state == "50.0"
+
+
+async def test_outside_vacation_the_dial_shows_the_setpoint(hass: HomeAssistant,
+                                                            aioclient_mock) -> None:
+    state = copy.deepcopy(STATE)
+    state["active_setpoint"] = 150.0
+    await _setup(hass, aioclient_mock, state)
+    assert hass.states.get(ENTITY).attributes["temperature"] == 150
+
+
+async def test_a_pending_setpoint_still_wins_in_vacation(hass: HomeAssistant,
+                                                          aioclient_mock) -> None:
+    state = _vacation()
+    state["pending"] = {"setpoint": {"kind": "setpoint", "value": 140.0, "status": "queued"}}
+    await _setup(hass, aioclient_mock, state)
+    assert hass.states.get(ENTITY).attributes["temperature"] == 140
+
+
+async def test_relay_without_active_setpoint_falls_back(hass: HomeAssistant,
+                                                         aioclient_mock) -> None:
+    """An older relay sends no active_setpoint: show the setpoint, as before."""
+    state = _vacation()
+    del state["active_setpoint"]
+    await _setup(hass, aioclient_mock, state)
+    assert hass.states.get(ENTITY).attributes["temperature"] == 150

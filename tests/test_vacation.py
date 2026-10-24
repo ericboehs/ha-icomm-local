@@ -140,3 +140,33 @@ def test_app_vacation_write_is_logged_with_its_days(relay):
     assert relay.last_cloud_write["kind"] == "mode"
     assert relay.last_cloud_write["value"] == "vacation"
     assert relay.last_cloud_write["days"] == 1
+
+
+# -- the active target (research phase 34) ----------------------------------------
+
+def test_real_vacation_report_decodes_its_50_degree_target(blocks_vacation):
+    """The app showed 50 F during vacation while the setpoint register said 150."""
+    decoded = decode(blocks_vacation)
+    assert decoded["mode"] == "vacation" and decoded["vacation_days"] == 2
+    assert decoded["active_setpoint"] == 50.0
+    assert decoded["setpoint"] == 150.0                 # kept, to return to
+
+
+@pytest.mark.parametrize(("fixture", "active"), [("blocks_electric", 150.0),
+                                                 ("blocks_hybrid", 140.0),
+                                                 ("blocks_heat_pump_cooldown", 150.0)])
+def test_active_target_is_the_setpoint_outside_vacation(fixture, active, request):
+    decoded = decode(request.getfixturevalue(fixture))
+    assert decoded["active_setpoint"] == decoded["setpoint"] == active
+
+
+def test_the_one_capture_where_active_and_setpoint_differ(blocks_heat_pump):
+    """Unexplained, kept visible: setpoint 120, active 115 (maybe mid-change)."""
+    decoded = decode(blocks_heat_pump)
+    assert (decoded["setpoint"], decoded["active_setpoint"]) == (120.0, 115.0)
+
+
+def test_vacation_write_confirms_on_the_real_vacation_report(relay, blocks_vacation):
+    relay.queue_write("mode", "vacation", days=2)
+    relay._ingest_blocks(blocks_vacation)
+    assert relay.last_write["outcome"] == "confirmed"

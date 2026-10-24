@@ -104,7 +104,13 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
     @property
     def target_temperature(self):
         pending = self._pending("setpoint")
-        return pending if pending is not None else self._data.get("setpoint")
+        if pending is not None:
+            return pending
+        # In vacation the tank holds a lower target (50 F) while keeping the
+        # setpoint to return to; show what it is really doing, as the app does.
+        if self._data.get("mode") == "vacation" and self._data.get("active_setpoint"):
+            return self._data["active_setpoint"]
+        return self._data.get("setpoint")
 
     def _effective_mode(self):
         return self._pending("mode") or self._data.get("mode")
@@ -135,6 +141,7 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
             "stale": is_stale(data),
             "last_telemetry_age_s": data.get("last_telemetry_age"),
             "confirmed_setpoint": data.get("setpoint"),
+            "active_setpoint": data.get("active_setpoint"),
             "confirmed_mode": data.get("mode"),
             "water_bottom": data.get("water_bottom"),
             "power_w": data.get("watts"),

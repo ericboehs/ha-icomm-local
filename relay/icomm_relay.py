@@ -170,6 +170,11 @@ def decode(blocks: list[bytes]) -> dict:
     return {
         "setpoint": round(fahrenheit(b3[0:2]), 1),
         "max_setpoint": round(fahrenheit(b1[86:88]), 1),
+        # The target the controller is heating to right now. Equal to the
+        # setpoint except in vacation, where it drops to 50 F while the
+        # setpoint (block 3) keeps the value to return to. Three identical
+        # copies follow at 84, 112 and 114 (research phase 34).
+        "active_setpoint": round(fahrenheit(b1[80:82]), 1),
         "water_top": round(fahrenheit(b1[0:2]), 1),
         "water_bottom": round(fahrenheit(b1[4:6]), 1),
         # A third thermistor: equal to top and bottom at rest, last to recover

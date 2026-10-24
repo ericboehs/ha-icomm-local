@@ -45,6 +45,12 @@ def blocks_heat_pump_cooldown() -> list[bytes]:
 
 
 @pytest.fixture
+def blocks_vacation() -> list[bytes]:
+    """Vacation, 2 days, register 2/2: active target 50 F, setpoint kept at 150."""
+    return load("telemetry_vacation.json")
+
+
+@pytest.fixture
 def blocks_hybrid() -> list[bytes]:
     """Hybrid mode, idle: 0 W, mode 0/4."""
     return load("telemetry_hybrid.json")

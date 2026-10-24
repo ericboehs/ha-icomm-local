@@ -34,6 +34,9 @@ SPECS = [
      SensorStateClass.MEASUREMENT),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
     ("max_setpoint", "Max setpoint", F, SensorDeviceClass.TEMPERATURE, None),
+    # What the tank heats to now: the setpoint, or 50 F in vacation.
+    ("active_setpoint", "Active setpoint", F, SensorDeviceClass.TEMPERATURE,
+     SensorStateClass.MEASUREMENT),
     ("watts", "Power", UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("volts", "Line voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,
      SensorStateClass.MEASUREMENT),
