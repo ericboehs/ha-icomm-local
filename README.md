@@ -215,11 +215,25 @@ Add-on options, or environment variables when running the relay directly:
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-ruff check . && python -m pytest                       # relay + unit tests
+pip install --require-hashes -r relay/requirements.txt   # the add-on's exact lock
+pip install -r requirements-dev.txt                      # test and lint tools
+ruff check . && python -m pytest                         # relay + unit tests
 pip install pytest-homeassistant-custom-component
 python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto   # inside real HA
 ```
+
+Add-on builds are reproducible. The Dockerfile pins the base image by tag and
+digest, and `relay/requirements.txt` pins every package with hashes. To change
+a dependency, edit `relay/requirements.in` and regenerate the lock with the
+command in that file's header. Dependabot bumps the base image and the lock
+weekly, each as one grouped PR.
+
+Releasing: add a section to `CHANGELOG.md`, copy it with
+`cp CHANGELOG.md relay/`, set the same version in `relay/config.yaml` and
+`custom_components/icomm_local/manifest.json`, then
+`git tag vX.Y.Z && git push origin vX.Y.Z`. The release workflow checks that
+all of these agree and that the tests pass, then publishes the GitHub release
+from the changelog.
 
 ## License
 

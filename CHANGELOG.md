@@ -18,6 +18,12 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   setup-buildx 4, setup-qemu 4. Dev tools: pytest 9, pytest-asyncio 1.4,
   ruff 0.17.
 - Dependabot opens one grouped PR per ecosystem.
+- **Reproducible add-on builds:** the base image is pinned to
+  `python:3.12.15-alpine3.24` by digest, and `relay/requirements.txt` is now a
+  hash-checked lock of every package, compiled from `relay/requirements.in`
+  with `uv pip compile`. CI tests that exact lock, and Dependabot bumps it
+  (uv ecosystem) and the base image. Before, each user's build installed
+  whatever was newest that day.
 
 ## [0.4.6] - 2026-10-24
 

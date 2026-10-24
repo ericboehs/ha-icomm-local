@@ -25,6 +25,7 @@ jobs:
           python scripts/release_check.py mirror
       - name: Tests pass at this commit
         run: |
+          pip install --require-hashes -r relay/requirements.txt
           pip install -r requirements-dev.txt
           ruff check .
           python -m pytest --cov=relay --cov-fail-under=95

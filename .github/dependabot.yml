@@ -1,13 +1,24 @@
 version: 2
 updates:
-  # The root scan also covers relay/requirements.txt (what the add-on image
-  # installs). A second /relay entry opened duplicate PRs.
-  - package-ecosystem: pip
-    directory: /
+  # The add-on's runtime lock: relay/requirements.txt is compiled from
+  # requirements.in by `uv pip compile --generate-hashes`. Dependabot's uv
+  # ecosystem recompiles it the same way, so pins and hashes stay consistent.
+  - package-ecosystem: uv
+    directory: /relay
     schedule:
       interval: weekly
     groups:
-      python:
+      relay-runtime:
+        patterns: ["*"]
+  # Dev and test tools (requirements-dev.txt). relay/ is excluded so this scan
+  # and the uv one never open competing PRs for the same lock.
+  - package-ecosystem: pip
+    directory: /
+    exclude-paths: ["relay/**"]
+    schedule:
+      interval: weekly
+    groups:
+      dev-tools:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
@@ -16,6 +27,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # The relay's base image: python:<version>-alpine<version>@<digest>.
   - package-ecosystem: docker
     directory: /relay
     schedule:

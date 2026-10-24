@@ -1,0 +1,8 @@
+# Direct dependencies of the relay. relay/requirements.txt is generated from
+# this file with every transitive package pinned and hash-checked, so each
+# add-on build installs exactly what CI tested. Regenerate after editing:
+#   uv pip compile relay/requirements.in --universal --python-version 3.12 \
+#     --generate-hashes -o relay/requirements.txt
+# Dependabot bumps the pins weekly as one grouped PR.
+aiohttp>=3.14.5
+pycryptodome>=4.1.0
