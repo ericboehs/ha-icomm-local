@@ -146,8 +146,11 @@ deliveries have no per-command ack, so they go straight from `delivered` to
 - The shared key is generated locally and never sent to A.O. Smith. It is not
   logged. It is stored unencrypted at `/data/lanip.json` with mode 0600 —
   protect `/data` accordingly.
-- The LAN endpoints speak only the encrypted protocol; a client without the
-  key cannot read telemetry or issue writes. The registration endpoint on the
+- The LAN endpoints speak only the encrypted protocol, and since 0.3.8 they
+  answer only the module's address (plus loopback and `TRUSTED_PEERS`). The
+  impersonated-cloud port answers only the module or the gateway, so
+  `lan.json` no longer hands the key to any LAN host. A message that fails its
+  signature no longer advances the CBC chain, so junk cannot desync a session. The registration endpoint on the
   *module* is unauthenticated by design (that is Ayla's protocol, not our
   choice), so treat the LAN segment as trusted, as with the rest of this
   project.

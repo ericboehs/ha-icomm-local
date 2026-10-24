@@ -11,7 +11,7 @@ Type=simple
 User=icomm
 StateDirectory=icomm-local
 WorkingDirectory=/opt/icomm-local/relay
-Environment=LISTEN_PORT=443
+Environment=LISTEN_PORT=8444
 Environment=STATE_PORT=8124
 Environment=UPSTREAM=proxy-ingress-usfield.aylanetworks.com
 # Queued writes survive restarts; the file is rewritten atomically.

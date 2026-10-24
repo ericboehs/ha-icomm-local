@@ -38,7 +38,6 @@ import hmac
 import json
 import logging
 import os
-import random
 import re
 import secrets
 import socket
@@ -51,6 +50,7 @@ from Crypto.Cipher import AES
 
 _LOGGER = logging.getLogger("icomm_lan")
 LAN_IP_RE = re.compile(r"<lan-ip>([^<]+)</lan-ip>")
+_ALNUM = string.ascii_letters + string.digits
 
 
 def _build_key(secret: bytes, msg: bytes) -> bytes:
@@ -59,12 +59,19 @@ def _build_key(secret: bytes, msg: bytes) -> bytes:
 
 
 class Direction:
-    """One direction's keys: sign, AES-CBC encrypt, and the reverse."""
+    """One direction's keys: sign, AES-CBC encrypt, and the reverse.
+
+    The CBC chain runs across messages for the whole session: each message's IV
+    is the previous message's last ciphertext block. The chain is tracked
+    explicitly, not left inside a long-lived cipher object, so that a message
+    which fails authentication cannot advance it. With a stateful cipher, one
+    garbage POST desynced every later real message (pre-publish review).
+    """
 
     def __init__(self, secret: bytes, msg: bytes) -> None:
         self.sign_key = _build_key(secret, msg + b"0")
-        crypto_key = _build_key(secret, msg + b"1")
-        self.cipher = AES.new(crypto_key, AES.MODE_CBC, _build_key(secret, msg + b"2")[:16])
+        self.crypto_key = _build_key(secret, msg + b"1")
+        self.iv = _build_key(secret, msg + b"2")[:16]
 
     @staticmethod
     def _pad(data: bytes) -> bytes:
@@ -73,14 +80,20 @@ class Direction:
 
     def encrypt_sign(self, payload: dict) -> dict:
         text = json.dumps(payload).encode()
-        return {"enc": base64.b64encode(self.cipher.encrypt(self._pad(text))).decode(),
+        enc = AES.new(self.crypto_key, AES.MODE_CBC, self.iv).encrypt(self._pad(text))
+        self.iv = enc[-16:]
+        return {"enc": base64.b64encode(enc).decode(),
                 "sign": base64.b64encode(hmac.digest(self.sign_key, text, "sha256")).decode()}
 
     def decrypt_validate(self, body: dict) -> dict:
-        text = self.cipher.decrypt(base64.b64decode(body["enc"])).rstrip(bytes([0]))
+        enc = base64.b64decode(body["enc"])
+        if not enc or len(enc) % 16:
+            raise ValueError("LAN ciphertext is not whole AES blocks")
+        text = AES.new(self.crypto_key, AES.MODE_CBC, self.iv).decrypt(enc).rstrip(bytes([0]))
         expect = base64.b64encode(hmac.digest(self.sign_key, text, "sha256")).decode()
-        if not hmac.compare_digest(expect, body["sign"]):
+        if not hmac.compare_digest(expect, str(body["sign"])):
             raise ValueError("bad LAN signature (wrong shared key?)")
+        self.iv = enc[-16:]         # advance the chain only for an authentic message
         return json.loads(text.decode())
 
 
@@ -88,7 +101,7 @@ class Session:
     """Keys for one registered LAN session, from the key-exchange nonces."""
 
     def __init__(self, secret: bytes, exchange: dict) -> None:
-        self.random_2 = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+        self.random_2 = "".join(secrets.choice(_ALNUM) for _ in range(16))
         self.time_2 = time.monotonic_ns() % 2**40
         r1, r2 = exchange["random_1"].encode(), self.random_2.encode()
         t1 = str(exchange["time_1"]).encode()
@@ -209,7 +222,10 @@ class LanServer:
     async def start(self) -> None:
         if not self.enabled:
             return
-        app = web.Application()
+        # Only the module itself may call back: anyone else could reset the
+        # session with a key exchange or drain queued writes by polling.
+        peers = self.relay.peers
+        app = web.Application(middlewares=[peers.middleware(peers.lan_allowed, f":{self.port}")])
         app.router.add_post("/local_lan/key_exchange.json", self._key_exchange)
         app.router.add_route("*", "/local_lan/commands.json", self._commands)
         app.router.add_route("*", "/local_lan/property/datapoint.json", self._datapoint)
@@ -288,8 +304,16 @@ class LanServer:
                             # 404 = LAN not armed (needs the rewritten DSN reply),
                             # 412 = armed but the module has no key yet.
                             delay = 15.0
-            except (TimeoutError, OSError) as err:
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001 -- this loop must never die
+                # aiohttp's ServerDisconnectedError and ClientPayloadError are not
+                # OSError. Catching only (TimeoutError, OSError) let one of them
+                # end the task silently, leaving LAN mode dead until a restart.
                 self.registration_failures += 1
+                if self.registered or self.last_registration_result != type(err).__name__:
+                    _LOGGER.warning("LAN mode: heartbeat failed: %s: %s",
+                                    type(err).__name__, err)
                 self.registered = False
                 self.last_registration_result = type(err).__name__
                 delay = 15.0
@@ -297,14 +321,22 @@ class LanServer:
 
     # -- the module-facing endpoints --------------------------------------
     async def _key_exchange(self, request: web.Request) -> web.Response:
-        body = await request.json()
-        exchange = body.get("key_exchange", {})
+        try:
+            body = await request.json()
+            exchange = body.get("key_exchange") or {}
+            if not isinstance(exchange, dict):
+                raise ValueError
+        except (ValueError, AttributeError):
+            return web.Response(status=400)
         if exchange.get("key_id") != self.key_id:
             _LOGGER.warning("LAN mode: key exchange for unknown key id %s "
                             "(module has a key we did not issue?)",
                             exchange.get("key_id"))
             return web.Response(status=404)
-        self.session = Session(self.key.encode(), exchange)
+        try:
+            self.session = Session(self.key.encode(), exchange)
+        except (KeyError, TypeError, AttributeError):
+            return web.Response(status=400)
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
         if self.exchanges_since_update >= 3 and not self.needs_key_push:
@@ -343,8 +375,7 @@ class LanServer:
         data: dict = {}
         write = self.relay.take_pending_for_lan()
         if write is not None:
-            write.command_id = "".join(
-                random.choices(string.ascii_letters + string.digits, k=8))
+            write.command_id = "".join(secrets.choice(_ALNUM) for _ in range(8))
             self.relay._save_queue()
             data = {"properties": [{"property": {
                 "base_type": "string", "name": "setBlockParameter",

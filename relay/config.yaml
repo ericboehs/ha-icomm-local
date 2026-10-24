@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.3.7"
+version: "0.3.8"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -19,6 +19,7 @@ options:
   lan_port: 8888
   module_ip: ""
   relay_ip: ""
+  trusted_peers: ""
 schema:
   listen_port: port
   state_port: port
@@ -32,5 +33,10 @@ schema:
   # module is on another subnet or callback detection picks the wrong address.
   module_ip: str?
   relay_ip: str?
+  # The module-facing ports answer only the module: the gateway's address (the
+  # NAT rules make the module arrive from it) and the module's own address.
+  # Add comma-separated addresses here only for unusual steering; "*" disables
+  # the check.
+  trusted_peers: str?
 map:
   - share:ro

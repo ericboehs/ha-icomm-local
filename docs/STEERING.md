@@ -141,6 +141,28 @@ The two rules translate directly. Look for "destination NAT" or "port forward" t
 can match on a **LAN source address** and **any destination**, plus "outbound /
 source NAT" for the hairpin. Notes from other users welcome as issues.
 
+- **OpenWrt (fw4):** a `redirect` with `src lan`, `src_ip <module-ip>`,
+  `src_dport 443`, `dest_ip <relay-host>`, `dest_port 8444`, plus an SNAT rule
+  (`target SNAT`, `src_ip <module-ip>`, `dest_ip <relay-host>`, `snat_ip <gateway-ip>`).
+- **pfSense / OPNsense:** a LAN-interface port forward (source `<module-ip>`,
+  destination any:443 → `<relay-host>:8444`) and a hybrid outbound NAT rule for
+  the same flow translating to the LAN interface address.
+- If the router has no `conntrack`, power-cycle the water heater instead to make
+  it re-dial through the new rules.
+
+### Routers that cannot do this
+
+Most mesh systems and ISP gateways (Eero, Google/Nest Wifi, typical ISP
+routers) only offer WAN→LAN port forwarding, which does not apply to traffic
+that starts on the LAN. They cannot steer the module, and this project does not
+work behind them. Do not use a DNS override: the module ignores local DNS.
+
+## Undoing it
+
+Disable or delete both rules first, then break the module's connection
+(`conntrack -D -s <module-ip> -p tcp --dport 443`, or power-cycle the heater).
+The heater goes straight back to Ayla's cloud. See the README's *Uninstall*.
+
 ## Checking it works
 
 1. The gateway's DNAT counter climbs when the module dials (every 1–4 min while

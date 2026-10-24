@@ -22,9 +22,12 @@ Two listeners, one process:
   * the plain-HTTP state API (STATE_PORT, default 8124, localhost only) that the
     Home Assistant integration polls: GET /state, GET /health.
 
-Everything is forwarded upstream verbatim -- this relay is read-only in phase 1
-and deliberately never modifies a response. Writes (setpoint, mode) come later,
-delivered as replacements for commands.xml poll replies.
+Everything is forwarded upstream verbatim, with three narrow exceptions:
+a queued write may replace the setBlockParameter in a commands.xml reply (the
+cloud fallback path); the DSN registration reply gets Ayla's two Local Connect
+switches flipped on; and lan.json / the lanip ack are answered locally with the
+relay's own key. Local Connect (icomm_lan.py) is the primary write path. The
+module-facing listeners answer only the module and the gateway (icomm_peers.py).
 
 Run:  python3 icomm_relay.py   (env below; see README for the full setup)
 
@@ -58,10 +61,18 @@ from pathlib import Path
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
 from icomm_lan import LanServer
+from icomm_peers import PeerPolicy
 
 _LOGGER = logging.getLogger("icomm_relay")
 
 TEMP_F = 1.8 / 256.0
+# Deliveries per write, across both paths. Each delivery is acked or not; past
+# this the appliance is accepting the frame without applying it, and more copies
+# only crowd out the mobile app's own commands.
+MAX_ATTEMPTS = 3
+# An exhausted write stays visible (pending, with its status) this long, so a
+# late report can still confirm it, then it is retired to last_write.
+RETIRE_AFTER_S = 900
 
 
 @dataclass
@@ -92,7 +103,9 @@ class PendingWrite:
         """queued -> delivered -> acknowledged -> confirmed (or not_applied)."""
         if self.confirmed:
             return "confirmed"
-        if self.acked and self.reports_after_ack and self.attempts >= 3:
+        if self.acked and self.ack_status not in (None, 200):
+            return "rejected"           # the module answered the property with an error
+        if self.acked and self.reports_after_ack and self.attempts >= MAX_ATTEMPTS:
             return "not_applied"        # acked 3x, the tank kept reporting the old value
         if self.acked:
             return "acknowledged"
@@ -184,6 +197,7 @@ class Relay:
         # (phase 28). LAN delivery and LAN telemetry; the cloud poll stays as
         # the fallback. No A.O. Smith account anywhere.
         self.lan = LanServer(self)
+        self.peers = PeerPolicy(lambda: self.lan.module_ip)
         # The 401 nudge: an experiment, not a doorbell. Phase 24 measured that
         # a 401 on a telemetry POST is simply retried and provokes no poll, so
         # this is left at 0 unless someone explicitly asks. LAN mode is the
@@ -344,22 +358,58 @@ class Relay:
         evidence the module is listening, and a LAN delivery works even when
         the internet is down.
         """
-        if not self.pending:
-            return None
-        write = self.pending[sorted(self.pending)[0]]
-        if write.attempts >= 3:
-            # Acked and re-sent three times with no confirming telemetry: the
-            # appliance is accepting the frame without applying it, or not
-            # reporting. More copies will not help; leave it to the cloud path
-            # and let /state show the unconfirmed attempts.
-            return None
-        if write.delivered and time.time() - write.delivered < 60:
-            # The LAN poll comes every ~10 s; re-sending the same frame each
-            # time until telemetry confirms would hammer the appliance. One
-            # delivery, then a quiet retry window if confirmation never comes.
+        # The LAN poll comes every ~10 s; re-sending the same frame each time
+        # until telemetry confirms would hammer the appliance. One delivery,
+        # then a quiet 60 s retry window if confirmation never comes.
+        write = self._next_write(retry_after=60.0)
+        if write is None:
             return None
         self._mark_delivered(write, "lan")
         return write
+
+    def _next_write(self, retry_after: float = 0.0) -> PendingWrite | None:
+        """The oldest deliverable write: not exhausted, not inside its retry window.
+
+        Oldest by queue time, not by name. Picking sorted(self.pending)[0] meant
+        a stuck "mode" write blocked every "setpoint" write behind it forever
+        (pre-publish review).
+        """
+        self._expire_pending()
+        now = time.time()
+        for write in sorted(self.pending.values(), key=lambda w: w.queued):
+            if write.attempts >= MAX_ATTEMPTS:
+                continue
+            if retry_after and write.delivered and now - write.delivered < retry_after:
+                continue
+            return write
+        return None
+
+    def _expire_pending(self) -> None:
+        """Retire writes that cannot succeed any more, so they stop showing as targets.
+
+        Exhausted writes are kept for RETIRE_AFTER_S after the last delivery, in
+        case a late report confirms them. Then they move to last_write as
+        not_applied, rejected, or unconfirmed (cloud path: no ack exists). Any
+        write older than QUEUE_MAX_AGE_S is retired as expired, in memory too,
+        not only on restore.
+        """
+        now = time.time()
+        retired = []
+        for kind, write in self.pending.items():
+            if now - write.queued > self.queue_max_age_s:
+                retired.append((kind, "expired"))
+            elif (write.attempts >= MAX_ATTEMPTS and write.delivered
+                  and now - write.delivered > RETIRE_AFTER_S):
+                status = write.status
+                retired.append((kind, status if status in ("not_applied", "rejected")
+                                else "unconfirmed"))
+        for kind, outcome in retired:
+            write = self.pending.pop(kind)
+            self.last_write = {**write.public(), "outcome": outcome}
+            _LOGGER.warning("retired %s %s write: %s after %d attempt(s)",
+                            kind, write.value, outcome, write.attempts)
+        if retired:
+            self._save_queue()
 
     def _mark_delivered(self, write: PendingWrite, path: str = "cloud") -> None:
         write.delivery_path = path
@@ -512,7 +562,9 @@ class Relay:
             # and looks like a write bug. Hold, and let the state API say why.
             self.injections_held += 1
             return None
-        write = self.pending[sorted(self.pending)[0]]
+        write = self._next_write()
+        if write is None:
+            return None
         text = payload.decode(errors="replace")
         rewritten, replaced = frames.rewrite_commands(text, write.frame)
         if rewritten == text:
@@ -604,12 +656,14 @@ class Relay:
             body = await request.json()
         except ValueError:
             return web.json_response({"error": "expected JSON"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "expected a JSON object"}, status=400)
         kind = "setpoint" if "setpoint" in body else "mode" if "mode" in body else None
         if kind is None:
             return web.json_response({"error": "give setpoint or mode"}, status=400)
         try:
             write = self.queue_write(kind, body[kind])
-        except ValueError as err:
+        except (ValueError, TypeError) as err:
             return web.json_response({"error": str(err)}, status=400)
         # Delivery: the module's own 10-second LAN poll when the LAN session is
         # up, otherwise the next cloud poll. Either way confirmation is telemetry.
@@ -623,6 +677,7 @@ class Relay:
         return web.json_response({"cancelled": dropped})
 
     async def state_handler(self, request: web.Request) -> web.Response:
+        self._expire_pending()
         out = dict(self.state)
         age = round(time.time() - self.last_telemetry, 1) if self.last_telemetry else None
         out["last_telemetry_age"] = age
@@ -636,6 +691,7 @@ class Relay:
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
         out["lan"] = self.lan.status()
+        out["peers"] = self.peers.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -665,7 +721,10 @@ class Relay:
         return ctx
 
     async def run(self) -> None:
-        module_app = web.Application()
+        # Only the module (via the gateway's SNAT, or directly) may talk to the
+        # impersonated cloud: lan.json alone hands out the LAN key.
+        module_app = web.Application(middlewares=[
+            self.peers.middleware(self.peers.cloud_allowed, f":{self.listen_port}")])
         # Everything the module dials goes upstream verbatim; /dsns/ (fetched
         # during re-registration) is the one path outside /devices and must not
         # fall to a default 404 -- the module is mid-boot when it asks.
@@ -865,7 +924,14 @@ class Relay:
             body = await request.json()
         except ValueError:
             body = {}
-        self.nudges_left = int(body.get("attempts", 1))
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            # Clamped: each nudge 401s a module request, so a large count would
+            # wedge the module's cloud connection (pre-publish review).
+            self.nudges_left = max(0, min(3, int(body.get("attempts", 1))))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "attempts must be 0-3"}, status=400)
         self.nudge_on_telemetry = bool(body.get("on_telemetry", False))
         return web.json_response({"nudges_left": self.nudges_left,
                                   "on_telemetry": self.nudge_on_telemetry})

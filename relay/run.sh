@@ -43,7 +43,7 @@ if opts.get("lan_mode") is False:
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),
-                 ("relay_ip", "RELAY_IP")):
+                 ("relay_ip", "RELAY_IP"), ("trusted_peers", "TRUSTED_PEERS")):
     if opts.get(key) not in (None, ""):
         print(f"export {env}={shlex.quote(str(opts[key]))}")
 PY
