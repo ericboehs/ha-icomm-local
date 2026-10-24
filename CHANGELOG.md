@@ -15,9 +15,10 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Security
 - **Log injection (CodeQL `py/log-injection`):** an untrusted LAN peer could
   forge relay log lines by putting `%0a` in a request path, since aiohttp
-  decodes the path before it is logged. Every externally supplied string (paths,
-  query strings, LAN property names and values, key ids, cloud frames) is now
-  logged with `%r`, which escapes newlines.
+  decodes the path before it is logged. Client-chosen values (path, method, key
+  id) have CR/LF stripped or escaped before logging, and other external strings
+  (query strings, LAN property names and values, cloud frames) are logged with
+  `%r`.
 - **Proxy target (CodeQL `py/partial-ssrf`):** the upstream URL is built with
   yarl from the configured host plus the client's path and query, so no path
   (`//host`, `/@host`, encoded slashes) can change the host. It never could
@@ -31,7 +32,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   build) and checks that pip is gone. `trivy-action` is pinned by commit SHA
   (v0.36.0, Trivy v0.76.1) after the 2026 Trivy tag-hijack advisory.
 - Repository: Dependabot alerts, Dependabot security updates, secret scanning
-  and push protection turned on.
+  and push protection turned on. The remaining CodeQL notes (test idioms,
+  deliberate best-effort `except` blocks) are dismissed with reasons.
 
 ## [0.4.11] - 2026-10-24
 

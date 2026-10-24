@@ -129,12 +129,15 @@ class PeerPolicy:
             if len(self._warned) > 256:
                 self._warned.clear()
             self._warned[peer] = now
+            # The path is decoded, so %0a in it would forge a log line: strip
+            # CR/LF from everything the client chose before logging it.
+            method = request.method.replace("\r", "").replace("\n", "")
+            path = request.path.replace("\r", "\\r").replace("\n", "\\n")
             _LOGGER.warning(
-                # %r for the path: it is decoded, so %0a would forge a log line.
                 "%s %s %r from %s on %s: not a trusted peer (gateways %s, module %s). "
                 "If %s is your router/gateway, add it to the trusted_peers option; "
-                "if it is the water heater, set module_ip.", action, request.method,
-                request.path, peer, port_label, sorted(self.gateways) or "none detected",
+                "if it is the water heater, set module_ip.", action, method,
+                path, peer, port_label, sorted(self.gateways) or "none detected",
                 self._module_ip() or "unknown", peer)
 
     def middleware(self, allowed, port_label: str, refuse: bool = True):

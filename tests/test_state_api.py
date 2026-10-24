@@ -67,7 +67,7 @@ async def test_health_reports_upstream(client) -> None:
     _, http = client
     body = await (await http.get("/health")).json()
     assert body["ok"] is True
-    assert "aylanetworks.com" in body["upstream"]
+    assert body["upstream"].endswith(".aylanetworks.com")
 
 
 def _leaf(tmp_path) -> tuple[str, str]:

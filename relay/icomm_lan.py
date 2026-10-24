@@ -374,9 +374,10 @@ class LanServer:
         except (ValueError, AttributeError):
             return web.Response(status=400)
         if exchange.get("key_id") != self.key_id:
-            _LOGGER.warning("LAN mode: key exchange for unknown key id %r "
-                            "(module has a key we did not issue?)",
-                            exchange.get("key_id"))
+            # Client-chosen: strip CR/LF so it cannot forge a log line.
+            key_id = str(exchange.get("key_id")).replace("\r", "").replace("\n", "")
+            _LOGGER.warning("LAN mode: key exchange for unknown key id %s "
+                            "(module has a key we did not issue?)", key_id)
             return web.Response(status=404)
         try:
             self.session = Session(self.key.encode(), exchange)
