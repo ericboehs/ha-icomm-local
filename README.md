@@ -246,6 +246,8 @@ Add-on options, or environment variables when running the relay directly:
 
 ## More
 
+- [Isolating the water heater on its own VLAN](docs/NETWORK_ISOLATION.md)
+
 - [docs/STEERING.md](docs/STEERING.md): router rules, reboot behavior, checking it works
 - [docs/LAN_MODE.md](docs/LAN_MODE.md): the Local Connect protocol, write status, key repair
 - [docs/BEHAVIOR.md](docs/BEHAVIOR.md): measured appliance behavior and write-delivery details

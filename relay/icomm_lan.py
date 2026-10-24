@@ -122,6 +122,10 @@ class LanServer:
         self.enabled = os.environ.get("LAN_MODE", "1") != "0"
         self.port = int(os.environ.get("LAN_PORT", "8888"))
         self.module_ip = os.environ.get("MODULE_IP", "") or None
+        # A configured address is the owner's word. Ayla's DSN reply carries
+        # the address Ayla last saw, which lags a network move (0.5.1: a heater
+        # moved to its own VLAN was "learned" back at its old address).
+        self.module_ip_configured = self.module_ip is not None
         self.advertise_ip = os.environ.get("RELAY_IP", "") or None
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         self.key_file = Path(os.environ.get(
@@ -227,6 +231,10 @@ class LanServer:
         """The registration doc carries the module's own LAN address."""
         found = LAN_IP_RE.search(dsn_xml)
         if found and found.group(1) != self.module_ip:
+            if self.module_ip_configured:
+                _LOGGER.info("LAN mode: Ayla lists the module at %s; keeping the "
+                             "configured %s", found.group(1), self.module_ip)
+                return
             self.module_ip = found.group(1)
             _LOGGER.info("LAN mode: module is at %s", self.module_ip)
             self._persist()

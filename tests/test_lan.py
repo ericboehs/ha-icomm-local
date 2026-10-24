@@ -209,6 +209,17 @@ def test_module_ip_learned_from_the_dsn_reply(tmp_path):
     assert body["ip"]                          # the address the module calls back on
 
 
+def test_a_configured_module_ip_beats_ayla_s_stale_copy(tmp_path, monkeypatch):
+    """Live, 0.5.0: the heater moved to its own VLAN, and Ayla's DSN reply,
+    still listing the old address, pulled the relay back to it."""
+    monkeypatch.setenv("MODULE_IP", "10.0.20.187")
+    server = _server(tmp_path)
+    server.learn_module_ip("<device><lan-ip>10.0.1.187</lan-ip></device>")
+    assert server.module_ip == "10.0.20.187"
+    server.learn_module_ip("<device><lan-ip>10.0.20.187</lan-ip></device>")
+    assert server.module_ip == "10.0.20.187"
+
+
 async def test_lan_delivery_stops_after_three_unconfirmed_attempts(tmp_path):
     """Live finding: an acked write with no confirming telemetry was re-sent
     every 60 s indefinitely. Three attempts, then the LAN path stops."""

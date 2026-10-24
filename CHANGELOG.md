@@ -10,6 +10,21 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-24
+
+### Fixed
+- **A configured `module_ip` now wins over Ayla's copy.** The heater was
+  moved to its own VLAN. At its next registration, Ayla's reply still listed
+  the old address, and the relay switched Local Connect back to it. Ayla's
+  value is now only used when `module_ip` isn't set.
+
+### Added
+- `docs/NETWORK_ISOLATION.md`: putting the heater on its own VLAN so it can
+  reach only the relay, DNS and Ayla's notification channel. Tested on a UDM
+  Pro. The non-obvious part: Ayla's agent accepts a Local Connect callback
+  only on its own subnet, so `relay_ip` is set to the gateway's address on
+  the heater's VLAN, forwarded to the relay.
+
 ## [0.5.0] - 2026-10-24
 
 ### Added
@@ -341,7 +356,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...v0.5.0
 [0.4.14]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...v0.4.14
 [0.4.13]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...v0.4.13
