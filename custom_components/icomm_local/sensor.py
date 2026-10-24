@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MODES
+from .const import DOMAIN, MODES, has_telemetry, is_stale
 
 F = UnitOfTemperature.FAHRENHEIT
 
@@ -66,16 +66,22 @@ class IcommSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         data = self.coordinator.data or {}
-        if not data.get("online"):
+        if not has_telemetry(data):
             return None
         return data.get(self._field)
 
     @property
     def available(self) -> bool:
-        # `fresh`, not `online`: the module is event-driven and goes quiet for long
-        # stretches when the tank is satisfied, so "seen at some point" is not the
-        # same as "reporting now".
-        return bool((self.coordinator.data or {}).get("fresh"))
+        # Last-known values while stale (with `stale` set), not unavailable: an
+        # idle tank goes quiet for long stretches, and unavailable entities make
+        # Home Assistant drop writes. See const.has_telemetry.
+        return super().available and has_telemetry(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        return {"stale": is_stale(data),
+                "last_telemetry_age_s": data.get("last_telemetry_age")}
 
     @property
     def device_info(self):

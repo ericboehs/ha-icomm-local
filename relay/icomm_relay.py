@@ -301,9 +301,15 @@ class Relay:
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
         data = update.get("data") or {}
-        _LOGGER.info("LAN update: %s (%d chars)", data.get("name") or
-                     ("ack" if "ack_status" in data else "?"),
-                     len(str(data.get("value", ""))))
+        name = data.get("name") or ("ack" if "ack_status" in data else "?")
+        value = str(data.get("value", ""))
+        if name not in ("superBlockDyn1", "ack") and 0 < len(value) <= 512:
+            # Small configuration/echo properties (periodicParameterSetting,
+            # setBlockParameter echoes...) carry no secrets, and phase 30 showed
+            # that logging only their length leaves a question unanswerable.
+            _LOGGER.info("LAN update: %s = %s", name, value)
+        else:
+            _LOGGER.info("LAN update: %s (%d chars)", name, len(value))
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)

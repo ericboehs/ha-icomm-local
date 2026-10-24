@@ -112,7 +112,14 @@ detect a wedge from HTTPS shape alone.
 | `water_heater.icomm_water_heater` | thermostat card: target temperature + mode (electric / heat_pump / eco = hybrid). Shows the queued target until telemetry confirms it. |
 | `sensor.icomm_water_heater_*` | water top/bottom, setpoint, max setpoint, mode, power, line voltage, air at unit, Wi-Fi RSSI |
 | `sensor.icomm_water_heater_relay_health` | healthy / idle / degraded / unknown, with reasons, remediation and what the relay *cannot* observe |
-| `sensor.icomm_water_heater_pending_write` | what is queued and not yet confirmed |
+| `sensor.icomm_water_heater_pending_write` | what is queued and its status: queued / delivered / acknowledged / confirmed / not_applied |
+
+When the relay answers but the tank has not reported for 10+ minutes, the
+entities keep their last-known values with `stale: true` and a **Repairs**
+warning appears (Settings → Repairs); it clears itself on the next report. They
+go unavailable only when the relay itself is unreachable — an unavailable entity
+makes Home Assistant silently drop writes, which is exactly what a quiet tank
+does not need.
 
 ## The local doorbell: Ayla LAN mode (no account, no cloud writes)
 

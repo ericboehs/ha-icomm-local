@@ -23,5 +23,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "stale_telemetry": {
+      "title": "Water heater data is stale",
+      "description": "The iCOMM relay is running, but the tank has not reported for {age} minutes (LAN session: {lan}; relay health: {health}). The water heater shows its last-known values and writes are still accepted and queued. If this persists, check the relay's Pending write and Relay health sensors, or power-cycle the water heater's breaker."
+    }
   }
 }

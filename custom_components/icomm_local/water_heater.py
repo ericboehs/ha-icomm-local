@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, has_telemetry, is_stale
 from .sensor import DEVICE_INFO
 from .services import _post
 
@@ -62,7 +62,9 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity):
 
     @property
     def available(self) -> bool:
-        return bool(self._data.get("fresh"))
+        # Stale is a warning, not unavailability: HA drops service calls to an
+        # unavailable entity, and writes are exactly what an idle tank needs.
+        return super().available and has_telemetry(self._data)
 
     @property
     def current_temperature(self):
@@ -90,6 +92,8 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity):
     def extra_state_attributes(self):
         data = self._data
         return {
+            "stale": is_stale(data),
+            "last_telemetry_age_s": data.get("last_telemetry_age"),
             "confirmed_setpoint": data.get("setpoint"),
             "confirmed_mode": data.get("mode"),
             "water_bottom": data.get("water_bottom"),
