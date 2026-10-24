@@ -287,6 +287,11 @@ class Relay:
         elif "ack_status" in data:
             _LOGGER.info("LAN write ack: status %s id %s",
                          data.get("ack_status"), data.get("id"))
+            if data.get("ack_status") == 200:
+                # The tank does not reliably report after a local write. Ask
+                # the MCU for a fresh value on the next poll instead of
+                # re-sending the write or waiting for a spontaneous report.
+                self.lan.request_telemetry()
 
     def take_pending_for_lan(self):
         """Oldest queued write for the LAN poll; None when there is nothing.

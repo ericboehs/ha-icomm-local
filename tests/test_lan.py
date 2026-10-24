@@ -112,6 +112,37 @@ async def test_commands_delivers_the_queued_write_as_an_encrypted_property(tmp_p
     assert command["data"] == {}
 
 
+async def test_ack_queues_a_read_only_mcu_telemetry_request(tmp_path):
+    """A write ack is followed by GET property.json, not a repeated write.
+
+    libada routes that GET to ada_prop_mgr_get(), so the value comes from the
+    tank controller and returns through the ordinary datapoint endpoint.
+    """
+    server = _server(tmp_path)
+    await server.relay.ingest_lan_update(
+        {"data": {"id": "abc", "ack_status": 200}})
+    assert server.refresh_pending is True
+    request = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
+    response = await server._commands(request)
+    _, rx = module_directions(SECRET.encode(), EXCHANGE,
+                              server.session.random_2, server.session.time_2)
+    command = json.loads(rx["cipher"].decrypt(
+        base64.b64decode(json.loads(response.body)["enc"])).rstrip(bytes([0])).decode())
+    cmd = command["data"]["cmds"][0]["cmd"]
+    assert cmd["method"] == "GET"
+    assert cmd["resource"] == "property.json?name=superBlockDyn1"
+    assert cmd["uri"] == "/local_lan/property/datapoint.json"
+    assert "properties" not in command["data"]
+    assert server.refresh_pending is False
+    assert server.telemetry_requests == 1
+
+    # No response means no automatic retry.
+    response = await server._commands(request)
+    command = json.loads(rx["cipher"].decrypt(
+        base64.b64decode(json.loads(response.body)["enc"])).rstrip(bytes([0])).decode())
+    assert command["data"] == {}
+
+
 async def test_lan_telemetry_updates_state_and_confirms_the_write(tmp_path):
     server = _server(tmp_path)
     # A real captured superBlockDyn1 report (setpoint 120 F, heat pump).

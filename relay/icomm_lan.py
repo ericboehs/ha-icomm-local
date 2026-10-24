@@ -128,6 +128,11 @@ class LanServer:
         # replies, so it re-exchanges every heartbeat and sends no updates.
         self.exchanges_since_update = 0
         self.needs_key_push = False
+        # A one-shot reverse-REST read asks the MCU for current telemetry.
+        # Spontaneous superBlockDyn1 reports can be hours apart on an idle tank.
+        self.refresh_pending = False
+        self.refresh_cmd_id = 0
+        self.telemetry_requests = 0
         self._client: ClientSession | None = None
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
@@ -232,7 +237,9 @@ class LanServer:
                 "updates": self.updates, "writes_delivered": self.writes_delivered,
                 "last_registration_result": self.last_registration_result,
                 "registration_failures": self.registration_failures,
-                "needs_key_push": self.needs_key_push}
+                "needs_key_push": self.needs_key_push,
+                "refresh_pending": self.refresh_pending,
+                "telemetry_requests": self.telemetry_requests}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
@@ -292,6 +299,7 @@ class LanServer:
                             exchange.get("key_id"))
             return web.Response(status=404)
         self.session = Session(self.key.encode(), exchange)
+        self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
         if self.exchanges_since_update >= 3 and not self.needs_key_push:
             # Three exchanges, no update between them: the module's key is
@@ -304,8 +312,17 @@ class LanServer:
             _LOGGER.info("LAN mode: key exchange accepted; session keys derived")
         return web.json_response(self.session.response())
 
+    def request_telemetry(self) -> None:
+        """Ask for one fresh superBlockDyn1 value on a future commands poll.
+
+        libada's GET /property.json?name=... handler calls ada_prop_mgr_get(),
+        which obtains the value from the host MCU. Its response comes back to
+        our normal datapoint endpoint, encrypted like a spontaneous update.
+        """
+        self.refresh_pending = True
+
     async def _commands(self, request: web.Request) -> web.Response:
-        """The 10-second local poll: deliver one queued write, or nothing."""
+        """The 10-second local poll: deliver one write or telemetry request."""
         if self.session is None:
             return web.Response(status=400)
         self.seq_no += 1
@@ -319,6 +336,17 @@ class LanServer:
             self.writes_delivered += 1
             _LOGGER.warning("LAN mode: delivering %s = %s locally",
                             write.kind, write.value)
+        elif self.refresh_pending:
+            self.refresh_pending = False       # one shot; never retry in a loop
+            self.refresh_cmd_id += 1
+            self.telemetry_requests += 1
+            data = {"cmds": [{"cmd": {
+                "method": "GET",
+                "resource": "property.json?name=superBlockDyn1",
+                "data": "", "cmd_id": self.refresh_cmd_id,
+                "uri": "/local_lan/property/datapoint.json"}}]}
+            _LOGGER.info("LAN mode: requesting fresh telemetry (cmd %d)",
+                         self.refresh_cmd_id)
         return web.json_response(self.session.app.encrypt_sign(
             {"seq_no": self.seq_no, "data": data}))
 
