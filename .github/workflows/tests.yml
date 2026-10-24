@@ -16,7 +16,7 @@ jobs:
         # 3.12 is what the add-on image runs; the rest are what users may bring.
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -41,7 +41,7 @@ jobs:
   addon-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The image is Alpine (busybox sh, no bash): every script must be POSIX.
       - name: Scripts are POSIX sh
         run: shellcheck -s sh relay/*.sh
@@ -60,7 +60,7 @@ jobs:
   ha-integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
