@@ -10,6 +10,23 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-10-24
+
+### Added
+- **The Supervisor watchdog now catches a hung relay, not just a crashed
+  one.** The add-on declares `watchdog: http://[HOST]:[PORT:8125]/health`.
+  Turn on *Watchdog* on the add-on's Info tab to use it.
+  - Port 8125 is a new health-only listener. It serves `GET /health` and
+    nothing else, and answers only loopback and the Supervisor network
+    (`172.30.32.0/23`); anyone else gets 403. The state and write API stays
+    on loopback.
+  - The port is fixed because the watchdog URL can't follow an add-on option.
+    Supervisor restarts an add-on after two failed probes in a row, so a
+    configurable port would have meant a restart loop for anyone who changed
+    it.
+  - Running the relay outside Home Assistant: `HEALTH_PORT=0` turns the
+    listener off.
+
 ## [0.4.13] - 2026-10-24
 
 ### Fixed
@@ -289,7 +306,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...HEAD
+[0.4.14]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...v0.4.14
 [0.4.13]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...v0.4.11

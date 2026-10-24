@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
@@ -62,7 +63,7 @@ from pathlib import Path
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
 from icomm_lan import LanServer
-from icomm_peers import TRUSTED, PeerPolicy
+from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
 
 _LOGGER = logging.getLogger("icomm_relay")
@@ -213,6 +214,19 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
         return None
 
 
+# Docker's hassio network (Supervisor's DOCKER_NETWORK_MASK): the watchdog
+# probes from its gateway.
+SUPERVISOR_NETWORK = ipaddress.ip_network("172.30.32.0/23")
+
+
+def health_peer_allowed(remote: str | None) -> bool:
+    try:
+        address = ipaddress.ip_address(normalize(remote))
+    except ValueError:
+        return False
+    return address.is_loopback or address in SUPERVISOR_NETWORK
+
+
 class Relay:
     def __init__(self) -> None:
         self.upstream = os.environ.get("UPSTREAM", "proxy-ingress-usfield.aylanetworks.com")
@@ -223,6 +237,12 @@ class Relay:
         # relay on another machine sets 0.0.0.0 -- the API is unauthenticated, so
         # only on a trusted LAN.
         self.state_host = os.environ.get("STATE_HOST", "127.0.0.1")
+        # Supervisor's watchdog probes GET /health from the hassio bridge
+        # gateway, which can't reach the loopback state API. This listener
+        # serves only /health, only to loopback and the Supervisor network, on
+        # a fixed port because config.yaml's watchdog URL can't follow an
+        # option. 0 disables it.
+        self.health_port = int(os.environ.get("HEALTH_PORT", "8125"))
         self.device_dsn = os.environ.get("DEVICE_DSN", "")
         self.state: dict = {"online": False}
         self.last_telemetry = 0.0
@@ -896,6 +916,14 @@ class Relay:
         runner_state = web.AppRunner(state_app)
         await runner_state.setup()
         await web.TCPSite(runner_state, self.state_host, self.state_port).start()
+
+        if self.health_port:
+            health_app = web.Application(middlewares=[
+                self.peers.middleware(health_peer_allowed, f":{self.health_port}")])
+            health_app.router.add_get("/health", self.health_handler)
+            runner_health = web.AppRunner(health_app)
+            await runner_health.setup()
+            await web.TCPSite(runner_health, "0.0.0.0", self.health_port).start()
 
         runner_module = web.AppRunner(module_app)
         await runner_module.setup()

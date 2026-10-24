@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.4.13"
+version: "0.4.14"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -10,6 +10,9 @@ arch:
 # on the host's network namespace at the address the route points to.
 host_network: true
 init: false
+# Restart on a hang, not just a crash. Port 8125 is a fixed, health-only
+# listener (the state API is loopback-only, out of the Supervisor's reach).
+watchdog: http://[HOST]:[PORT:8125]/health
 options:
   listen_port: 8444
   state_port: 8124

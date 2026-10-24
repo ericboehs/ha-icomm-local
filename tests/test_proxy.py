@@ -23,7 +23,7 @@ from icomm_peers import TRUSTED
 from test_dsn import DSN
 from test_lan import SECRET
 
-from relay.icomm_relay import Relay
+from relay.icomm_relay import Relay, health_peer_allowed
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EMPTY_COMMANDS = "<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n"
@@ -399,7 +399,7 @@ class FakeSite:
 async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
         tmp_path, monkeypatch, capsys):
     relay = _relay(tmp_path, monkeypatch, STATE_PORT="18124", LISTEN_PORT="18444",
-                   LAN_PORT="18888")
+                   LAN_PORT="18888", HEALTH_PORT="18125")
     (tmp_path / "pending.json").write_text(json.dumps({"pending": {"setpoint": {
         "kind": "setpoint", "value": 140.0, "frame": "BD 40 08 0B 06 3C 00 6E",
         "queued": time.time()}}, "last_write": None}))
@@ -416,7 +416,10 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     assert relay.client is not None and not task.done()
 
     by_port = {site.port: site for site in FakeSite.started}
-    assert set(by_port) == {18124, 18444, 18888}
+    assert set(by_port) == {18124, 18125, 18444, 18888}
+    assert by_port[18125].host == "0.0.0.0" and by_port[18125].ssl_context is None
+    health_routes = {r.resource.canonical for r in by_port[18125].runner.app.router.routes()}
+    assert health_routes == {"/health"}                 # no state, raw or write routes
     assert by_port[18124].host == "127.0.0.1" and by_port[18124].ssl_context is None
     assert by_port[18444].host == "0.0.0.0" and by_port[18444].ssl_context is tls
     state_routes = {r.resource.canonical for r in by_port[18124].runner.app.router.routes()}
@@ -434,7 +437,7 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
 
 
 async def test_run_says_lan_off(tmp_path, monkeypatch, capsys):
-    relay = _relay(tmp_path, monkeypatch, LAN_MODE="0")
+    relay = _relay(tmp_path, monkeypatch, LAN_MODE="0", HEALTH_PORT="0")
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", FakeSite)
     relay.tls_context = lambda: None
@@ -444,7 +447,7 @@ async def test_run_says_lan_off(tmp_path, monkeypatch, capsys):
         if relay.client is not None:
             break
     assert "LAN off" in capsys.readouterr().out
-    assert len(FakeSite.started) == 2                   # no LAN listener
+    assert len(FakeSite.started) == 2                   # no LAN or health listener
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -530,3 +533,30 @@ async def test_the_upstream_host_cannot_be_changed_by_the_path(tmp_path, monkeyp
     await relay.proxy(_request("GET", path))
     target = relay.client.calls[-1]["url"]
     assert target.host == "ayla.test" and target.scheme == "https"
+
+
+@pytest.mark.parametrize(("remote", "allowed"), [
+    ("127.0.0.1", True), ("::1", True),
+    ("172.30.32.1", True),                  # the hassio gateway: Supervisor's watchdog
+    ("172.30.33.254", True), ("::ffff:172.30.32.1", True),
+    ("172.30.34.1", False), ("10.0.1.50", False), ("10.0.1.1", False),
+    (None, False), ("not-an-ip", False),
+])
+def test_health_port_answers_only_loopback_and_the_supervisor(remote, allowed):
+    assert health_peer_allowed(remote) is allowed
+
+
+def _from(peer: str):
+    return make_mocked_request("GET", "/health", transport=mock.Mock(
+        get_extra_info=lambda name, default=None: (peer, 5) if name == "peername" else default))
+
+
+async def test_health_port_refuses_the_lan(tmp_path, monkeypatch):
+    relay = _relay(tmp_path, monkeypatch)
+    check = relay.peers.middleware(health_peer_allowed, ":8125")
+
+    async def handler(request):
+        return web.Response(text="ok")
+
+    assert (await check(_from("10.0.1.50"), handler)).status == 403
+    assert (await check(_from("172.30.32.1"), handler)).text == "ok"

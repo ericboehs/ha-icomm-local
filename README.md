@@ -206,6 +206,7 @@ Add-on options, or environment variables when running the relay directly:
 | `listen_port` / `LISTEN_PORT` | 8444 | port the NAT rule sends the module's HTTPS to |
 | `state_port` / `STATE_PORT` | 8124 | state and write API for the integration |
 | `STATE_HOST` | 127.0.0.1 | state API bind address |
+| `HEALTH_PORT` | 8125 | health-only listener for the Supervisor watchdog: `GET /health`, loopback and the Supervisor network only; fixed in the add-on, `0` disables |
 | `upstream` / `UPSTREAM` | `proxy-ingress-usfield.aylanetworks.com` | the real Ayla endpoint every module request is forwarded to (US field) |
 | `lan_mode` / `LAN_MODE` | on | Local Connect; off means writes wait for a cloud poll |
 | `lan_port` / `LAN_PORT` | 8888 | Local Connect callback port |
