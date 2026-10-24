@@ -10,6 +10,14 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Added
+- `docs/dashboard.yaml`: a ready-made **Water Heater** dashboard view. It
+  shows the thermostat, hot water available, power, the three tank
+  temperatures, heat deficit, the last app write, and 24-hour graphs. The
+  temperature graph includes the active target, so vacation is visible. The
+  README explains how to paste it. A test checks that every entity it
+  references exists on a fresh install.
+
 ### Security
 - Every GitHub Action is pinned by full commit SHA, with its release in a
   comment that Dependabot updates along with the SHA. hacs/action and hassfest

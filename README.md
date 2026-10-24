@@ -120,6 +120,30 @@ last-known values with `stale: true`, and a warning appears under
 telemetry every 5 minutes while the LAN session is up, so this normally means
 something is wrong (see Troubleshooting).
 
+### A ready-made dashboard
+
+[docs/dashboard.yaml](docs/dashboard.yaml) is a complete **Water Heater**
+view with three sections:
+
+- **Water heater:** the thermostat with mode buttons, hot water available,
+  and power.
+- **Tank:** top, middle and bottom temperatures, heat deficit, the last app
+  write, Wi-Fi and line voltage.
+- **Last 24 hours:** tank temperatures against the active target (vacation
+  shows as a drop to 50 °F), hot water available, and power.
+
+To add it:
+
+1. Open a dashboard, click the **pencil** (Edit dashboard), then **+** to add
+   a view.
+2. In the view dialog, open the **⋮** menu, choose **Edit in YAML**, and replace
+   everything with the contents of `docs/dashboard.yaml`.
+3. **Save**.
+
+It uses the integration's default entity IDs. If you renamed any entities,
+change them in the YAML to match. A test checks that every entity the file
+references exists on a fresh install.
+
 ## Troubleshooting
 
 Check the add-on log first, then the relay's state from the HA host:

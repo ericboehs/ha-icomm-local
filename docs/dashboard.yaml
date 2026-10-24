@@ -1,0 +1,108 @@
+# Water Heater dashboard view for ha-icomm-local.
+#
+# To add it: open a dashboard, click the pencil (Edit dashboard), then + to
+# add a view. In the view dialog open the three-dot menu, choose Edit in YAML,
+# replace everything with this file, and Save. The entity IDs are the
+# integration's defaults; if you renamed entities, change them here to match.
+#
+# tests_ha/test_dashboard.py checks that every entity here exists on a fresh
+# install, so this file cannot drift from the integration.
+title: Water Heater
+path: water-heater
+icon: mdi:water-boiler
+type: sections
+max_columns: 3
+sections:
+- type: grid
+  cards:
+  - type: heading
+    heading: Water heater
+    heading_style: title
+    icon: mdi:water-boiler
+    badges:
+    - type: entity
+      entity: sensor.icomm_water_heater_relay_health
+      show_state: true
+      show_icon: true
+  - type: thermostat
+    entity: water_heater.icomm_water_heater
+    features:
+    - type: water-heater-operation-modes
+      operation_modes:
+      - heat_pump
+      - eco
+      - electric
+  - type: tile
+    entity: sensor.icomm_water_heater_hot_water_available
+    name: Hot water available
+    icon: mdi:water-percent
+  - type: tile
+    entity: sensor.icomm_water_heater_power
+    name: Power
+- type: grid
+  cards:
+  - type: heading
+    heading: Tank
+    heading_style: title
+    icon: mdi:thermometer-water
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_top
+    name: Top
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_middle
+    name: Middle
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_bottom
+    name: Bottom
+  - type: tile
+    entity: sensor.icomm_water_heater_heat_deficit
+    name: Heat deficit
+    icon: mdi:fire-alert
+  - type: heading
+    heading: Status
+    heading_style: subtitle
+    icon: mdi:information-outline
+  - type: tile
+    entity: sensor.icomm_water_heater_last_app_write
+    name: Last app write
+    icon: mdi:cellphone-arrow-down
+    grid_options:
+      columns: 12
+  - type: entities
+    entities:
+    - entity: sensor.icomm_water_heater_wi_fi_rssi
+      name: Wi-Fi RSSI
+    - entity: sensor.icomm_water_heater_line_voltage
+      name: Line voltage
+    - entity: sensor.icomm_water_heater_air_at_unit
+      name: Air at unit
+- type: grid
+  cards:
+  - type: heading
+    heading: Last 24 hours
+    heading_style: title
+    icon: mdi:chart-line
+  - type: history-graph
+    title: Temperatures
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_water_tank_top
+      name: Top
+    - entity: sensor.icomm_water_heater_water_tank_middle
+      name: Middle
+    - entity: sensor.icomm_water_heater_water_tank_bottom
+      name: Bottom
+    - entity: sensor.icomm_water_heater_active_setpoint
+      name: Target
+  - type: history-graph
+    title: Hot water available
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_hot_water_available
+      name: Hot water
+  - type: history-graph
+    title: Power
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_power
+      name: Power
