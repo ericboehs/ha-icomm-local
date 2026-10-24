@@ -385,5 +385,5 @@ async def test_a_stranger_cannot_forge_log_lines_through_the_path(tmp_path, monk
     response = await handler(_from(STRANGER, "GET", forged), inner)
     assert response.status == 403
     lines = [line for line in caplog.text.splitlines() if "not a trusted peer" in line]
-    assert len(lines) == 1 and "\\n" in lines[0]          # escaped, on one line
+    assert len(lines) == 1 and "/xWARNING LANIP" in lines[0]  # newline dropped
     assert not any(line.startswith("WARNING LANIP") for line in caplog.text.splitlines())
