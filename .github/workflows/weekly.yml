@@ -11,6 +11,10 @@ on:
   schedule:
     - cron: "17 8 * * 1"          # Mondays 08:17 UTC
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to scan (default: the latest release)"
+        required: false
 
 permissions:
   contents: read
@@ -25,8 +29,10 @@ jobs:
     steps:
       - name: Find the latest release
         id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          tag="${INPUT_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Scanning $tag"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
