@@ -10,6 +10,16 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-24
+
+### Fixed
+- The relay ignored SIGTERM. It runs as PID 1 in the add-on container, and the
+  kernel drops SIGTERM for PID 1 unless the process installs a handler, so every
+  add-on stop or update waited out Docker's timeout and ended in SIGKILL (exit
+  137, seen on the 0.4.7 update). It now stops cleanly on SIGTERM/SIGINT,
+  closing the LAN server, its HTTP client and both listeners. Pending writes
+  and the LAN key were already saved on every change, so nothing was lost.
+
 ## [0.4.7] - 2026-10-24
 
 ### Added
@@ -177,7 +187,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.4...v0.4.5

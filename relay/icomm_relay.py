@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import re
+import signal
 import ssl
 import time
 from collections import deque
@@ -881,11 +882,27 @@ class Relay:
         print(f"icomm_local relay: module on :{self.listen_port} (TLS), "
               f"state on {self.state_host}:{self.state_port}, upstream {self.upstream}, "
               f"LAN {'on :' + str(self.lan.port) if self.lan.enabled else 'off'}")
+        # The relay runs as PID 1 (run.sh execs it), and the kernel ignores
+        # SIGTERM for PID 1 unless a handler is installed. Without one, every
+        # add-on stop waited out Docker's timeout and ended in SIGKILL (exit
+        # 137, seen live on the 0.4.7 update).
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        handled = []
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.add_signal_handler(sig, stop.set)
+                handled.append(sig)
         try:
-            await asyncio.Event().wait()
+            await stop.wait()
+            _LOGGER.info("stopping on signal")
         finally:
+            for sig in handled:
+                loop.remove_signal_handler(sig)
             await self.lan.stop()
             await self.client.close()
+            await runner_module.cleanup()
+            await runner_state.cleanup()
 
     # -- degraded-state detection --------------------------------------
     def _note_request(self, path: str) -> None:

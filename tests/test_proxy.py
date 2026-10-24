@@ -450,3 +450,54 @@ async def test_run_says_lan_off(tmp_path, monkeypatch, capsys):
         await task
     assert relay.client.closed
 
+
+
+async def test_sigterm_stops_the_relay_cleanly(tmp_path, monkeypatch):
+    """PID 1 ignores SIGTERM without a handler: the 0.4.7 update ended in SIGKILL."""
+    import signal
+    relay = _relay(tmp_path, monkeypatch, LAN_MODE="0")
+    FakeSite.started = []
+    monkeypatch.setattr(web, "TCPSite", FakeSite)
+    relay.tls_context = lambda: None
+    loop = asyncio.get_running_loop()
+    installed = {}
+    monkeypatch.setattr(loop, "add_signal_handler",
+                        lambda sig, cb: installed.__setitem__(sig, cb))
+    removed = []
+    monkeypatch.setattr(loop, "remove_signal_handler", removed.append)
+
+    task = asyncio.create_task(relay.run())
+    for _ in range(200):
+        await asyncio.sleep(0)
+        if relay.client is not None:
+            break
+    assert set(installed) == {signal.SIGTERM, signal.SIGINT}
+
+    installed[signal.SIGTERM]()                         # what the kernel would do
+    await asyncio.wait_for(task, 1)                     # returns, not cancelled
+    assert relay.client.closed
+    assert set(removed) == {signal.SIGTERM, signal.SIGINT}
+
+
+async def test_run_without_signal_support_still_runs(tmp_path, monkeypatch):
+    """Windows (and non-main threads) cannot add signal handlers; run anyway."""
+    relay = _relay(tmp_path, monkeypatch, LAN_MODE="0")
+    FakeSite.started = []
+    monkeypatch.setattr(web, "TCPSite", FakeSite)
+    relay.tls_context = lambda: None
+    loop = asyncio.get_running_loop()
+
+    def unsupported(sig, cb):
+        raise NotImplementedError
+
+    monkeypatch.setattr(loop, "add_signal_handler", unsupported)
+    task = asyncio.create_task(relay.run())
+    for _ in range(200):
+        await asyncio.sleep(0)
+        if relay.client is not None:
+            break
+    assert not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert relay.client.closed
