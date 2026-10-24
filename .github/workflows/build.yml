@@ -55,7 +55,7 @@ jobs:
         run: |
           docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/src:ro" \
             --entrypoint sh icomm-relay:ci -c '
-              python -m ensurepip -q --default-pip >/dev/null 2>&1 &&
+              python -m ensurepip --default-pip >/dev/null &&
               pip install -q --root-user-action=ignore -r /src/requirements-dev.txt &&
               cp -r /src /tmp/src && cd /tmp/src &&
               python -W error::DeprecationWarning -m pytest tests -W error::Warning -o addopts=""'
