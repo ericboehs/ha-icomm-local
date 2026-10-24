@@ -94,21 +94,61 @@ async def test_set_mode_maps_eco_to_hybrid(hass: HomeAssistant, aioclient_mock) 
 async def test_pending_value_is_shown_until_confirmed(hass: HomeAssistant, aioclient_mock) -> None:
     """Otherwise the card snaps back to the old value while the write is in flight."""
     state = copy.deepcopy(STATE)
-    state["pending"] = {"setpoint": {"kind": "setpoint", "value": 140.0}}
+    state["pending"] = {"setpoint": {"kind": "setpoint", "value": 140.0,
+                                     "status": "acknowledged"}}
     await _setup(hass, aioclient_mock, state)
     wh = hass.states.get("water_heater.icomm_water_heater")
     assert wh.attributes["temperature"] == 140.0
     assert wh.attributes["confirmed_setpoint"] == 150.0
-    assert hass.states.get("sensor.icomm_water_heater_pending_write").state == "setpoint 140.0"
+    pending = hass.states.get("sensor.icomm_water_heater_pending_write")
+    assert pending.state == "setpoint 140.0: acknowledged"
+    assert pending.attributes["status"] == {"setpoint": "acknowledged"}
+    assert wh.attributes["write_status"] == {"setpoint": "acknowledged"}
 
 
-async def test_stale_relay_marks_unavailable(hass: HomeAssistant, aioclient_mock) -> None:
+async def test_stale_tank_warns_but_stays_writable(hass: HomeAssistant, aioclient_mock) -> None:
+    """Live finding: stale -> unavailable made HA silently drop service calls.
+
+    Stale now means last-known values, `stale: true`, and a Repairs warning --
+    and a write still reaches the relay.
+    """
+    from homeassistant.helpers import issue_registry as ir
+
     state = copy.deepcopy(STATE)
     state["fresh"] = False
+    state["last_telemetry_age"] = 796.0
+    entry = await _setup(hass, aioclient_mock, state)
+    wh = hass.states.get("water_heater.icomm_water_heater")
+    assert wh.state == "heat_pump"
+    assert wh.attributes["stale"] is True
+    assert hass.states.get("sensor.icomm_water_heater_relay_health").state == "healthy"
+    issue = ir.async_get(hass).async_get_issue(
+        "icomm_local", f"stale_telemetry_{entry.entry_id}")
+    assert issue is not None and issue.severity == ir.IssueSeverity.WARNING
+    assert issue.translation_placeholders["age"] == "13"
+
+    aioclient_mock.post(f"{URL}/write", json={"queued": {}, "pending": 1})
+    await hass.services.async_call(
+        "water_heater", "set_temperature",
+        {"entity_id": "water_heater.icomm_water_heater", "temperature": 141}, blocking=True)
+    posts = [c for c in aioclient_mock.mock_calls if c[0] == "POST"]
+    assert posts[-1][2] == {"setpoint": 141.0}
+
+
+async def test_fresh_tank_raises_no_issue(hass: HomeAssistant, aioclient_mock) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = await _setup(hass, aioclient_mock)
+    assert ir.async_get(hass).async_get_issue(
+        "icomm_local", f"stale_telemetry_{entry.entry_id}") is None
+    assert hass.states.get("water_heater.icomm_water_heater").attributes["stale"] is False
+
+
+async def test_no_report_yet_is_unavailable(hass: HomeAssistant, aioclient_mock) -> None:
+    state = copy.deepcopy(STATE)
+    state.update({"online": False, "fresh": False, "setpoint": None})
     await _setup(hass, aioclient_mock, state)
     assert hass.states.get("water_heater.icomm_water_heater").state == "unavailable"
-    # The relay itself is still answering, so its own health stays visible.
-    assert hass.states.get("sensor.icomm_water_heater_relay_health").state == "healthy"
 
 
 async def test_services_still_registered(hass: HomeAssistant, aioclient_mock) -> None:
