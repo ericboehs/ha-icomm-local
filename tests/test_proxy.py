@@ -111,7 +111,7 @@ async def test_request_forwarded_verbatim_minus_hop_by_hop_headers(tmp_path, mon
 
     call, = relay.client.calls
     assert call["method"] == "PUT"
-    assert call["url"] == "https://ayla.test/devices/1/thing.xml?a=1"
+    assert str(call["url"]) == "https://ayla.test/devices/1/thing.xml?a=1"
     assert call["data"] == b"<body/>"
     assert call["allow_redirects"] is False
     assert call["ssl"] is relay.upstream_ssl
@@ -287,7 +287,7 @@ async def test_failed_lanip_command_response_does_not_disarm(tmp_path, monkeypat
     assert relay.client.calls == []                     # our command, never forwarded
     assert relay.lan.needs_key_push is True
     assert relay.lanip_push_acked is False
-    assert "lanip command response: cmd_id=3&status=500" in caplog.text
+    assert "lanip command response: 'cmd_id=3&status=500'" in caplog.text
 
 
 async def test_untrusted_peer_is_not_counted_as_a_dial(tmp_path, monkeypatch):
@@ -517,3 +517,16 @@ def test_raw_is_kept_even_when_decoding_fails(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch)
     relay._ingest_blocks([b"\x00"] * 5)                 # too short to decode
     assert relay.last_raw["blocks"] == ["00"] * 5 and relay.last_raw["mode"] is None
+
+
+
+@pytest.mark.parametrize("path", ["//evil.test/x", "/@evil.test/x", "/x/..//evil.test",
+                                  "/%2F%2Fevil.test/x", "/devices/1?redirect=https://evil.test"])
+async def test_the_upstream_host_cannot_be_changed_by_the_path(tmp_path, monkeypatch, path):
+    """CodeQL py/partial-ssrf: the path is the client's, the host never is."""
+    relay = _relay(tmp_path, monkeypatch)
+    relay.upstream = "ayla.test"
+    relay.client = FakeClient()
+    await relay.proxy(_request("GET", path))
+    target = relay.client.calls[-1]["url"]
+    assert target.host == "ayla.test" and target.scheme == "https"

@@ -63,6 +63,7 @@ import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy
+from yarl import URL
 
 _LOGGER = logging.getLogger("icomm_relay")
 
@@ -301,8 +302,14 @@ class Relay:
         }
         try:
             assert self.client is not None
+            # The host is fixed by configuration; only the path and query come
+            # from the client (a transparent proxy must forward those). Built
+            # with yarl, nothing in them can move the request to another host.
+            target = URL.build(scheme="https", host=self.upstream,
+                               path=request.raw_path.split("?", 1)[0],
+                               query_string=request.query_string, encoded=True)
             async with self.client.request(
-                request.method, f"https://{self.upstream}{request.path_qs}",
+                request.method, target,
                 headers=headers, data=body, allow_redirects=False,
                 ssl=self.upstream_ssl,
             ) as upstream:
@@ -379,9 +386,9 @@ class Relay:
             # Small configuration/echo properties (periodicParameterSetting,
             # setBlockParameter echoes...) carry no secrets, and phase 30 showed
             # that logging only their length leaves a question unanswerable.
-            _LOGGER.info("LAN update: %s = %s", name, value)
+            _LOGGER.info("LAN update: %r = %r", name, value)
         else:
-            _LOGGER.info("LAN update: %s (%d chars)", name, len(value))
+            _LOGGER.info("LAN update: %r (%d chars)", name, len(value))
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)
@@ -700,7 +707,7 @@ class Relay:
             "days": decoded.get("vacation_days"),
             # Filled in by _transform_commands if a local write replaces it.
             "replaced_by_local": False}
-        _LOGGER.warning("cloud write: %s %s (frame %s) -- from the A.O. Smith app or API",
+        _LOGGER.warning("cloud write: %s %r (frame %r) -- from the A.O. Smith app or API",
                         kind, self.last_cloud_write["value"], frame)
 
     def _transform_commands(self, payload: bytes, path_qs: str = "") -> bytes | None:
@@ -1125,10 +1132,10 @@ class Relay:
                 self.lanip_push_acked = True
                 self.lan.needs_key_push = False
                 self.lan.exchanges_since_update = 0
-                _LOGGER.warning("LANIP PUSH ACKED: %s -- the module saved our key",
+                _LOGGER.warning("LANIP PUSH ACKED: %r -- the module saved our key",
                                 request.query_string)
             else:
-                _LOGGER.warning("lanip command response: %s", request.query_string)
+                _LOGGER.warning("lanip command response: %r", request.query_string)
             # Our command, our ack: Ayla never issued it, and answered the
             # forwarded ack with a 404 in the live repair. Keep it local.
             return web.Response(status=200, text="")

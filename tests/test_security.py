@@ -370,3 +370,20 @@ def test_gateways_reread_when_an_unknown_peer_arrives(tmp_path, monkeypatch):
     relay.peers._gateways_read = 0.0
     monkeypatch.setattr("icomm_peers.default_gateways", lambda: {GATEWAY})
     assert relay.peers.cloud_allowed(GATEWAY)
+
+
+
+async def test_a_stranger_cannot_forge_log_lines_through_the_path(tmp_path, monkeypatch, caplog):
+    """CodeQL py/log-injection: request.path is decoded, so %0a is a newline."""
+    relay = _relay(tmp_path, monkeypatch)
+    handler = relay.peers.middleware(relay.peers.cloud_allowed, ":8888", refuse=True)
+
+    async def inner(request):
+        return web.Response(text="never")
+
+    forged = "/x%0aWARNING LANIP PUSH ACKED"
+    response = await handler(_from(STRANGER, "GET", forged), inner)
+    assert response.status == 403
+    lines = [line for line in caplog.text.splitlines() if "not a trusted peer" in line]
+    assert len(lines) == 1 and "\\n" in lines[0]          # escaped, on one line
+    assert not any(line.startswith("WARNING LANIP") for line in caplog.text.splitlines())

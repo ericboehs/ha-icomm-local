@@ -130,7 +130,8 @@ class PeerPolicy:
                 self._warned.clear()
             self._warned[peer] = now
             _LOGGER.warning(
-                "%s %s %s from %s on %s: not a trusted peer (gateways %s, module %s). "
+                # %r for the path: it is decoded, so %0a would forge a log line.
+                "%s %s %r from %s on %s: not a trusted peer (gateways %s, module %s). "
                 "If %s is your router/gateway, add it to the trusted_peers option; "
                 "if it is the water heater, set module_ip.", action, request.method,
                 request.path, peer, port_label, sorted(self.gateways) or "none detected",

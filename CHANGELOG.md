@@ -10,6 +10,29 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-10-24
+
+### Security
+- **Log injection (CodeQL `py/log-injection`):** an untrusted LAN peer could
+  forge relay log lines by putting `%0a` in a request path, since aiohttp
+  decodes the path before it is logged. Every externally supplied string (paths,
+  query strings, LAN property names and values, key ids, cloud frames) is now
+  logged with `%r`, which escapes newlines.
+- **Proxy target (CodeQL `py/partial-ssrf`):** the upstream URL is built with
+  yarl from the configured host plus the client's path and query, so no path
+  (`//host`, `/@host`, encoded slashes) can change the host. It never could
+  in practice, because aiohttp's paths start with `/`; tests now pin it.
+- **pip removed from the add-on image** after installing the hash-checked
+  lock. The latest pip (26.2.2) bundles urllib3 2.7.0 (CVE-2026-97687,
+  CVE-2026-97689, CVE-2026-97688), msgpack 1.1.2 (GHSA-6v7p-g79w-8964) and
+  setuptools 70.3.0 (CVE-2025-47273 and two more). The relay never used pip at
+  runtime, but the image no longer ships them.
+- CI scans the built image with Trivy (HIGH and CRITICAL with a fix fail the
+  build) and checks that pip is gone. `trivy-action` is pinned by commit SHA
+  (v0.36.0, Trivy v0.76.1) after the 2026 Trivy tag-hijack advisory.
+- Repository: Dependabot alerts, Dependabot security updates, secret scanning
+  and push protection turned on.
+
 ## [0.4.11] - 2026-10-24
 
 ### Added
@@ -218,7 +241,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...HEAD
+[0.4.12]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...v0.4.9

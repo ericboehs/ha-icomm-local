@@ -43,8 +43,8 @@ async def test_small_lan_properties_are_logged_with_their_value(tmp_path, caplog
     relay = _server(tmp_path).relay
     await relay.ingest_lan_update({"data": {"name": "periodicParameterSetting", "value": "60"}})
     await relay.ingest_lan_update({"data": {"name": "superBlockDyn1"}})
-    assert "LAN update: periodicParameterSetting = 60" in caplog.text
-    assert "LAN update: superBlockDyn1 (0 chars)" in caplog.text
+    assert "LAN update: 'periodicParameterSetting' = '60'" in caplog.text
+    assert "LAN update: 'superBlockDyn1' (0 chars)" in caplog.text
 
 
 def test_unparsable_ack_status_reads_as_rejected(tmp_path):

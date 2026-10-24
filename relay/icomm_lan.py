@@ -374,7 +374,7 @@ class LanServer:
         except (ValueError, AttributeError):
             return web.Response(status=400)
         if exchange.get("key_id") != self.key_id:
-            _LOGGER.warning("LAN mode: key exchange for unknown key id %s "
+            _LOGGER.warning("LAN mode: key exchange for unknown key id %r "
                             "(module has a key we did not issue?)",
                             exchange.get("key_id"))
             return web.Response(status=404)
@@ -452,7 +452,7 @@ class LanServer:
         try:
             update = self.session.dev.decrypt_validate(await request.json())
         except (ValueError, KeyError, TypeError) as err:
-            _LOGGER.warning("LAN mode: undecryptable update: %s", err)
+            _LOGGER.warning("LAN mode: undecryptable update: %r", err)
             return web.Response(status=400)
         if not self.session_verified and self.relay.pending:
             # A write queued while the session was re-keying waited for this

@@ -38,10 +38,24 @@ jobs:
       # The relay's test suite inside the image users actually run: its Python,
       # its musl wheels from the hash-checked lock, on each architecture (arm64
       # under QEMU, as on a Raspberry Pi or HA Green).
+      - name: No pip in the shipped image
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} --entrypoint sh icomm-relay:ci \
+            -c '! python -c "import pip" 2>/dev/null && echo "pip removed"'
+      - name: No known vulnerabilities in the shipped image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0, pinned by SHA (Trivy's 2026 tag-hijack advisory)
+        with:
+          image-ref: icomm-relay:ci
+          version: v0.76.1          # explicit; 0.69.4 was the compromised release
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
       - name: Relay test suite inside the image
         run: |
           docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/src:ro" \
             --entrypoint sh icomm-relay:ci -c '
+              python -m ensurepip -q --default-pip >/dev/null 2>&1 &&
               pip install -q --root-user-action=ignore -r /src/requirements-dev.txt &&
               cp -r /src /tmp/src && cd /tmp/src &&
               python -W error::DeprecationWarning -m pytest tests -W error::Warning -o addopts=""'

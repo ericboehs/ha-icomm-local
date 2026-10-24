@@ -14,7 +14,11 @@ WORKDIR /app
 RUN openssl dhparam -out /app/dhparams-default.pem 2048 2>/dev/null
 
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
+# pip is needed only for this step. Removing it afterwards drops its vendored
+# copies of urllib3, msgpack and setuptools, which carry CVEs even in the
+# latest pip (26.2.2; trivy, 2026-10-24). The relay never imports pip.
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt \
+ && pip uninstall -y -q pip
 
 COPY icomm_relay.py icomm_frames.py icomm_lan.py icomm_peers.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
 RUN chmod +x /app/gen-cert.sh /app/run.sh
