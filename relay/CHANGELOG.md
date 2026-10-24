@@ -14,18 +14,18 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ### Added
 - **The Supervisor watchdog now catches a hung relay, not just a crashed
-  one.** The add-on declares `watchdog: http://[HOST]:[PORT:8125]/health`.
-  Turn on *Watchdog* on the add-on's Info tab to use it.
-  - Port 8125 is a new health-only listener. It serves `GET /health` and
-    nothing else, and answers only loopback and the Supervisor network
-    (`172.30.32.0/23`); anyone else gets 403. The state and write API stays
-    on loopback.
-  - The port is fixed because the watchdog URL can't follow an add-on option.
-    Supervisor restarts an add-on after two failed probes in a row, so a
-    configurable port would have meant a restart loop for anyone who changed
-    it.
-  - Running the relay outside Home Assistant: `HEALTH_PORT=0` turns the
-    listener off.
+  one.** The image declares a Docker `HEALTHCHECK` that asks the relay's
+  loopback `GET /health` every 30 s. After three misses in a row Docker marks
+  the add-on unhealthy, and the Supervisor restarts it. There is a 60 s grace
+  period at first start.
+  - Turn on *Watchdog* on the add-on's Info tab; without it the Supervisor
+    ignores the health status.
+  - The check follows a changed `state_port`, reading it the same way
+    `run.sh` does.
+  - It is the native replacement for the add-on `watchdog:` URL, which the
+    add-on linter now rejects as obsolete. That URL would not have worked
+    here anyway: the Supervisor probes from the hassio network, and the state
+    API listens only on loopback.
 
 ## [0.4.13] - 2026-10-24
 

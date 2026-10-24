@@ -20,7 +20,14 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt \
  && pip uninstall -y -q pip
 
-COPY icomm_relay.py icomm_frames.py icomm_lan.py icomm_peers.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
+COPY icomm_relay.py icomm_frames.py icomm_lan.py icomm_peers.py healthcheck.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
 RUN chmod +x /app/gen-cert.sh /app/run.sh
+
+# The Supervisor restarts the add-on when this reports unhealthy (with the
+# add-on's Watchdog toggle on): a hung relay, not just a crashed one. Three
+# misses in a row, 30 s apart, after a minute's grace for the first start
+# (certificate generation).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD ["python3", "/app/healthcheck.py"]
 
 CMD ["/app/run.sh"]
