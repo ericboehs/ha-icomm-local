@@ -10,6 +10,28 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-10-24
+
+### Fixed
+- **Tank sensors relabelled by their measured order.** The sensor shipped as
+  "Water, tank middle" is the **bottom-most**: during a shower draw it fell
+  132 → 77 °F while the one called "bottom" fell only 133 → 117, because cold
+  inlet water arrives at the bottom. It also runs hottest while the heat
+  pump's condenser, which wraps the lower shell, is heating. The sensors are
+  now **Top / Lower / Bottom**.
+  - Existing installs on the default entity IDs are migrated, with history:
+    `..._water_tank_bottom` → `..._water_tank_lower`, then
+    `..._water_tank_middle` → `..._water_tank_bottom`. Customised IDs are left
+    alone.
+  - **Dashboards and automations are not rewritten by HA.** A card that showed
+    `..._water_tank_middle` must point at `..._water_tank_bottom`, and one that
+    showed `..._water_tank_bottom` now shows the true bottom. Use
+    `..._water_tank_lower` for the sensor that used to be called bottom.
+  - The water heater's attributes are now `water_lower` and `water_bottom`
+    (the true bottom).
+  - The relay's JSON keys are unchanged (`water_bottom` is the lower sensor,
+    `water_mid` the bottom-most) so older and newer halves still agree.
+
 ### Added
 - `docs/dashboard.yaml`: a ready-made **Water Heater** dashboard view. It
   shows the thermostat, hot water available, power, the three tank
@@ -267,7 +289,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...HEAD
+[0.4.13]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...v0.4.10

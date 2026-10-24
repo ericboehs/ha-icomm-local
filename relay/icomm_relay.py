@@ -176,11 +176,15 @@ def decode(blocks: list[bytes]) -> dict:
         # setpoint (block 3) keeps the value to return to. Three identical
         # copies follow at 84, 112 and 114 (research phase 34).
         "active_setpoint": round(fahrenheit(b1[80:82]), 1),
+        # Three tank thermistors. The keys predate knowing their order and are
+        # kept for compatibility; the physical order (research phase 35) is
+        # top [0:2], lower [4:6], bottom [2:4]. "water_mid" is the LOWEST: it
+        # drops first and furthest in a draw (cold inlet water arrives at the
+        # bottom), and runs hottest while the heat pump's condenser, wrapped
+        # around the lower shell, is heating.
         "water_top": round(fahrenheit(b1[0:2]), 1),
-        "water_bottom": round(fahrenheit(b1[4:6]), 1),
-        # A third thermistor: equal to top and bottom at rest, last to recover
-        # during heating (69 -> 145 F while the top sat at 146).
-        "water_mid": round(fahrenheit(b1[2:4]), 1),
+        "water_bottom": round(fahrenheit(b1[4:6]), 1),        # lower
+        "water_mid": round(fahrenheit(b1[2:4]), 1),           # bottom-most
         "heat_deficit_wh": int.from_bytes(b4[24:26], "big"),
         "hot_water_availability": availability(int.from_bytes(b4[24:26], "big")),
         "mode_raw": f"{pair[0]}/{pair[1]}",

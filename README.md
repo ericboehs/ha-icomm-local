@@ -18,7 +18,7 @@ cloud keep working.
   is the app's vacation mode: turning it on sends vacation (1 day), and the
   operation reads `off` while it is on, as in Home Assistant's own A.O. Smith
   integration. Turning it off restores the mode the tank was in before.
-- Sensors: water temperature (top, middle and bottom of the tank), **hot water
+- Sensors: water temperature (three sensors: top, lower and bottom of the tank), **hot water
   available %** (the same 0/50/100 figure the A.O. Smith app shows, computed
   locally), heat deficit (Wh), setpoint, active setpoint (what the tank is heating to: 50 °F
   in vacation), max setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
@@ -127,7 +127,7 @@ view with three sections:
 
 - **Water heater:** the thermostat with mode buttons, hot water available,
   and power.
-- **Tank:** top, middle and bottom temperatures, heat deficit, the last app
+- **Tank:** top, lower and bottom temperatures, heat deficit, the last app
   write, Wi-Fi and line voltage.
 - **Last 24 hours:** tank temperatures against the active target (vacation
   shows as a drop to 50 °F), hot water available, and power.

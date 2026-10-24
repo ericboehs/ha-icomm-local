@@ -143,7 +143,8 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
             "confirmed_setpoint": data.get("setpoint"),
             "active_setpoint": data.get("active_setpoint"),
             "confirmed_mode": data.get("mode"),
-            "water_bottom": data.get("water_bottom"),
+            "water_lower": data.get("water_bottom"),
+            "water_bottom": data.get("water_mid"),       # see sensor.py SPECS
             "power_w": data.get("watts"),
             "pending": data.get("pending") or None,
             "write_status": {kind: w.get("status") for kind, w in

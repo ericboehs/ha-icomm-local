@@ -25,9 +25,11 @@ F = UnitOfTemperature.FAHRENHEIT
 
 # field on the relay's state, display name, unit, device class, state class
 SPECS = [
+    # Relay keys predate knowing the sensors' order: "water_bottom" is the
+    # lower sensor and "water_mid" the bottom-most (research phase 35).
     ("water_top", "Water, tank top", F, SensorDeviceClass.TEMPERATURE, None),
-    ("water_bottom", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
-    ("water_mid", "Water, tank middle", F, SensorDeviceClass.TEMPERATURE, None),
+    ("water_bottom", "Water, tank lower", F, SensorDeviceClass.TEMPERATURE, None),
+    ("water_mid", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
     ("hot_water_availability", "Hot water available", PERCENTAGE, None,
      SensorStateClass.MEASUREMENT),
     ("heat_deficit_wh", "Heat deficit", UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY_STORAGE,

@@ -7,6 +7,7 @@ from datetime import timedelta
 from aiohttp import ClientError, ClientTimeout
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -15,6 +16,26 @@ from .const import DOMAIN, POLL_SECONDS, TIMEOUT_SECONDS, is_stale
 from .services import async_setup_services
 
 PLATFORMS = ["sensor", "water_heater"]
+
+# 0.4.13 relabelled the tank sensors once their order was measured: the sensor
+# named "middle" is the bottom-most and the one named "bottom" sits above it.
+# Installs still on the old default entity IDs move to the new ones, in this
+# order so the second rename finds its target free. HA carries the recorder
+# history with a registry rename. Customised IDs are left alone.
+ENTITY_ID_MIGRATIONS = (
+    ("icomm_local_water_bottom",
+     "sensor.icomm_water_heater_water_tank_bottom", "sensor.icomm_water_heater_water_tank_lower"),
+    ("icomm_local_water_mid",
+     "sensor.icomm_water_heater_water_tank_middle", "sensor.icomm_water_heater_water_tank_bottom"),
+)
+
+
+def _migrate_entity_ids(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    for unique_id, old, new in ENTITY_ID_MIGRATIONS:
+        current = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if current == old and registry.async_get(new) is None:
+            registry.async_update_entity(old, new_entity_id=new)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
@@ -69,6 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     if not hass.services.has_service(DOMAIN, "set_setpoint"):
         await async_setup_services(hass)
+    _migrate_entity_ids(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
