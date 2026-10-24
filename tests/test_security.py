@@ -336,11 +336,32 @@ def test_rejected_write_is_not_retried(tmp_path):
 
 def test_retired_write_confirmed_late_is_recorded(tmp_path):
     relay = _server(tmp_path).relay
-    relay.last_write = {"kind": "setpoint", "value": 138.0, "outcome": "not_applied"}
+    relay.last_write = {"kind": "setpoint", "value": 138.0, "outcome": "not_applied",
+                        "delivered": time.time() - 1200}
     relay.state["setpoint"] = 138.0
     relay._confirm_pending()
     assert relay.last_write["outcome"] == "confirmed"
     assert relay.last_write["earlier_outcome"] == "not_applied"
+
+
+def test_old_or_undelivered_retired_write_is_not_claimed_later(tmp_path):
+    relay = _server(tmp_path).relay
+    relay.state["setpoint"] = 138.0
+    for delivered in (None, time.time() - 7200):
+        relay.last_write = {"kind": "setpoint", "value": 138.0, "outcome": "expired",
+                            "delivered": delivered}
+        relay._confirm_pending()
+        assert relay.last_write["outcome"] == "expired"
+
+
+def test_rejected_write_retires_after_the_window_even_below_the_cap(tmp_path):
+    relay = _server(tmp_path).relay
+    write = relay.queue_write("setpoint", 141)
+    write.command_id = "abc"
+    write.attempts, write.delivered = 1, time.time() - RETIRE_AFTER_S - 1
+    relay._record_ack("abc", 400)
+    relay._expire_pending()
+    assert relay.last_write["outcome"] == "rejected"
 
 
 def test_gateways_reread_when_an_unknown_peer_arrives(tmp_path, monkeypatch):

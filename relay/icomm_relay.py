@@ -261,7 +261,8 @@ class Relay:
                 ssl=self.upstream_ssl,
             ) as upstream:
                 payload = await upstream.read()
-                if upstream.status == 200 and "commands.xml" in request.path:
+                if (upstream.status == 200 and "commands.xml" in request.path
+                        and request.get(TRUSTED, True)):
                     self._learn_reporting_interval(payload.decode(errors="replace"))
                 if transform is not None and upstream.status == 200:
                     rewritten = transform(payload)
@@ -334,7 +335,7 @@ class Relay:
             _LOGGER.info("LAN write ack: status %s id %s",
                          data.get("ack_status"), data.get("id"))
             self._record_ack(data.get("id"), data.get("ack_status"))
-            if data.get("ack_status") == 200:
+            if str(data.get("ack_status")) == "200":
                 # The tank does not reliably report after a local write. Ask
                 # the MCU for a fresh value on the next poll instead of
                 # re-sending the write or waiting for a spontaneous report.
@@ -407,8 +408,8 @@ class Relay:
         for kind, write in self.pending.items():
             if now - write.queued > self.queue_max_age_s:
                 retired.append((kind, "expired"))
-            elif (write.attempts >= MAX_ATTEMPTS and write.delivered
-                  and now - write.delivered > RETIRE_AFTER_S):
+            elif ((write.attempts >= MAX_ATTEMPTS or write.status == "rejected")
+                  and write.delivered and now - write.delivered > RETIRE_AFTER_S):
                 status = write.status
                 retired.append((kind, status if status in ("not_applied", "rejected")
                                 else "unconfirmed"))
@@ -562,6 +563,10 @@ class Relay:
             return False
         if last.get("kind") in self.pending:
             return False                # a newer write for the register owns it now
+        if not last.get("delivered") or time.time() - float(last["delivered"]) > 3600:
+            # Never sent, or long ago: a matching value now is more likely the
+            # app or a person at the tank than our write landing late.
+            return False
         got = self.state.get(last.get("kind"))
         if last.get("kind") == "setpoint":
             took = got is not None and abs(float(got) - float(last.get("value", -999))) <= 0.5
