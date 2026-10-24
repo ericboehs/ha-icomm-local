@@ -68,7 +68,10 @@ jobs:
             echo
             echo "| Severity | Package | Installed | Fixed in | ID |"
             echo "|---|---|---|---|---|"
-            jq -r '.Results[] | .Target as $t | (.Vulnerabilities // [])[] | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | [\(.VulnerabilityID)](\(.PrimaryURL // "")) |"' trivy.json | sort -u
+            jq -r '{"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3,"UNKNOWN":4} as $rank
+              | [.Results[] | (.Vulnerabilities // [])[]] | unique_by(.VulnerabilityID + .PkgName)
+              | sort_by($rank[.Severity], .PkgName)[]
+              | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | [\(.VulnerabilityID)](\(.PrimaryURL // "")) |"' trivy.json
             echo
             echo "Fix: bump the base digest in \`relay/Dockerfile\` or the pin in \`relay/requirements.in\` (then recompile the lock), release, and this issue closes on the next clean scan."
             echo
