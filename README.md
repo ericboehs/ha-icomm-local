@@ -14,14 +14,17 @@ cloud keep working.
 ## What you get
 
 - `water_heater.icomm_water_heater`: target temperature and mode
-  (electric / heat pump / eco = hybrid) from the thermostat card.
+  (electric / heat pump / eco = hybrid) from the thermostat card. **Away mode**
+  is the app's vacation mode: turning it on sends vacation (1 day), and the
+  operation reads `off` while it is on, as in Home Assistant's own A.O. Smith
+  integration. Turning it off restores the mode the tank was in before.
 - Sensors: water temperature (top, middle and bottom of the tank), **hot water
   available %** (the same 0/50/100 figure the A.O. Smith app shows, computed
   locally), heat deficit (Wh), setpoint, max setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
   idle), line voltage, air temperature at the unit, Wi-Fi RSSI, relay health, and
   the pending write's status.
-- Services: `icomm_local.set_setpoint`, `icomm_local.set_mode`,
-  `icomm_local.cancel_writes`.
+- Services: `icomm_local.set_setpoint`, `icomm_local.set_mode` (including
+  `vacation` with an optional `days`), `icomm_local.cancel_writes`.
 - Writes go over the LAN and are usually confirmed by the tank's own telemetry
   within a few seconds. Writes made in the A.O. Smith app are recorded too
   (*Last app write*), so app and Home Assistant changes can be told apart. The mobile app and A.O. Smith cloud keep working in

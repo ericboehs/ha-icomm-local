@@ -19,7 +19,8 @@
         "state": {
           "electric": "Electric",
           "hybrid": "Hybrid",
-          "heat_pump": "Heat pump"
+          "heat_pump": "Heat pump",
+          "vacation": "Vacation"
         }
       }
     }

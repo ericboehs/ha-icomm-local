@@ -3,10 +3,14 @@ POLL_SECONDS = 10
 # The relay answers locally; this is only generous enough to ride a slow host.
 TIMEOUT_SECONDS = 10
 
-# The three mode names the appliance's own register accepts. Guest and vacation
-# are separate register pairs that were never captured, so they are absent on
-# purpose rather than guessed at.
-MODES = ("electric", "hybrid", "heat_pump")
+# The mode names the relay can write and decode. Vacation was captured from the
+# app (`01 02` for "1 day"); guest never has been, so it is absent on purpose
+# rather than guessed at.
+MODES = ("electric", "hybrid", "heat_pump", "vacation")
+# Vacation's day count lives in the mode register's first byte. Only 1 has been
+# captured; whether the controller counts it down is not yet observed.
+VACATION_DEFAULT_DAYS = 1
+MAX_VACATION_DAYS = 99
 
 
 def has_telemetry(data: dict | None) -> bool:

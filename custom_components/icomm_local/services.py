@@ -15,12 +15,24 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, Supp
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, MODES, TIMEOUT_SECONDS
+from .const import DOMAIN, MAX_VACATION_DAYS, MODES, TIMEOUT_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 
 SET_SETPOINT_SCHEMA = vol.Schema({vol.Required("temperature"): vol.Coerce(float)})
-SET_MODE_SCHEMA = vol.Schema({vol.Required("mode"): vol.In(sorted(MODES))})
+def _days_only_for_vacation(data: dict) -> dict:
+    if "days" in data and data["mode"] != "vacation":
+        raise vol.Invalid("days applies only to vacation")
+    return data
+
+
+SET_MODE_SCHEMA = vol.All(
+    vol.Schema({
+        vol.Required("mode"): vol.In(sorted(MODES)),
+        vol.Optional("days"): vol.All(vol.Coerce(int), vol.Range(min=1, max=MAX_VACATION_DAYS)),
+    }),
+    _days_only_for_vacation,
+)
 
 
 def _coordinator(hass: HomeAssistant):
@@ -74,7 +86,10 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def set_mode(call: ServiceCall) -> ServiceResponse:
         mode = call.data["mode"]
-        body = await _post(hass, "/write", {"mode": mode})
+        payload = {"mode": mode}
+        if "days" in call.data:
+            payload["days"] = call.data["days"]
+        body = await _post(hass, "/write", payload)
         _LOGGER.debug("queued mode %s: %s", mode, body)
         return {"queued": body.get("queued", {})}
 

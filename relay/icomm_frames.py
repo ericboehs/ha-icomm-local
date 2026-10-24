@@ -15,7 +15,12 @@ Two registers matter, both in block 11:
 | register | offset | encoding |
 |---|---|---|
 | setpoint | 6 | big-endian 1/256 degC (so 138 F -> `3A E4`) |
-| mode | 15 | `64 01` electric, `00 04` hybrid, `00 05` heat_pump |
+| mode | 15 | `64 01` electric, `00 04` hybrid, `00 05` heat_pump, `NN 02` vacation |
+
+Vacation was captured once from the app (2026-10-24, "1 day"): `01 02`, which
+the tank echoed as its mode pair. The second byte reads as the mode and the
+first, for vacation, as the number of days. Only `01` has been seen, so other
+day counts are encodable but unverified.
 
 The `crc8` table has 256 entries but only 128 distinct values; that is how it was
 recovered, and it reproduces every frame Ayla ever sent (see the golden vectors in
@@ -54,6 +59,9 @@ OFFSET_SETPOINT = 0x06
 BLOCK_MODE = 0x0B
 OFFSET_MODE = 0x0F
 MODES = {"electric": b"\x64\x01", "hybrid": b"\x00\x04", "heat_pump": b"\x00\x05"}
+VACATION = 0x02
+VACATION_DEFAULT_DAYS = 1      # the only day count captured from the app
+MAX_VACATION_DAYS = 99         # stays clear of 0x64, which electric's first byte uses
 
 # The appliance's own limits, from its telemetry (max setpoint reads 150 F).
 # A write outside these is a bug in the caller, not a preference to honour.
@@ -84,9 +92,25 @@ def setpoint_frame(fahrenheit: float) -> bytes:
     return encode(BLOCK_SETPOINT, OFFSET_SETPOINT, raw.to_bytes(2, "big"))
 
 
-def mode_frame(mode: str) -> bytes:
+def vacation_days(days: object) -> int:
+    """Validate a vacation length: a whole number of days, 1-99."""
+    if days is None:
+        return VACATION_DEFAULT_DAYS
+    if isinstance(days, bool) or not isinstance(days, int):
+        raise ValueError(f"vacation days must be a whole number, got {days!r}")
+    if not 1 <= days <= MAX_VACATION_DAYS:
+        raise ValueError(f"vacation days {days} outside 1-{MAX_VACATION_DAYS}")
+    return days
+
+
+def mode_frame(mode: str, days: object = None) -> bytes:
+    if mode == "vacation":
+        return encode(BLOCK_MODE, OFFSET_MODE, bytes([vacation_days(days), VACATION]))
+    if days is not None:
+        raise ValueError("days applies only to vacation")
     if mode not in MODES:
-        raise ValueError(f"unknown mode {mode!r}; expected one of {sorted(MODES)}")
+        raise ValueError(
+            f"unknown mode {mode!r}; expected one of {sorted([*MODES, 'vacation'])}")
     return encode(BLOCK_MODE, OFFSET_MODE, MODES[mode])
 
 
@@ -107,6 +131,9 @@ def decode_frame(text: str) -> dict:
         out["setpoint"] = round(int.from_bytes(payload, "big") / 256.0 * 1.8 + 32.0, 1)
     if raw[3] == BLOCK_MODE and raw[4] == OFFSET_MODE and len(payload) == 2:
         out["mode"] = next((n for n, v in MODES.items() if v == payload), "unknown")
+        if out["mode"] == "unknown" and payload[1] == VACATION:
+            out["mode"] = "vacation"
+            out["vacation_days"] = payload[0]
     return out
 
 

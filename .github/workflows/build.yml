@@ -35,3 +35,25 @@ jobs:
         run: |
           docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 icomm-relay:ci \
             -c "import icomm_relay, icomm_lan, icomm_peers, icomm_frames; print('imports ok')"
+
+  # Is the relay ready for a newer Python base? Build the same image on
+  # python:3.15-alpine and run the relay's test suite inside it, against the
+  # hash-checked lock. Informational: it never blocks a merge, but a red canary
+  # means the base image cannot move yet.
+  python-canary:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build on python:3.15-alpine
+        run: |
+          sed -i 's#^FROM python:.*#FROM python:3.15-alpine#' relay/Dockerfile
+          grep '^FROM' relay/Dockerfile
+          docker build -t icomm-relay:py315 relay
+      - name: Relay test suite inside the 3.15 image
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src --entrypoint sh icomm-relay:py315 -c '
+            python -V &&
+            pip install -q --root-user-action=ignore -r requirements-dev.txt &&
+            cp -r /src /tmp/src && cd /tmp/src &&
+            python -W error::DeprecationWarning -m pytest tests -W error::Warning -o addopts=""'

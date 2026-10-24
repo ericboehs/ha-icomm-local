@@ -10,6 +10,24 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-10-24
+
+### Added
+- **Vacation mode.** The water heater's away mode sends the app's vacation mode
+  (mode bytes `01 02`, captured from the app as "1 day"), and its operation
+  reads `off` while vacation is on, as in Home Assistant's own A.O. Smith
+  integration. Turning away mode off restores the mode the tank was in before,
+  remembered across HA restarts. Heat pump is the fallback when no earlier mode
+  is known.
+- The mode sensor gains a `vacation` state; it and the water heater expose
+  `vacation_days`. `icomm_local.set_mode` accepts `vacation` with an optional
+  `days` (1–99). Only 1 day has been seen from the app, and whether the tank
+  leaves vacation by itself when the days run out has not been observed.
+- The relay decodes vacation in telemetry (`mode_raw` `N/2`) and in app writes
+  (*Last app write* shows `vacation` and its days).
+- CI tests Python 3.15. A canary job builds the add-on image on
+  `python:3.15-alpine` and runs the relay's tests inside it.
+
 ### Changed
 - Add-on dependency floors raised to what CI and image builds already
   installed: aiohttp 3.14.5, pycryptodome 4.1.0. pycryptodome 4.0's breaking
@@ -159,7 +177,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.3...v0.4.4

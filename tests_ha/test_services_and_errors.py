@@ -57,7 +57,7 @@ async def test_set_mode_rejects_uncaptured_modes_before_the_relay(hass, aioclien
 
     await _setup(hass, aioclient_mock)
     with pytest.raises(vol.Invalid):
-        await _call(hass, "set_mode", {"mode": "vacation"})
+        await _call(hass, "set_mode", {"mode": "guest"})
     assert _posts(aioclient_mock) == []
 
 

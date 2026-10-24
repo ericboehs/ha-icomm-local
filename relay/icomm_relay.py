@@ -98,6 +98,7 @@ class PendingWrite:
     ack_status: int | None = None
     reports_after_ack: int = 0          # fresh telemetry since the ack...
     observed_after_ack: object = None   # ...and what the tank actually reported
+    days: int | None = None             # vacation length, for a vacation write
 
     @property
     def status(self) -> str:
@@ -123,6 +124,13 @@ class PendingWrite:
 # of the module's superBlockDyn1 telemetry (block lengths 8/146/230/52/52;
 # block[0] is a header). icomm/README.md in the research repo is the evidence.
 MODE_PAIRS = {(100, 1): "electric", (0, 4): "hybrid", (0, 5): "heat_pump"}
+
+
+def mode_name(pair: tuple[int, int]) -> str:
+    """The mode register pair as a name. Vacation is (days, 2)."""
+    if pair in MODE_PAIRS:
+        return MODE_PAIRS[pair]
+    return "vacation" if pair[1] == frames.VACATION else "unknown"
 
 # How long silence stays plausible with no evidence to the contrary. Six hours is
 # the appliance's own measured reporting interval; being generous is deliberate,
@@ -169,7 +177,10 @@ def decode(blocks: list[bytes]) -> dict:
         "heat_deficit_wh": int.from_bytes(b4[24:26], "big"),
         "hot_water_availability": availability(int.from_bytes(b4[24:26], "big")),
         "mode_raw": f"{pair[0]}/{pair[1]}",
-        "mode": MODE_PAIRS.get(pair, "unknown"),
+        "mode": mode_name(pair),
+        # Vacation's first byte: the day count the app set (captured as 1 for
+        # "1 day"). Whether the controller counts it down is not yet observed.
+        "vacation_days": pair[0] if mode_name(pair) == "vacation" else None,
         "watts": int.from_bytes(b4[12:14], "big"),
         "volts": b1[99],
         "air": round(fahrenheit(b4[30:32]), 1),
@@ -498,6 +509,7 @@ class Relay:
                 ack_status=entry.get("ack_status"),
                 reports_after_ack=entry.get("reports_after_ack", 0),
                 observed_after_ack=entry.get("observed_after_ack"),
+                days=entry.get("days"),
                 restored=True,
             )
             if write.frame:
@@ -523,13 +535,15 @@ class Relay:
             _LOGGER.warning("could not persist the write queue: %s", err)
 
     # -- the write path ------------------------------------------------
-    def queue_write(self, kind: str, value) -> PendingWrite:
+    def queue_write(self, kind: str, value, days: object = None) -> PendingWrite:
         """Accept a write, clamped to what the appliance itself allows.
 
         The limits come from the appliance's telemetry, not from a hard-coded
         policy: this relay must not be the reason a tank is asked to do something
         its own controller advertises as out of range.
         """
+        if days is not None and not (kind == "mode" and str(value) == "vacation"):
+            raise ValueError("days applies only to a vacation mode write")
         if kind == "setpoint":
             ceiling = min(float(self.state.get("max_setpoint") or 150.0),
                           frames.HARD_MAX_SETPOINT)
@@ -540,7 +554,9 @@ class Relay:
             payload_frame = frames.as_text(frames.setpoint_frame(value))
         elif kind == "mode":
             value = str(value)
-            payload_frame = frames.as_text(frames.mode_frame(value))
+            if value == "vacation":
+                days = frames.vacation_days(days)
+            payload_frame = frames.as_text(frames.mode_frame(value, days))
         else:
             raise ValueError(f"unknown write kind {kind!r}")
 
@@ -548,7 +564,7 @@ class Relay:
         if kind in self.pending:
             superseded = (self.pending[kind].superseded or 0) + 1
         write = PendingWrite(kind=kind, value=value, frame=payload_frame,
-                             superseded=superseded or None)
+                             superseded=superseded or None, days=days)
         self.pending[kind] = write
         self._save_queue()
         # Do not wait up to 10 s for the module's next poll: an out-of-band
@@ -663,6 +679,7 @@ class Relay:
         self.last_cloud_write = {
             "at": time.time(), "kind": kind, "value": decoded.get(kind, frame),
             "frame": frame, "source": "cloud",
+            "days": decoded.get("vacation_days"),
             # Filled in by _transform_commands if a local write replaces it.
             "replaced_by_local": False}
         _LOGGER.warning("cloud write: %s %s (frame %s) -- from the A.O. Smith app or API",
@@ -751,7 +768,8 @@ class Relay:
 
     # -- the Home-Assistant-facing side --------------------------------
     async def write_handler(self, request: web.Request) -> web.Response:
-        """POST /write {"setpoint": 140} or {"mode": "heat_pump"}.
+        """POST /write {"setpoint": 140}, {"mode": "heat_pump"} or
+        {"mode": "vacation", "days": 1}.
 
         Queues, never delivers: delivery happens on the appliance's own schedule,
         when it asks for commands. A write that is queued is not a write that
@@ -768,7 +786,7 @@ class Relay:
         if kind is None:
             return web.json_response({"error": "give setpoint or mode"}, status=400)
         try:
-            write = self.queue_write(kind, body[kind])
+            write = self.queue_write(kind, body[kind], days=body.get("days"))
         except (ValueError, TypeError) as err:
             return web.json_response({"error": str(err)}, status=400)
         # Delivery: the module's own 10-second LAN poll when the LAN session is

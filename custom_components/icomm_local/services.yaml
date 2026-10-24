@@ -22,6 +22,7 @@ set_mode:
   description: >-
     Queue a heating mode. Electric and heat pump draw very differently, and a mode
     change is visible in the next telemetry as the mode register plus the power draw.
+    Vacation is the app's vacation mode; the water heater's away mode sends it too.
   fields:
     mode:
       name: Mode
@@ -33,6 +34,19 @@ set_mode:
             - electric
             - hybrid
             - heat_pump
+            - vacation
+    days:
+      name: Vacation days
+      description: >-
+        Vacation only: the day count the app asks for (default 1, the only value
+        captured so far). Whether the tank leaves vacation on its own afterwards has
+        not been observed; turn it off yourself to be sure.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
 
 cancel_writes:
   name: Cancel queued writes

@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 # aiohttp's TestServer binds ephemeral ports; keep the suite hermetic and quick.
 addopts = "-q"
 

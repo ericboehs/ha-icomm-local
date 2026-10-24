@@ -200,10 +200,10 @@ class LastAppWriteSensor(_RelaySensor):
 class ModeSensor(IcommSensor):
     """Operating mode as a translated enum: "Heat pump", not `heat_pump`.
 
-    Icons per state live in icons.json. A mode the relay has never seen (guest and
-    vacation were never captured) reads as unknown: an ENUM sensor that reports a
-    value outside its options raises inside Home Assistant, and an uncaptured mode
-    must not take the entity down.
+    Icons per state live in icons.json. A mode the relay has never seen (guest was
+    never captured) reads as unknown: an ENUM sensor that reports a value outside
+    its options raises inside Home Assistant, and an uncaptured mode must not take
+    the entity down.
     """
 
     _attr_translation_key = "mode"
@@ -219,3 +219,8 @@ class ModeSensor(IcommSensor):
     def native_value(self):
         value = super().native_value
         return value if value in MODES else None
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        return {"vacation_days": data.get("vacation_days"), "raw": data.get("mode_raw")}

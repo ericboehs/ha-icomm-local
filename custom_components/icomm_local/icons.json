@@ -6,7 +6,8 @@
         "state": {
           "heat_pump": "mdi:heat-pump",
           "hybrid": "mdi:leaf",
-          "electric": "mdi:lightning-bolt"
+          "electric": "mdi:lightning-bolt",
+          "vacation": "mdi:airplane"
         }
       }
     }
