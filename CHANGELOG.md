@@ -14,9 +14,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ### Changed
 - The add-on runs **Python 3.15** (`python:3.15.1-alpine3.24`, pinned by
-  digest), up from 3.12. The lock is recompiled for 3.15 with the same package
-  versions; `typing-extensions` drops out because only Python before 3.13 needs
-  it.
+  digest), up from 3.12. Package versions are unchanged; the lock stays
+  compiled for 3.12 so one hash-checked file serves every Python CI tests.
 - CI runs the relay's test suite inside the built add-on image on both amd64
   and arm64, replacing the 3.15 canary.
 
