@@ -10,6 +10,14 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-10-24
+
+### Added
+- `GET /raw` on the relay's local state port: the last `superBlockDyn1`
+  report as hex, one string per block, with its time and mode pair. For
+  mapping registers the decoder doesn't know yet, such as vacation's
+  effective target.
+
 ## [0.4.9] - 2026-10-24
 
 ### Changed
@@ -201,7 +209,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.10...HEAD
+[0.4.10]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.6...v0.4.7

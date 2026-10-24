@@ -420,7 +420,7 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     assert by_port[18124].host == "127.0.0.1" and by_port[18124].ssl_context is None
     assert by_port[18444].host == "0.0.0.0" and by_port[18444].ssl_context is tls
     state_routes = {r.resource.canonical for r in by_port[18124].runner.app.router.routes()}
-    assert state_routes == {"/state", "/health", "/nudge", "/write", "/write/cancel"}
+    assert state_routes == {"/state", "/health", "/raw", "/nudge", "/write", "/write/cancel"}
     assert relay.pending["setpoint"].restored is True
     out = capsys.readouterr().out
     assert "module on :18444 (TLS)" in out and "LAN on :18888" in out
@@ -501,3 +501,19 @@ async def test_run_without_signal_support_still_runs(tmp_path, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert relay.client.closed
+
+
+async def test_raw_returns_the_last_report_as_hex(tmp_path, monkeypatch, blocks_heat_pump):
+    relay = _relay(tmp_path, monkeypatch)
+    response = await relay.raw_handler(make_mocked_request("GET", "/raw"))
+    assert response.status == 404                       # nothing received yet
+    relay._ingest_blocks(blocks_heat_pump)
+    body = json.loads((await relay.raw_handler(make_mocked_request("GET", "/raw"))).body)
+    assert body["blocks"] == [block.hex() for block in blocks_heat_pump]
+    assert body["mode"] == "0/5" and body["at"] > 0
+
+
+def test_raw_is_kept_even_when_decoding_fails(tmp_path, monkeypatch):
+    relay = _relay(tmp_path, monkeypatch)
+    relay._ingest_blocks([b"\x00"] * 5)                 # too short to decode
+    assert relay.last_raw["blocks"] == ["00"] * 5 and relay.last_raw["mode"] is None

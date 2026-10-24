@@ -206,6 +206,7 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
 class Relay:
     def __init__(self) -> None:
         self.upstream = os.environ.get("UPSTREAM", "proxy-ingress-usfield.aylanetworks.com")
+        self.last_raw: dict | None = None      # the last superBlockDyn1, hex
         self.listen_port = int(os.environ.get("LISTEN_PORT", "8444"))
         self.state_port = int(os.environ.get("STATE_PORT", "8124"))
         # Loopback by default: the add-on shares the host network with HA. A dev
@@ -342,6 +343,10 @@ class Relay:
     def _ingest_blocks(self, blocks: list[bytes] | None) -> None:
         """Decode a superBlockDyn1 report, from the cloud POST or the LAN."""
         if blocks and len(blocks) >= 5:
+            # Kept raw for register research (GET /raw): the decoder only knows
+            # the offsets someone has already mapped.
+            self.last_raw = {"at": time.time(), "mode": None,
+                             "blocks": [block.hex() for block in blocks]}
             try:
                 self.state = decode(blocks)
                 self.state["online"] = True
@@ -349,9 +354,16 @@ class Relay:
                 if self.device_dsn:
                     self.state["dsn"] = self.device_dsn
                 self.last_telemetry = time.time()
+                self.last_raw["mode"] = self.state.get("mode_raw")
             except (IndexError, ValueError):
                 pass
             self._confirm_pending()
+
+    async def raw_handler(self, request: web.Request) -> web.Response:
+        """GET /raw: the last superBlockDyn1 as hex, one string per block."""
+        if self.last_raw is None:
+            return web.json_response({"error": "no telemetry yet"}, status=404)
+        return web.json_response(self.last_raw)
 
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
@@ -860,6 +872,7 @@ class Relay:
         state_app = web.Application()
         state_app.router.add_get("/state", self.state_handler)
         state_app.router.add_get("/health", self.health_handler)
+        state_app.router.add_get("/raw", self.raw_handler)
         state_app.router.add_post("/nudge", self.nudge_handler)
         state_app.router.add_post("/write", self.write_handler)
         state_app.router.add_post("/write/cancel", self.write_cancel_handler)
