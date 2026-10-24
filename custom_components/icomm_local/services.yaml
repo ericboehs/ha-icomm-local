@@ -38,9 +38,9 @@ set_mode:
     days:
       name: Vacation days
       description: >-
-        Vacation only: the day count the app asks for (default 1, the only value
-        captured so far). Whether the tank leaves vacation on its own afterwards has
-        not been observed; turn it off yourself to be sure.
+        Vacation only: the number of days, as the app asks for it (default 1).
+        Whether the tank leaves vacation on its own when they run out has not been
+        observed; turn it off yourself to be sure.
       required: false
       selector:
         number:

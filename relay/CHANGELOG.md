@@ -10,6 +10,21 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-24
+
+### Changed
+- The add-on runs **Python 3.15** (`python:3.15.1-alpine3.24`, pinned by
+  digest), up from 3.12. The lock is recompiled for 3.15 with the same package
+  versions; `typing-extensions` drops out because only Python before 3.13 needs
+  it.
+- CI runs the relay's test suite inside the built add-on image on both amd64
+  and arm64, replacing the 3.15 canary.
+
+### Confirmed
+- Vacation's first byte is the number of days: the app's "3 days" sent
+  `03 02`, the frame the relay had predicted byte for byte, and the tank
+  reported `3/2`.
+
 ## [0.4.8] - 2026-10-24
 
 ### Fixed
@@ -187,7 +202,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.5...v0.4.6

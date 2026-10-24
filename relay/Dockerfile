@@ -5,7 +5,7 @@
 # requirements.txt pins every package with hashes (generated from
 # requirements.in). Dependabot bumps both. No build.yaml, so the Supervisor
 # passes no BUILD_FROM and builds exactly this base.
-FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
+FROM python:3.15.1-alpine3.24@sha256:54448f67d7c31c39e5cdd3ea2d6382395ce142806c284425f8e897d78a0465b3
 
 RUN apk add --no-cache openssl
 WORKDIR /app

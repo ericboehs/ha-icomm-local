@@ -17,10 +17,9 @@ Two registers matter, both in block 11:
 | setpoint | 6 | big-endian 1/256 degC (so 138 F -> `3A E4`) |
 | mode | 15 | `64 01` electric, `00 04` hybrid, `00 05` heat_pump, `NN 02` vacation |
 
-Vacation was captured once from the app (2026-10-24, "1 day"): `01 02`, which
-the tank echoed as its mode pair. The second byte reads as the mode and the
-first, for vacation, as the number of days. Only `01` has been seen, so other
-day counts are encodable but unverified.
+Vacation was captured from the app twice (2026-10-24): "1 day" sent `01 02`
+and "3 days" sent `03 02`, and the tank echoed each as its mode pair. The second
+byte is the mode; for vacation the first byte is the number of days.
 
 The `crc8` table has 256 entries but only 128 distinct values; that is how it was
 recovered, and it reproduces every frame Ayla ever sent (see the golden vectors in
@@ -60,7 +59,7 @@ BLOCK_MODE = 0x0B
 OFFSET_MODE = 0x0F
 MODES = {"electric": b"\x64\x01", "hybrid": b"\x00\x04", "heat_pump": b"\x00\x05"}
 VACATION = 0x02
-VACATION_DEFAULT_DAYS = 1      # the only day count captured from the app
+VACATION_DEFAULT_DAYS = 1      # the app's own first choice, and HA away mode's
 MAX_VACATION_DAYS = 99         # stays clear of 0x64, which electric's first byte uses
 
 # The appliance's own limits, from its telemetry (max setpoint reads 150 F).

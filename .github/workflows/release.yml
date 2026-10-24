@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.15"   # the add-on image's Python
       - name: Tag, add-on, integration and changelog agree
         run: |
           python scripts/release_check.py versions "$GITHUB_REF_NAME"

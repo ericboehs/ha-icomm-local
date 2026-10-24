@@ -29,7 +29,7 @@ updates:
         patterns: ["*"]
   # The relay's base image: python:<version>-alpine<version>@<digest>.
   # Patch releases and digest refreshes only. A new Python minor (3.12 -> 3.15
-  # was the first PR this opened) is a deliberate change: add it to the CI
+  # arrived this way once) is a deliberate change: add it to the CI
   # matrix first, then bump the Dockerfile by hand.
   - package-ecosystem: docker
     directory: /relay

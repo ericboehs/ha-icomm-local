@@ -16,6 +16,7 @@ from icomm_relay import Relay, decode
 from test_security import _body
 
 CAPTURED_VACATION_1_DAY = "BD 40 08 0B 0F 01 02 1C"
+CAPTURED_VACATION_3_DAYS = "BD 40 08 0B 0F 03 02 66"       # 2026-10-24 09:56, app
 
 
 def _with_mode(blocks: list[bytes], pair: tuple[int, int]) -> list[bytes]:
@@ -44,14 +45,17 @@ def test_vacation_default_is_the_captured_frame_byte_for_byte():
 
 
 def test_vacation_days_go_in_the_first_byte():
-    # Precomputed for the 3-day capture that will confirm (or refute) the hypothesis.
+    # Predicted before the app's 3-day capture, then matched byte for byte by it.
     assert frames.as_text(frames.mode_frame("vacation", 3)) == "BD 40 08 0B 0F 03 02 66"
 
 
-def test_captured_frame_decodes_as_vacation():
-    decoded = frames.decode_frame(CAPTURED_VACATION_1_DAY)
+@pytest.mark.parametrize(("frame", "days"), [(CAPTURED_VACATION_1_DAY, 1),
+                                              (CAPTURED_VACATION_3_DAYS, 3)])
+def test_captured_frames_decode_as_vacation_with_their_days(frame, days):
+    decoded = frames.decode_frame(frame)
     assert decoded["crc_ok"]
-    assert decoded["mode"] == "vacation" and decoded["vacation_days"] == 1
+    assert decoded["mode"] == "vacation" and decoded["vacation_days"] == days
+    assert frames.as_text(frames.mode_frame("vacation", days)) == frame
 
 
 @pytest.mark.parametrize("days", [0, 100, -1, "3", 1.5, True])

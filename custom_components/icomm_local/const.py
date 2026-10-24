@@ -7,8 +7,8 @@ TIMEOUT_SECONDS = 10
 # app (`01 02` for "1 day"); guest never has been, so it is absent on purpose
 # rather than guessed at.
 MODES = ("electric", "hybrid", "heat_pump", "vacation")
-# Vacation's day count lives in the mode register's first byte. Only 1 has been
-# captured; whether the controller counts it down is not yet observed.
+# Vacation's day count lives in the mode register's first byte (captured from the
+# app as 1 and 3 days). Whether the controller counts it down is not yet observed.
 VACATION_DEFAULT_DAYS = 1
 MAX_VACATION_DAYS = 99
 

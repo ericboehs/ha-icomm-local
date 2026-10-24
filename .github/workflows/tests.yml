@@ -13,8 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.12 is what the add-on image runs; the rest are what users may bring,
-        # and 3.15 is the next base-image candidate (see build.yml's canary).
+        # 3.15 is what the add-on image runs (build.yml also tests inside the
+        # image itself); the older ones are what people running the relay
+        # outside the add-on may bring.
         python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +33,7 @@ jobs:
           python -m pytest --cov=relay --cov-report=term-missing \
             --cov-report=markdown:coverage.md --cov-fail-under=95
       - name: Coverage summary
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.15'
         run: |
           echo "### Relay coverage (Python ${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
           cat coverage.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
