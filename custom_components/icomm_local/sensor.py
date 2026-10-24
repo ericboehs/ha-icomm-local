@@ -30,7 +30,7 @@ SPECS = [
     ("water_mid", "Water, tank middle", F, SensorDeviceClass.TEMPERATURE, None),
     ("hot_water_availability", "Hot water available", PERCENTAGE, None,
      SensorStateClass.MEASUREMENT),
-    ("heat_deficit_wh", "Heat deficit", UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY,
+    ("heat_deficit_wh", "Heat deficit", UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY_STORAGE,
      SensorStateClass.MEASUREMENT),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
     ("max_setpoint", "Max setpoint", F, SensorDeviceClass.TEMPERATURE, None),
