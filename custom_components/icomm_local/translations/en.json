@@ -29,6 +29,21 @@
     "stale_telemetry": {
       "title": "Water heater data is stale",
       "description": "The iCOMM relay is running, but the tank has not reported for {age} minutes (LAN session: {lan}; relay health: {health}). The water heater shows its last-known values and writes are still accepted and queued. If this persists, check the relay's Pending write and Relay health sensors, or power-cycle the water heater's breaker."
+    },
+    "firmware_held": {
+      "title": "Firmware update held for the {target} ({version})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Allow the {target} firmware update?",
+            "description": "Ayla offered firmware {version} ({size}, from {host}) for the {target}. The relay is holding it, so the heater keeps running the firmware it has (Wi-Fi module: {agent}).\n\n**Installing it could end local control.** This integration works because the current module firmware accepts the relay in place of Ayla's cloud. An update that checks certificates would cut the relay out, and the heater would go offline until the router steering is removed.\n\nSubmit to let this one update through on the module's next poll. To keep it held, close this and choose Ignore."
+          }
+        },
+        "abort": {
+          "not_loaded": "The iCOMM integration isn't loaded; reload it and try again.",
+          "relay_refused": "The relay no longer has this update on hold (Ayla may have withdrawn it). Nothing was changed."
+        }
+      }
     }
   }
 }

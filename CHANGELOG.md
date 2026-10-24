@@ -10,6 +10,33 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-24
+
+### Added
+- **Firmware updates wait for your OK.** Ayla sends an update as a command
+  (`PUT ota.json`) inside the module's command poll, which passes through
+  the relay. The relay now drops that command and records the offer: which
+  part it is for (the Wi-Fi module or the heater's controller), the
+  version, the size and the download host. Ayla keeps the command queued, so
+  it comes back on every poll until you decide.
+  - Home Assistant raises a fixable repair for each held update. Submitting
+    it allows that exact update; ignoring it keeps the update held.
+  - An allowed update's image is fetched from its real host through the
+    relay, with the certificate verified. Nothing else is: the steering rule
+    sends all of the module's HTTPS to the relay, so without this the
+    download could never work.
+  - Why hold by default: the agent does not check a signature on a cloud
+    update, and new firmware could add the certificate check this project
+    relies on.
+  - Add-on option `firmware_updates`: `hold` (default) or `allow` (pass
+    updates through, as before).
+  - `/state` gains `firmware`: the policy, held offers, allowed ones, the
+    agent's version from its DSN reply, and the module's last update status
+    reports. `POST /firmware/allow {"key": "<type>:<version>"}` allows one.
+
+### Changed
+- The README's security section now says how the relay verifies Ayla.
+
 ## [0.4.14] - 2026-10-24
 
 ### Added
@@ -306,7 +333,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...v0.5.0
 [0.4.14]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...v0.4.14
 [0.4.13]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.11...v0.4.12

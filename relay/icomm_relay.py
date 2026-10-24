@@ -61,6 +61,7 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientTimeout, web
+from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy
 from yarl import URL
@@ -236,6 +237,9 @@ class Relay:
         self.last_write: dict | None = None
         self.writes_delivered = 0
         self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
+        # Firmware updates wait for the owner (icomm_firmware explains why).
+        self.firmware = FirmwareGate(os.environ.get("FIRMWARE_UPDATES", "hold"),
+                                     self.queue_file.parent / "firmware.json")
         # A restored write older than this is dropped rather than delivered: an
         # appliance that sat idle overnight should not surprise anyone at breakfast.
         self.queue_max_age_s = int(os.environ.get("QUEUE_MAX_AGE_S", str(24 * 3600)))
@@ -715,7 +719,10 @@ class Relay:
                         kind, self.last_cloud_write["value"], frame)
 
     def _transform_commands(self, payload: bytes, path_qs: str = "") -> bytes | None:
-        """Note any cloud write, then apply the queued write and the lanip push."""
+        """Hold firmware, note any cloud write, then apply the queued write and the lanip push."""
+        gated = self.firmware.filter(payload)
+        if gated is not None:
+            payload = gated
         self._note_cloud_write(payload, path_qs)
         rewritten = self._inject(payload)
         if rewritten is not None and self.last_cloud_write and \
@@ -729,8 +736,12 @@ class Relay:
         # None means "unchanged" to proxy(). Returning the push result alone
         # (since 0.3.1) silently discarded every injected write whenever no
         # key push was armed: the module got Ayla's original reply while the
-        # write was counted as delivered. LAN delivery masked it.
-        return pushed if pushed is not None else rewritten
+        # write was counted as delivered. LAN delivery masked it. The same
+        # goes for a held firmware command: dropping it must reach the module.
+        for result in (pushed, rewritten, gated):
+            if result is not None:
+                return result
+        return None
 
     def _maybe_push_lanip(self, payload: bytes) -> bytes | None:
         """Deliver Ayla's key-rotation command: PUT lanip.json in <cmds>.
@@ -778,6 +789,7 @@ class Relay:
         switch present passes through untouched.
         """
         text = payload.decode(errors="replace")
+        self.firmware.note_dsn(text)
         switched = []
         for element in ("lan-enabled", "local-access-enabled"):
             off = f"<{element}>false</{element}>"
@@ -829,6 +841,38 @@ class Relay:
         self._save_queue()
         return web.json_response({"cancelled": dropped})
 
+    async def firmware_allow_handler(self, request: web.Request) -> web.Response:
+        """The owner allows one held update: {"key": "<type>:<version>"}."""
+        try:
+            key = str((await request.json())["key"])
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "expected {\"key\": \"type:version\"}"},
+                                     status=400)
+        if not self.firmware.allow(key):
+            return web.json_response({"error": f"no firmware offer {key!r}"}, status=404)
+        return web.json_response({"allowed": key})
+
+    async def fetch_firmware(self, request: web.Request, target: str) -> web.Response:
+        """Forward an allowed image download to its real host, verified.
+
+        Ranged reads pass through: the agent fetches the image in pieces.
+        """
+        headers = {k: v for k, v in request.headers.items()
+                   if k.lower() in {"range", "accept", "user-agent", "if-range"}}
+        try:
+            assert self.client is not None
+            async with self.client.get(target, headers=headers, allow_redirects=False,
+                                       ssl=True) as upstream:
+                payload = await upstream.read()
+                response = web.Response(status=upstream.status, body=payload)
+                for k in ("Content-Type", "Content-Range", "Accept-Ranges", "ETag"):
+                    if k in upstream.headers:
+                        response.headers[k] = upstream.headers[k]
+                return response
+        except Exception as err:
+            _LOGGER.warning("firmware download failed: %s", type(err).__name__)
+            return web.Response(status=502, text="")
+
     async def state_handler(self, request: web.Request) -> web.Response:
         self._expire_pending()
         out = dict(self.state)
@@ -847,6 +891,7 @@ class Relay:
         out["last_cloud_write"] = self.last_cloud_write
         out["lan"] = self.lan.status()
         out["peers"] = self.peers.status()
+        out["firmware"] = self.firmware.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -892,6 +937,7 @@ class Relay:
         state_app.router.add_post("/nudge", self.nudge_handler)
         state_app.router.add_post("/write", self.write_handler)
         state_app.router.add_post("/write/cancel", self.write_cancel_handler)
+        state_app.router.add_post("/firmware/allow", self.firmware_allow_handler)
 
         runner_state = web.AppRunner(state_app)
         await runner_state.setup()
@@ -1116,6 +1162,12 @@ class Relay:
             # the local behavior (the key, telemetry, writes, DSN rewrite).
             return await self.proxy(request)
         self._note_request(request.path)
+        target = self.firmware.download_target(request.host, request.path)
+        if target is not None:
+            return await self.fetch_firmware(request, target)
+        if "ota_status" in request.path:
+            # The agent reporting on an update: worth keeping, then Ayla's.
+            self.firmware.note_status(request.query_string)
         if self.lan.enabled and request.path.endswith("/lan.json"):
             return web.json_response(self.lan.lan_json())
         if "superBlockDyn1" in request.path:

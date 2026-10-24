@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.4.14"
+version: "0.5.0"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -20,6 +20,7 @@ options:
   module_ip: ""
   relay_ip: ""
   trusted_peers: ""
+  firmware_updates: hold
 schema:
   listen_port: port
   state_port: port
@@ -39,5 +40,10 @@ schema:
   # Add comma-separated addresses here only for unusual steering; "*" disables
   # the check.
   trusted_peers: str?
+  # Firmware updates for the module or the heater's controller arrive through
+  # the relay. "hold" keeps them from the module and raises a Home Assistant
+  # repair to allow each one; an update could end local control. "allow"
+  # passes them as before.
+  firmware_updates: list(hold|allow)
 map:
   - share:ro

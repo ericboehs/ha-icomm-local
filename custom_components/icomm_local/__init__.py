@@ -30,6 +30,41 @@ ENTITY_ID_MIGRATIONS = (
 )
 
 
+FIRMWARE_TARGETS = {"module": "Wi-Fi module", "host_mcu": "water heater controller"}
+
+
+def firmware_issue_id(entry_id: str, key: str) -> str:
+    return f"firmware_held_{entry_id}_" + "".join(
+        c if c.isalnum() else "_" for c in key.lower())
+
+
+def _firmware_issues(hass: HomeAssistant, entry_id: str, data: dict, raised: set[str]) -> None:
+    """One fixable repair per update the relay is holding; gone once it isn't."""
+    firmware = data.get("firmware") or {}
+    current: set[str] = set()
+    for offer in firmware.get("held") or []:
+        key = str(offer.get("key"))
+        issue_id = firmware_issue_id(entry_id, key)
+        current.add(issue_id)
+        size = offer.get("size")
+        placeholders = {
+            "target": FIRMWARE_TARGETS.get(offer.get("type"), str(offer.get("type"))),
+            "version": str(offer.get("version")),
+            "size": f"{round(size / 1024)} KB" if isinstance(size, int) else "unknown size",
+            "host": str(offer.get("url_host") or "unknown"),
+            "agent": str(firmware.get("agent_version") or "unknown"),
+        }
+        ir.async_create_issue(
+            hass, DOMAIN, issue_id, is_fixable=True, is_persistent=False,
+            severity=ir.IssueSeverity.WARNING, translation_key="firmware_held",
+            translation_placeholders=placeholders,
+            data={"entry_id": entry_id, "key": key, "placeholders": placeholders})
+    for issue_id in raised - current:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+    raised.clear()
+    raised.update(current)
+
+
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     for unique_id, old, new in ENTITY_ID_MIGRATIONS:
@@ -87,6 +122,15 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     entry.async_on_unload(coordinator.async_add_listener(_update_stale_issue))
     _update_stale_issue()
+    firmware_issues: set[str] = set()
+
+    def _update_firmware_issues() -> None:
+        if coordinator.last_update_success:
+            _firmware_issues(hass, entry.entry_id, coordinator.data or {}, firmware_issues)
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_firmware_issues))
+    entry.async_on_unload(lambda: _firmware_issues(hass, entry.entry_id, {}, firmware_issues))
+    _update_firmware_issues()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     if not hass.services.has_service(DOMAIN, "set_setpoint"):
         await async_setup_services(hass)

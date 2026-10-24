@@ -213,6 +213,7 @@ Add-on options, or environment variables when running the relay directly:
 | `relay_ip` / `RELAY_IP` | detected | the address the module should call back on |
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
 | `device_dsn` / `DEVICE_DSN` | — | cosmetic: shown in `/state` |
+| `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |
 | `LAN_REFRESH_INTERVAL` | 300 | seconds between keep-alive telemetry reads; 0 disables |
 | `LANIP_PUSH` | off | force the LAN-key push (normally automatic) |
@@ -227,7 +228,16 @@ Add-on options, or environment variables when running the relay directly:
   Ayla, with no key, telemetry, writes or rewrites. On 8888, anyone else gets 403.
 - The state API is unauthenticated and on loopback by default.
 - The relay's TLS certificate is self-signed. The module does not validate it.
-  The relay *does* verify Ayla's real certificate on the upstream side.
+  The relay *does* verify Ayla's real certificate on the upstream side: the
+  chain must end at the Entrust Root G2 shipped in the image (Ayla's Sectigo
+  certificate is cross-signed by it) and the name must match. There is no
+  fallback to an unverified connection.
+- **Firmware updates are held by default.** Ayla delivers them as a command
+  through the relay, and the agent does not check a signature on a cloud
+  update. A new firmware could also add the certificate check this project
+  relies on. Each held update shows up as a repair in Home Assistant; allow
+  it there, or ignore the repair to keep it held. Only the allowed image's
+  exact URL is fetched, from its real host, with the certificate verified.
 - The LAN key is generated locally, never logged, and stored at
   `/data/lanip.json` (0600). Nothing here uses or stores A.O. Smith credentials.
 - The module's own Local Connect registration endpoint is unauthenticated by
