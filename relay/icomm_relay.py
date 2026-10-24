@@ -165,6 +165,22 @@ def fahrenheit(raw: bytes) -> float:
     return int.from_bytes(raw, "big") * TEMP_F + 32
 
 
+def heating_element(flags: int) -> str | None:
+    """Which resistive element is on, from block 1 byte 61 (research phase 36).
+
+    Bit 0x04 is the upper element, 0x08 the lower one: five switches in one
+    afternoon's electric recoveries matched the tank sensors every time (upper
+    while the top is below its cut-off, lower once the top is satisfied). The
+    elements never run together, so both bits set is not a state we know.
+    Bits 0x01 and 0x02 appear with the heat pump and stay unnamed until
+    measured.
+    """
+    upper, lower = bool(flags & 0x04), bool(flags & 0x08)
+    if upper and lower:
+        return None
+    return "upper" if upper else "lower" if lower else "off"
+
+
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
     b1, b3, b4 = blocks[1], blocks[3], blocks[4]
@@ -194,6 +210,8 @@ def decode(blocks: list[bytes]) -> dict:
         # "1 day"). Whether the controller counts it down is not yet observed.
         "vacation_days": pair[0] if mode_name(pair) == "vacation" else None,
         "watts": int.from_bytes(b4[12:14], "big"),
+        "heat_flags": b1[61],
+        "heating_element": heating_element(b1[61]),
         "volts": b1[99],
         "air": round(fahrenheit(b4[30:32]), 1),
         "rssi": int.from_bytes(b4[40:42], "big", signed=True),

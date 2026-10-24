@@ -34,6 +34,14 @@ dialog reads it from the add-on folder. CI fails if the two differ.
     agent's version from its DSN reply, and the module's last update status
     reports. `POST /firmware/allow {"key": "<type>:<version>"}` allows one.
 
+- **Heating element sensor:** `upper`, `lower` or `off`, from block 1 byte 61
+  (`0x04` upper, `0x08` lower). Both elements draw 4500 W, so power alone
+  can't tell them apart. Five switches during electric recoveries matched the
+  tank sensors every time: the upper element runs until the top of the tank
+  is satisfied, then hands over to the lower one. The heat pump's bits
+  (`0x01`, `0x02`) stay unnamed until measured; the raw byte is the `flags`
+  attribute.
+
 ### Changed
 - The README's security section now says how the relay verifies Ayla.
 

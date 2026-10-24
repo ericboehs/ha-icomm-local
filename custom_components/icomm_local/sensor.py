@@ -54,7 +54,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         IcommSensor(coordinator, field, name, unit, device_class, state_class)
         for field, name, unit, device_class, state_class in SPECS
     ]
-    entities += [ModeSensor(coordinator), RelayHealthSensor(coordinator),
+    entities += [ModeSensor(coordinator), HeatingElementSensor(coordinator),
+                 RelayHealthSensor(coordinator),
                  PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator)]
     async_add_entities(entities)
 
@@ -200,6 +201,35 @@ class LastAppWriteSensor(_RelaySensor):
                 "frame": last.get("frame"),
                 "replaced_by_local": last.get("replaced_by_local"),
                 "cloud_writes": data.get("cloud_writes")}
+
+
+ELEMENTS = ["upper", "lower", "off"]
+
+
+class HeatingElementSensor(IcommSensor):
+    """Which resistive element is heating: upper, lower or off (neither).
+
+    "off" includes the heat pump running alone; the relay leaves a flag
+    combination it doesn't know as unknown.
+    """
+
+    _attr_translation_key = "heating_element"
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "heating_element", None,
+                         device_class=SensorDeviceClass.ENUM)
+        del self._attr_name
+        self._attr_options = ELEMENTS
+
+    @property
+    def native_value(self):
+        value = super().native_value
+        return value if value in ELEMENTS else None
+
+    @property
+    def extra_state_attributes(self):
+        flags = (self.coordinator.data or {}).get("heat_flags")
+        return {"flags": f"0x{flags:02x}" if isinstance(flags, int) else None}
 
 
 class ModeSensor(IcommSensor):

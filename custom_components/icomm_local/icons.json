@@ -9,6 +9,14 @@
           "electric": "mdi:lightning-bolt",
           "vacation": "mdi:airplane"
         }
+      },
+      "heating_element": {
+        "default": "mdi:heating-coil",
+        "state": {
+          "upper": "mdi:arrow-up-bold-box",
+          "lower": "mdi:arrow-down-bold-box",
+          "off": "mdi:heating-coil"
+        }
       }
     }
   }

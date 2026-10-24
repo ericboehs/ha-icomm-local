@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 
+import pytest
 from homeassistant import config_entries
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
@@ -208,3 +209,25 @@ async def test_uncaptured_mode_reads_unknown_not_an_error(
     state["mode"] = "unknown"
     await _setup(hass, aioclient_mock, state)
     assert hass.states.get("sensor.icomm_water_heater_mode").state == "unknown"
+
+
+@pytest.mark.parametrize(("element", "flags", "shown"), [
+    ("upper", 0x04, "upper"), ("lower", 0x08, "lower"), ("off", 0x03, "off"),
+    (None, 0x0C, "unknown"), ("sideways", 0x00, "unknown"),
+])
+async def test_heating_element_sensor(hass: HomeAssistant, aioclient_mock,
+                                      element, flags, shown) -> None:
+    state = copy.deepcopy(STATE)
+    state["heating_element"], state["heat_flags"] = element, flags
+    await _setup(hass, aioclient_mock, state)
+    sensor = hass.states.get("sensor.icomm_water_heater_heating_element")
+    assert sensor.state == shown
+    assert sensor.attributes["options"] == ["upper", "lower", "off"]
+    assert sensor.attributes["flags"] == f"0x{flags:02x}"
+    assert sensor.attributes["friendly_name"] == "iCOMM Water Heater Heating element"
+
+
+async def test_heating_element_without_flags(hass: HomeAssistant, aioclient_mock) -> None:
+    await _setup(hass, aioclient_mock)            # an older relay: no heat_flags
+    assert hass.states.get(
+        "sensor.icomm_water_heater_heating_element").attributes["flags"] is None

@@ -22,6 +22,14 @@
           "heat_pump": "Heat pump",
           "vacation": "Vacation"
         }
+      },
+      "heating_element": {
+        "name": "Heating element",
+        "state": {
+          "upper": "Upper",
+          "lower": "Lower",
+          "off": "Off"
+        }
       }
     }
   },

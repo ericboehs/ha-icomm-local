@@ -22,7 +22,8 @@ cloud keep working.
   available %** (the same 0/50/100 figure the A.O. Smith app shows, computed
   locally), heat deficit (Wh), setpoint, active setpoint (what the tank is heating to: 50 °F
   in vacation), max setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
-  idle), line voltage, air temperature at the unit, Wi-Fi RSSI, relay health, and
+  idle), **which heating element is on** (upper or lower), line voltage, air temperature
+  at the unit, Wi-Fi RSSI, relay health, and
   the pending write's status.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode` (including
   `vacation` with an optional `days`), `icomm_local.cancel_writes`.
@@ -125,8 +126,8 @@ something is wrong (see Troubleshooting).
 [docs/dashboard.yaml](docs/dashboard.yaml) is a complete **Water Heater**
 view with three sections:
 
-- **Water heater:** the thermostat with mode buttons, hot water available,
-  and power.
+- **Water heater:** the thermostat with mode buttons, hot water available, power
+  and the heating element.
 - **Tank:** top, lower and bottom temperatures, heat deficit, the last app
   write, Wi-Fi and line voltage.
 - **Last 24 hours:** tank temperatures against the active target (vacation

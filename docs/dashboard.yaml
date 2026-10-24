@@ -39,6 +39,9 @@ sections:
   - type: tile
     entity: sensor.icomm_water_heater_power
     name: Power
+  - type: tile
+    entity: sensor.icomm_water_heater_heating_element
+    name: Element
 - type: grid
   cards:
   - type: heading

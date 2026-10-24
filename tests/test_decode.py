@@ -186,3 +186,26 @@ def test_heat_deficit_falls_at_the_elements_rate() -> None:
     rate = (d0 - d1) / ((t1 - t0) / 60)
     assert 65 <= rate <= 95, rate
     assert availability(5100) == 0 and availability(4800) == 50 and availability(450) == 100
+
+
+# -- the heating element (block 1 byte 61, research phase 36) -----------------
+
+@pytest.mark.parametrize(("flags", "element"), [
+    (0x04, "upper"), (0x08, "lower"), (0x00, "off"),
+    (0x03, "off"),              # the heat pump's bits, no element
+    (0x01, "off"),              # vacation
+    (0x0C, None),               # both: never seen, so unknown rather than a guess
+])
+def test_heating_element(flags: int, element: str | None) -> None:
+    from icomm_relay import heating_element
+    assert heating_element(flags) == element
+
+
+@pytest.mark.parametrize(("fixture", "element", "flags"), [
+    ("blocks_electric", "lower", 0x08),      # top at 146: the lower element's turn
+    ("blocks_heat_pump", "off", 0x03),
+    ("blocks_hybrid", "off", 0x00),
+])
+def test_heating_element_in_the_captures(fixture, element, flags, request) -> None:
+    decoded = decode(request.getfixturevalue(fixture))
+    assert decoded["heating_element"] == element and decoded["heat_flags"] == flags
