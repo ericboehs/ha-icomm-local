@@ -20,6 +20,8 @@ updates:
     groups:
       dev-tools:
         patterns: ["*"]
+  # Every action is pinned by commit SHA with its release in a comment
+  # (`@<sha> # v7.0.1`); Dependabot moves the SHA and the comment together.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -27,6 +29,11 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    # Pinned to a branch commit: their last releases are 2022 and 2020, and
+    # Dependabot would "update" to those. weekly.yml reports branch movement.
+    ignore:
+      - dependency-name: hacs/action
+      - dependency-name: home-assistant/actions
   # The relay's base image: python:<version>-alpine<version>@<digest>.
   # Patch releases and digest refreshes only. A new Python minor (3.12 -> 3.15
   # arrived this way once) is a deliberate change: add it to the CI

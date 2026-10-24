@@ -1,0 +1,119 @@
+name: weekly
+
+# Things that change without a commit here:
+#   image-cves   new CVEs published against what the latest release installs
+#                (Alpine packages in the pinned base, the hash-locked wheels).
+#   branch-pins  hacs/action and hassfest have no maintained releases, so they
+#                are pinned to a branch commit that Dependabot cannot bump.
+# Each job keeps one issue open while it has something to report, updates it on
+# later runs, and closes it when the problem is gone.
+on:
+  schedule:
+    - cron: "17 8 * * 1"          # Mondays 08:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  image-cves:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: "Security: fixable vulnerabilities in the latest add-on image"
+    steps:
+      - name: Find the latest release
+        id: release
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Scanning $tag"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+      - name: Build the add-on image exactly as users get it
+        run: docker build -t icomm-relay:release relay
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: icomm-relay:release
+          version: v0.76.1
+          scanners: vuln
+          ignore-unfixed: true      # an issue should be something we can act on
+          format: json
+          output: trivy.json
+          exit-code: "0"
+      - name: Open, update or close the issue
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          count=$(jq '[.Results[] | (.Vulnerabilities // [])[]] | length' trivy.json)
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ "$count" -eq 0 ]; then
+            echo "No fixable vulnerabilities in $TAG."
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Weekly scan of $TAG is clean: closing."
+            fi
+            exit 0
+          fi
+          {
+            echo "The weekly scan of the **$TAG** add-on image (built from the release tag: pinned base digest, hash-locked wheels) found **$count** vulnerabilities with a fix available."
+            echo
+            echo "| Severity | Package | Installed | Fixed in | ID |"
+            echo "|---|---|---|---|---|"
+            jq -r '.Results[] | .Target as $t | (.Vulnerabilities // [])[] | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | [\(.VulnerabilityID)](\(.PrimaryURL // "")) |"' trivy.json | sort -u
+            echo
+            echo "Fix: bump the base digest in \`relay/Dockerfile\` or the pin in \`relay/requirements.in\` (then recompile the lock), release, and this issue closes on the next clean scan."
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > body.md
+          gh label create security --repo "$GITHUB_REPOSITORY" --color B60205 --description "Vulnerabilities and hardening" 2>/dev/null || true
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file body.md
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "Still $count fixable on the $(date -u +%F) scan of $TAG."
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label security --body-file body.md
+          fi
+
+  branch-pins:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: "Pinned action branches have moved"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare each branch pin with its branch head
+        run: |
+          : > moved.md
+          # Lines like: uses: owner/repo[/path]@<sha> # branch: <name>
+          grep -rhoE 'uses: [^@ ]+@[0-9a-f]{40} # branch: [A-Za-z0-9._/-]+' .github/workflows | sort -u |
+          while read -r _ ref _ _ branch; do
+            action=${ref%@*}; pinned=${ref#*@}
+            repo=$(echo "$action" | cut -d/ -f1-2)
+            head=$(gh api "repos/$repo/commits/$branch" --jq .sha)
+            if [ "$head" != "$pinned" ]; then
+              echo "- \`$action\` ($branch): pinned [\`${pinned:0:12}\`](https://github.com/$repo/commit/$pinned), head is [\`${head:0:12}\`](https://github.com/$repo/commit/$head). [Compare](https://github.com/$repo/compare/$pinned...$head)" >> moved.md
+            fi
+          done
+          cat moved.md
+      - name: Open, update or close the issue
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ ! -s moved.md ]; then
+            echo "All branch pins are at their branch head."
+            [ -n "$existing" ] && gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "All branch pins are current: closing."
+            exit 0
+          fi
+          {
+            echo "These actions are pinned to a branch commit (they have no maintained releases, so Dependabot cannot update them), and the branch has moved:"
+            echo
+            cat moved.md
+            echo
+            echo "Review the compare link, then update the SHA in \`.github/workflows/\`."
+          } > body.md
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          fi

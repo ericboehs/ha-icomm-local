@@ -10,6 +10,20 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Security
+- Every GitHub Action is pinned by full commit SHA, with its release in a
+  comment that Dependabot updates along with the SHA. hacs/action and hassfest
+  have no maintained releases (2022, 2020), so they are pinned to their branch
+  head, and Dependabot is told to ignore them.
+- New `weekly` workflow:
+  - **`image-cves`** rebuilds the latest release from its tag and scans it with
+    Trivy. It keeps one `security` issue open while fixable CVEs exist and
+    closes it once a scan is clean.
+  - **`branch-pins`** opens an issue when hacs's or hassfest's branch moves
+    past the pinned commit.
+- Workflows that relied on the repository's default token permissions now
+  declare `contents: read`.
+
 ## [0.4.12] - 2026-10-24
 
 ### Security

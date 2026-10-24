@@ -7,6 +7,9 @@ on:
   schedule:
     - cron: "0 6 * * 1"      # weekly: catch dependency drift early
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -18,8 +21,8 @@ jobs:
         # outside the add-on may bring.
         python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
@@ -45,7 +48,7 @@ jobs:
   addon-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The image is Alpine (busybox sh, no bash): every script must be POSIX.
       - name: Scripts are POSIX sh
         run: shellcheck -s sh relay/*.sh
@@ -54,7 +57,7 @@ jobs:
           docker run --rm -v "$PWD/relay:/r" -e CERT_DIR=/tmp/c alpine:3 \
             sh -c 'apk add -q --no-cache openssl && cp /r/dhparams-default.pem /tmp/dh.pem 2>/dev/null; mkdir -p /tmp/c && cp /tmp/dh.pem /tmp/c/dhparams.pem 2>/dev/null; /r/gen-cert.sh && openssl x509 -in /tmp/c/aylanetworks.com.crt -noout -subject'
       - name: Validate the add-on configuration
-        uses: frenck/action-addon-linter@v2
+        uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
         with:
           path: "./relay"
 
@@ -64,8 +67,8 @@ jobs:
   ha-integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Install Home Assistant test harness
