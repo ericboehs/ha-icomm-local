@@ -73,6 +73,11 @@ MAX_ATTEMPTS = 3
 # An exhausted write stays visible (pending, with its status) this long, so a
 # late report can still confirm it, then it is retired to last_write.
 RETIRE_AFTER_S = 900
+# The read-back right after a write ack sometimes goes unanswered (live 0.4.3:
+# 2 of 6), leaving confirmation to the module's own cloud post ~4 s later. Ask
+# again after this long, at most READBACK_RETRIES times.
+READBACK_RETRY_S = 1.5
+READBACK_RETRIES = 2
 
 
 @dataclass
@@ -368,6 +373,30 @@ class Relay:
                 # or waiting for a spontaneous report.
                 self.lan.request_telemetry()
                 self.lan.wake()
+                self._schedule_readback_retry(time.time(), READBACK_RETRIES)
+
+    def _schedule_readback_retry(self, acked_at: float, tries: int) -> None:
+        """Re-ask for telemetry if nothing has arrived since the ack."""
+        if tries <= 0:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        def retry() -> None:
+            if self.last_telemetry >= acked_at:
+                return                  # answered (or a spontaneous report came)
+            if not any(w.acked and not w.confirmed for w in self.pending.values()):
+                return
+            self.lan.readback_retries += 1
+            _LOGGER.info("LAN mode: no telemetry %.1f s after the ack; asking again",
+                         time.time() - acked_at)
+            self.lan.request_telemetry()
+            self.lan.wake()
+            self._schedule_readback_retry(acked_at, tries - 1)
+
+        loop.call_later(READBACK_RETRY_S, retry)
 
     def _record_ack(self, command_id, status) -> None:
         """Attach a LAN ack to the write it answers (matched by property id)."""

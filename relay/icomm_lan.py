@@ -159,6 +159,7 @@ class LanServer:
         self._client: ClientSession | None = None
         self._wake_event: asyncio.Event | None = None
         self.wakes = 0
+        self.readback_retries = 0
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
 
@@ -283,7 +284,8 @@ class LanServer:
                 "registration_failures": self.registration_failures,
                 "needs_key_push": self.needs_key_push,
                 "refresh_pending": self.refresh_pending,
-                "telemetry_requests": self.telemetry_requests, "wakes": self.wakes}
+                "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
+                "readback_retries": self.readback_retries}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:

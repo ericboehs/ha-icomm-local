@@ -95,3 +95,36 @@ async def test_write_queued_during_a_rekey_is_woken_when_the_session_verifies(tm
     await lan._datapoint(_from(MODULE, "POST", "/local_lan/property/datapoint.json",
                                payload=_body(body)))
     assert lan.session_verified and lan._wake_event.is_set()
+
+
+async def _acked_write(tmp_path, monkeypatch):
+    import sys
+    for name in ("icomm_relay", "relay.icomm_relay"):    # loaded under both names
+        if name in sys.modules:
+            monkeypatch.setattr(sys.modules[name], "READBACK_RETRY_S", 0.05)
+    lan = _server(tmp_path)
+    lan._wake_event = asyncio.Event()
+    lan.registered = True
+    write = lan.relay.queue_write("setpoint", 141)
+    write.command_id = "abc"
+    await lan.relay.ingest_lan_update({"data": {"id": "abc", "ack_status": 200}})
+    lan.refresh_pending = False                 # the first read-back went out, unanswered
+    return lan
+
+
+async def test_unanswered_readback_is_retried(tmp_path, monkeypatch):
+    lan = await _acked_write(tmp_path, monkeypatch)
+    await asyncio.sleep(0.08)
+    assert lan.readback_retries == 1 and lan.refresh_pending
+    lan.refresh_pending = False
+    await asyncio.sleep(0.08)
+    assert lan.readback_retries == 2            # capped: no third
+    await asyncio.sleep(0.1)
+    assert lan.readback_retries == 2
+
+
+async def test_answered_readback_is_not_retried(tmp_path, monkeypatch, blocks_electric):
+    lan = await _acked_write(tmp_path, monkeypatch)
+    lan.relay._ingest_blocks(blocks_electric)   # telemetry arrived after the ack
+    await asyncio.sleep(0.12)
+    assert lan.readback_retries == 0
