@@ -2,8 +2,8 @@
 
 How the relay gives an iCOMM module local writes and local telemetry without an
 A.O. Smith account, and without touching the cloud path. Proven end to end on
-the real hardware (research repo, captures INDEX, phase 28): a setpoint write
-delivered, acked, and confirmed in decrypted LAN telemetry in about six seconds.
+the real hardware (research repo, captures INDEX, phases 28–29): setpoint writes
+delivered, acked, and confirmed in decrypted LAN telemetry in 6–7 seconds.
 
 ## The moving parts
 
@@ -49,19 +49,34 @@ should not delete that file after the module has learned it.
   encrypted `{"seq_no":N,"data":{…}}`. A queued write goes out as
   `data.properties[0].property = {base_type:"string", name:"setBlockParameter",
   value:"BD 40 …", id:<8 chars>}` — the same golden frames the cloud path uses.
-  A delivered write is not re-sent every poll: it is retried only if telemetry
-  has not confirmed it after 60 s.
+  A delivered write is not re-sent every poll: if telemetry has not confirmed
+  it after 60 s, delivery is retried at most three times.
 - **Telemetry:** the module POSTs encrypted updates to
   `/local_lan/property/datapoint.json`. `superBlockDyn1` is decoded exactly
   like the cloud POST; `ack_status` is logged as a delivery ack.
-  **Confirmation is still the tank's own telemetry, never the ack.**
+- **Active refresh:** after a successful write ack, and whenever a LAN session
+  starts, the next command poll carries a read-only reverse-REST request:
+  `GET property.json?name=superBlockDyn1`. Ayla's handler calls
+  `ada_prop_mgr_get()`, obtaining the current value from the tank controller;
+  the encrypted response returns to the normal datapoint endpoint. Measured
+  response time: **0.3 s**. This avoids waiting for the appliance's potentially
+  hours-long spontaneous reporting interval.
+
+  **Confirmation is still the tank's own telemetry, never the ack.** An ack can
+  be followed by a fresh report that still contains the old setpoint: that
+  means the appliance did not apply the write, not that confirmation should be
+  inferred from delivery. In one measured case A.O. Smith's API accepted
+  138 °F and both cloud and LAN delivered it, but the tank stayed at 135 °F;
+  140 °F and a subsequent local 135 °F write both applied. This single negative
+  result does not establish a general temperature-step rule.
 
 ## What `/state` tells you
 
 `lan` in the state API: `registered`, `session`, `module_ip`, `port`, `key_id`,
 `key_served` (we have answered `lan.json` since startup), `updates`,
 `writes_delivered`, `last_heartbeat_age`, `last_update_age`,
-`last_registration_result`, `registration_failures`.
+`last_registration_result`, `registration_failures`, `needs_key_push`,
+`refresh_pending`, `telemetry_requests`.
 
 ## Arming and recovery
 

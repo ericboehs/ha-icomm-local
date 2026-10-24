@@ -29,9 +29,10 @@ The power number is *live*, not the app's derived figure: the telemetry carries
 the element's 4500 W when energised, the compressor's ~350 W when the heat pump
 runs, and 0 when idle.
 
-## Writes (working, cloud-assisted)
+## Writes (local, with cloud fallback)
 
-Writes are delivered by rewriting the reply to the module's own command poll, so
+Writes prefer the module's 10-second LAN command poll. If LAN mode is down,
+they can also be delivered by rewriting the reply to its cloud command poll, so
 the appliance never learns where a command came from:
 
 ```bash
@@ -131,11 +132,14 @@ the module's own Ayla Local Connect feature:
    poll; telemetry arrives as encrypted property updates and is decoded exactly
    like the cloud POSTs.
 
-Measured on the real tank: a 140 °F setpoint write delivered, acked
-(`ack_status: 200`) and confirmed in decrypted LAN telemetry in **about 6
-seconds** — with no A.O. Smith request involved. Cloud telemetry and the mobile
-app keep working in parallel, and the cloud poll path remains as the fallback
-for a module whose LAN session is not up.
+Measured on the real tank: local setpoint writes delivered, acked
+(`ack_status: 200`) and confirmed in decrypted LAN telemetry in **6–7
+seconds** — with no A.O. Smith request carrying the write. After an ack the
+relay can also request fresh `superBlockDyn1` telemetry directly from the tank
+controller (a read-only Ayla reverse-REST GET), instead of waiting hours for a
+spontaneous report. Cloud telemetry and the mobile app keep working in
+parallel, and the cloud poll path remains as the fallback for a module whose
+LAN session is not up.
 
 **One-time arming:** the module only asks for its LAN configuration when it
 re-registers, so after upgrading to 0.3.0 power-cycle the module once (the
