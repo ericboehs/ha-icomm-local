@@ -82,6 +82,7 @@ def _server(tmp_path) -> LanServer:
         server = relay.lan
         assert isinstance(server, LanServer)
         server.session = Session(SECRET.encode(), EXCHANGE)
+        server.last_update = __import__("time").time()   # fresh unless a test says otherwise
         return server
     finally:
         os.environ.pop("LANIP_KEY", None)
@@ -306,3 +307,24 @@ def test_lifecycle_survives_restart(tmp_path, monkeypatch):
     restored = again.pending["setpoint"]
     assert restored.status == "acknowledged"
     assert restored.delivery_path == "lan" and restored.restored
+
+
+async def test_idle_tank_gets_a_keepalive_read_before_going_stale(tmp_path):
+    """Live finding: 13 min with no report made HA mark the entity unavailable
+    and drop a write, while the LAN session was healthy all along."""
+    import time as _time
+    server = _server(tmp_path)
+    request = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
+    _, rx = module_directions(SECRET.encode(), EXCHANGE,
+                              server.session.random_2, server.session.time_2)
+
+    def decode(resp):
+        return json.loads(rx["cipher"].decrypt(base64.b64decode(
+            json.loads(resp.body)["enc"])).rstrip(bytes([0])).decode())["data"]
+
+    server.last_update = _time.time()                 # fresh: no read
+    assert decode(await server._commands(request)) == {}
+    server.last_update = _time.time() - 400           # stale: one read...
+    server.relay.last_telemetry = server.last_update
+    assert decode(await server._commands(request))["cmds"][0]["cmd"]["method"] == "GET"
+    assert decode(await server._commands(request)) == {}   # ...not every poll

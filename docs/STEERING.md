@@ -44,8 +44,15 @@ every provision, and a reboot clears them.
 
 What was tested: with the hand-made `iptables` rules removed, the native rules alone
 carried the module's traffic (both counters 0 → 1 on the next dial, fresh telemetry
-at the relay, zero upstream errors). A router reboot was *not* performed for this
-write-up; persistence across one is UniFi's documented behaviour for these rules.
+at the relay, zero upstream errors).
+
+**Router reboot, measured (UDM Pro, 2026-10-23):** the fixed-IP reservation came
+back in dnsmasq immediately; the two NAT rules were re-rendered by UniFi Network
+about **10 minutes** after the reboot, once the Network application had finished
+starting (the SNAT rule rendered twice, which is harmless). The LAN-mode session
+between module and relay **never dropped**: it is same-subnet traffic that does
+not need the gateway, and heartbeats kept returning 202 throughout. Cloud
+traffic (app, A.O. Smith) is what pauses until the rules are back.
 
 Tested on a UDM Pro, UniFi OS 5.1, Network 10.6.106. Menu paths per Ubiquiti:
 Network 9.4+ **Settings → Policy Table → Create New Policy → NAT**; Network 9.3

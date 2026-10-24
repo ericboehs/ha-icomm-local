@@ -133,6 +133,12 @@ class LanServer:
         self.refresh_pending = False
         self.refresh_cmd_id = 0
         self.telemetry_requests = 0
+        self.last_refresh_request = 0.0
+        # Keep-alive reads: an idle tank can go hours without reporting, and the
+        # relay calls telemetry older than 10 min stale -- Home Assistant then
+        # marks the entity unavailable and silently drops writes, although the
+        # LAN session is fine. One read-only MCU read per interval prevents it.
+        self.refresh_interval = float(os.environ.get("LAN_REFRESH_INTERVAL", "300"))
         self._client: ClientSession | None = None
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
@@ -321,6 +327,14 @@ class LanServer:
         """
         self.refresh_pending = True
 
+    def _refresh_due(self) -> bool:
+        if self.refresh_interval <= 0:
+            return False
+        now = time.time()
+        newest = max(self.last_update, self.relay.last_telemetry or 0.0)
+        return (now - newest > self.refresh_interval
+                and now - self.last_refresh_request > self.refresh_interval)
+
     async def _commands(self, request: web.Request) -> web.Response:
         """The 10-second local poll: deliver one write or telemetry request."""
         if self.session is None:
@@ -338,8 +352,9 @@ class LanServer:
             self.writes_delivered += 1
             _LOGGER.warning("LAN mode: delivering %s = %s locally",
                             write.kind, write.value)
-        elif self.refresh_pending:
+        elif self.refresh_pending or self._refresh_due():
             self.refresh_pending = False       # one shot; never retry in a loop
+            self.last_refresh_request = time.time()
             self.refresh_cmd_id += 1
             self.telemetry_requests += 1
             data = {"cmds": [{"cmd": {

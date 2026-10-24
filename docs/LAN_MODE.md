@@ -61,6 +61,11 @@ should not delete that file after the module has learned it.
   the encrypted response returns to the normal datapoint endpoint. Measured
   response time: **0.3 s**. This avoids waiting for the appliance's potentially
   hours-long spontaneous reporting interval.
+- **Keep-alive reads:** while a LAN session is up, the same read is issued
+  whenever telemetry is more than 5 minutes old (`LAN_REFRESH_INTERVAL`, `0`
+  disables). Without it an idle tank goes 10+ minutes without reporting, the
+  relay calls the data stale, and Home Assistant marks the entity unavailable
+  and **silently drops service calls** (measured twice on the live tank).
 
   **Confirmation is still the tank's own telemetry, never the ack.** An ack can
   be followed by a fresh report that still contains the old setpoint: that
