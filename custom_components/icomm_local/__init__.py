@@ -83,6 +83,7 @@ def _tls_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
         translation_placeholders={
             "error": str(tls.get("last_error") or "unknown"),
             "failures": str(tls.get("failures") or 0),
+            "issues_url": "https://github.com/ericboehs/ha-icomm-local/issues",
             "since": (f"{round((time.time() - last_ok) / 60)} minutes ago"
                       if isinstance(last_ok, (int, float)) else "not since the relay started"),
         })

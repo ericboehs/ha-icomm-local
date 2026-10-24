@@ -23,7 +23,8 @@ async def test_a_failing_certificate_raises_an_error_repair(hass: HomeAssistant,
     assert issue.severity is ir.IssueSeverity.ERROR and not issue.is_fixable
     assert issue.translation_placeholders == {
         "error": "unable to get local issuer certificate", "failures": "4",
-        "since": "10 minutes ago"}
+        "since": "10 minutes ago",
+        "issues_url": "https://github.com/ericboehs/ha-icomm-local/issues"}
 
     aioclient_mock.clear_requests()
     recovered = {**FAILING, "failing": False}

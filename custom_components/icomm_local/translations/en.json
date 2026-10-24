@@ -55,7 +55,7 @@
     },
     "upstream_certificate": {
       "title": "The iCOMM relay can't verify Ayla's cloud",
-      "description": "The relay refused Ayla's TLS certificate ({error}). That has happened {failures} times; Ayla last verified {since}. Until it's resolved, the heater's data no longer reaches Ayla, so the A.O. Smith app goes stale and app commands stop. Local control through Home Assistant still works.\n\nMost likely Ayla moved to a certificate that no longer chains to the root the relay trusts (Entrust Root G2). Update the iCOMM Local Relay add-on, or report it at https://github.com/ericboehs/ha-icomm-local/issues. The other possibility is something between your network and Ayla presenting its own certificate, which is exactly what this check is for."
+      "description": "The relay refused Ayla's TLS certificate ({error}). That has happened {failures} times; Ayla last verified {since}. Until it's resolved, the heater's data no longer reaches Ayla, so the A.O. Smith app goes stale and app commands stop. Local control through Home Assistant still works.\n\nMost likely Ayla moved to a certificate that no longer chains to the root the relay trusts (Entrust Root G2). Update the iCOMM Local Relay add-on, or report it at {issues_url}. The other possibility is something between your network and Ayla presenting its own certificate, which is exactly what this check is for."
     }
   }
 }
