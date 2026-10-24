@@ -18,7 +18,9 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 - New `weekly` workflow:
   - **`image-cves`** rebuilds the latest release from its tag and scans it with
     Trivy. It keeps one `security` issue open while fixable CVEs exist and
-    closes it once a scan is clean.
+    closes it once a scan is clean. Run it by hand with a `tag` input to scan
+    any release. Tested end to end: v0.4.11 (which still shipped pip) opened
+    #17, and the clean v0.4.12 closed it.
   - **`branch-pins`** opens an issue when hacs's or hassfest's branch moves
     past the pinned commit.
 - Workflows that relied on the repository's default token permissions now
