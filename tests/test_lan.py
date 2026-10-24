@@ -248,3 +248,61 @@ def _exchange_request():
         async def json(self):
             return {"key_exchange": EXCHANGE}
     return _Request()
+
+
+async def test_write_status_lifecycle_never_confuses_ack_with_confirmation(tmp_path):
+    """queued -> delivered -> acknowledged -> confirmed, or not_applied."""
+    server = _server(tmp_path)
+    relay = server.relay
+    relay.state["setpoint"] = 135.0
+    relay.queue_write("setpoint", 140)
+    write = relay.pending["setpoint"]
+    assert write.status == "queued"
+
+    request = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
+    await server._commands(request)
+    assert write.status == "delivered" and write.delivery_path == "lan"
+
+    # An ack for some other id does not count.
+    await relay.ingest_lan_update({"data": {"id": "nope", "ack_status": 200}})
+    assert write.status == "delivered"
+    await relay.ingest_lan_update({"data": {"id": write.command_id, "ack_status": 200}})
+    assert write.status == "acknowledged"
+
+    # Fresh telemetry with the old value: still only acknowledged, and visible.
+    relay._confirm_pending()
+    assert write.status == "acknowledged"
+    assert write.reports_after_ack == 1 and write.observed_after_ack == 135.0
+    state = json.loads((await relay.state_handler(None)).body)
+    assert state["pending"]["setpoint"]["status"] == "acknowledged"
+
+    # The tank reports the new value: confirmed, retired, recorded.
+    relay.state["setpoint"] = 140.0
+    relay._confirm_pending()
+    assert "setpoint" not in relay.pending
+    assert relay.last_write["status"] == "confirmed"
+
+
+def test_three_acked_attempts_with_old_telemetry_read_as_not_applied(tmp_path):
+    server = _server(tmp_path)
+    relay = server.relay
+    relay.state["setpoint"] = 135.0
+    write = relay.queue_write("setpoint", 138)
+    write.attempts, write.delivered, write.acked = 3, 1.0, 2.0
+    relay._confirm_pending()
+    assert write.status == "not_applied"
+
+
+def test_lifecycle_survives_restart(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUEUE_FILE", str(tmp_path / "pending.json"))
+    monkeypatch.setenv("LANIP_KEY", SECRET)
+    relay = Relay()
+    write = relay.queue_write("setpoint", 140)
+    relay._mark_delivered(write, "lan")
+    write.command_id = "abcd1234"
+    relay._record_ack("abcd1234", 200)
+    again = Relay()
+    again._load_queue()                     # what startup does
+    restored = again.pending["setpoint"]
+    assert restored.status == "acknowledged"
+    assert restored.delivery_path == "lan" and restored.restored

@@ -70,6 +70,24 @@ should not delete that file after the module has learned it.
   140 °F and a subsequent local 135 °F write both applied. This single negative
   result does not establish a general temperature-step rule.
 
+## Write status
+
+Every pending write carries `status`, and the Home Assistant *Pending write*
+sensor shows it (`setpoint 140.0: acknowledged`):
+
+| Status | Evidence |
+|---|---|
+| `queued` | accepted by the relay, not yet sent |
+| `delivered` | sent in a LAN (`delivery_path: lan`) or cloud command reply |
+| `acknowledged` | the module acked *this* delivery (LAN ack id matches the property id we sent) |
+| `confirmed` | the tank's own telemetry reports the value; the write leaves `pending` and lands in `last_write` |
+| `not_applied` | acked on all three attempts, yet fresh telemetry still reports the old value (`observed_after_ack`) |
+
+`reports_after_ack` / `observed_after_ack` show what the tank said after the
+ack, so "acked but ignored" is visible instead of looking stuck. Cloud
+deliveries have no per-command ack, so they go straight from `delivered` to
+`confirmed`.
+
 ## What `/state` tells you
 
 `lan` in the state API: `registered`, `session`, `module_ip`, `port`, `key_id`,

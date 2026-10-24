@@ -140,12 +140,16 @@ class PendingWriteSensor(_RelaySensor):
         pending = (self.coordinator.data or {}).get("pending") or {}
         if not pending:
             return "none"
-        return ", ".join(f"{kind} {w.get('value')}" for kind, w in sorted(pending.items()))
+        # e.g. "setpoint 140.0: acknowledged". Only telemetry ever says confirmed.
+        return ", ".join(f"{kind} {w.get('value')}: {w.get('status', 'queued')}"
+                         for kind, w in sorted(pending.items()))
 
     @property
     def extra_state_attributes(self):
         data = self.coordinator.data or {}
-        return {"pending": data.get("pending"), "last_write": data.get("last_write"),
+        pending = data.get("pending") or {}
+        return {"status": {kind: w.get("status") for kind, w in pending.items()} or None,
+                "pending": pending or None, "last_write": data.get("last_write"),
                 "writes_confirmed": data.get("writes_confirmed")}
 
 

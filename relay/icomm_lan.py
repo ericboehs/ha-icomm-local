@@ -329,10 +329,12 @@ class LanServer:
         data: dict = {}
         write = self.relay.take_pending_for_lan()
         if write is not None:
+            write.command_id = "".join(
+                random.choices(string.ascii_letters + string.digits, k=8))
+            self.relay._save_queue()
             data = {"properties": [{"property": {
                 "base_type": "string", "name": "setBlockParameter",
-                "value": write.frame,
-                "id": "".join(random.choices(string.ascii_letters + string.digits, k=8))}}]}
+                "value": write.frame, "id": write.command_id}}]}
             self.writes_delivered += 1
             _LOGGER.warning("LAN mode: delivering %s = %s locally",
                             write.kind, write.value)

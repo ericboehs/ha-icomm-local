@@ -95,6 +95,8 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity):
             "water_bottom": data.get("water_bottom"),
             "power_w": data.get("watts"),
             "pending": data.get("pending") or None,
+            "write_status": {kind: w.get("status") for kind, w in
+                             (data.get("pending") or {}).items()} or None,
             "relay_health": (data.get("health") or {}).get("state"),
             "lan_registered": (data.get("lan") or {}).get("registered"),
         }

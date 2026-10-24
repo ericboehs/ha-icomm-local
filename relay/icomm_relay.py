@@ -78,6 +78,32 @@ class PendingWrite:
     replaced_upstream: bool | None = None
     superseded: int | None = None
     restored: bool = False
+    # Lifecycle evidence. Delivery and acknowledgement are progress, never success:
+    # only the tank's own telemetry confirms a write.
+    delivery_path: str | None = None    # "lan" or "cloud"
+    command_id: str | None = None       # LAN property id echoed back in the ack
+    acked: float | None = None
+    ack_status: int | None = None
+    reports_after_ack: int = 0          # fresh telemetry since the ack...
+    observed_after_ack: object = None   # ...and what the tank actually reported
+
+    @property
+    def status(self) -> str:
+        """queued -> delivered -> acknowledged -> confirmed (or not_applied)."""
+        if self.confirmed:
+            return "confirmed"
+        if self.acked and self.reports_after_ack and self.attempts >= 3:
+            return "not_applied"        # acked 3x, the tank kept reporting the old value
+        if self.acked:
+            return "acknowledged"
+        if self.delivered:
+            return "delivered"
+        return "queued"
+
+    def public(self) -> dict:
+        out = {k: v for k, v in asdict(self).items() if v is not None}
+        out["status"] = self.status
+        return out
 
 # The register atlas, measured field by field. Offsets are into the five blocks
 # of the module's superBlockDyn1 telemetry (block lengths 8/146/230/52/52;
@@ -287,11 +313,23 @@ class Relay:
         elif "ack_status" in data:
             _LOGGER.info("LAN write ack: status %s id %s",
                          data.get("ack_status"), data.get("id"))
+            self._record_ack(data.get("id"), data.get("ack_status"))
             if data.get("ack_status") == 200:
                 # The tank does not reliably report after a local write. Ask
                 # the MCU for a fresh value on the next poll instead of
                 # re-sending the write or waiting for a spontaneous report.
                 self.lan.request_telemetry()
+
+    def _record_ack(self, command_id, status) -> None:
+        """Attach a LAN ack to the write it answers (matched by property id)."""
+        for write in self.pending.values():
+            if command_id and write.command_id == command_id:
+                write.acked = time.time()
+                write.ack_status = status
+                write.reports_after_ack = 0
+                write.observed_after_ack = None
+                self._save_queue()
+                return
 
     def take_pending_for_lan(self):
         """Oldest queued write for the LAN poll; None when there is nothing.
@@ -314,10 +352,13 @@ class Relay:
             # time until telemetry confirms would hammer the appliance. One
             # delivery, then a quiet retry window if confirmation never comes.
             return None
-        self._mark_delivered(write)
+        self._mark_delivered(write, "lan")
         return write
 
-    def _mark_delivered(self, write: PendingWrite) -> None:
+    def _mark_delivered(self, write: PendingWrite, path: str = "cloud") -> None:
+        write.delivery_path = path
+        write.acked = None              # a new delivery needs its own ack
+        write.ack_status = None
         write.attempts += 1
         write.delivered = time.time()
         self.writes_delivered += 1
@@ -355,6 +396,13 @@ class Relay:
                 frame=entry.get("frame", ""),
                 queued=queued,
                 attempts=entry.get("attempts", 0),
+                delivered=entry.get("delivered"),
+                delivery_path=entry.get("delivery_path"),
+                command_id=entry.get("command_id"),
+                acked=entry.get("acked"),
+                ack_status=entry.get("ack_status"),
+                reports_after_ack=entry.get("reports_after_ack", 0),
+                observed_after_ack=entry.get("observed_after_ack"),
                 restored=True,
             )
             if write.frame:
@@ -417,12 +465,18 @@ class Relay:
         be delivered and ignored (the BLE register at block 26 is exactly that).
         """
         confirmed = []
+        observed = False
         for kind, write in self.pending.items():
             if kind == "setpoint":
                 got = self.state.get("setpoint")
                 took = got is not None and abs(float(got) - float(write.value)) <= 0.5
             else:
-                took = self.state.get("mode") == write.value
+                got = self.state.get("mode")
+                took = got == write.value
+            if not took and write.acked:
+                write.reports_after_ack += 1
+                write.observed_after_ack = got
+                observed = True
             if took:
                 write.confirmed = time.time()
                 self.writes_confirmed += 1
@@ -430,7 +484,8 @@ class Relay:
         if confirmed:
             for kind in confirmed:
                 write = self.pending.pop(kind)
-                self.last_write = {**asdict(write), "outcome": "confirmed"}
+                self.last_write = {**write.public(), "outcome": "confirmed"}
+        if confirmed or observed:
             self._save_queue()
 
     def _inject(self, payload: bytes) -> bytes | None:
@@ -552,7 +607,7 @@ class Relay:
             return web.json_response({"error": str(err)}, status=400)
         # Delivery: the module's own 10-second LAN poll when the LAN session is
         # up, otherwise the next cloud poll. Either way confirmation is telemetry.
-        return web.json_response({"queued": asdict(write), "pending": len(self.pending),
+        return web.json_response({"queued": write.public(), "pending": len(self.pending),
                                   "lan_registered": self.lan.registered})
 
     async def write_cancel_handler(self, request: web.Request) -> web.Response:
@@ -566,10 +621,7 @@ class Relay:
         age = round(time.time() - self.last_telemetry, 1) if self.last_telemetry else None
         out["last_telemetry_age"] = age
         out["upstream_errors"] = self.upstream_errors
-        out["pending"] = {
-            kind: {k: v for k, v in asdict(write).items() if v is not None}
-            for kind, write in self.pending.items()
-        }
+        out["pending"] = {kind: write.public() for kind, write in self.pending.items()}
         out["last_write"] = self.last_write
         out["health"] = self.health()
         out["queue_file"] = str(self.queue_file)
