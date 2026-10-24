@@ -1,8 +1,8 @@
-"""0.4.13: tank sensors relabelled by measured order, entity IDs migrated.
+"""Tank sensors relabelled as their meaning was measured; entity IDs migrated.
 
-The sensor first called "middle" (relay key water_mid) is the bottom-most: it
-falls first and furthest during a draw. The one called "bottom" (water_bottom)
-sits above it, so it is now "lower".
+0.4.13: the sensor first called "middle" (relay key water_mid) is the bottom
+thermistor, so the one called "bottom" (water_bottom) became "lower". 0.5.2:
+"lower" is the controller's blend of top and bottom, so it is the "average".
 """
 
 from __future__ import annotations
@@ -36,14 +36,40 @@ async def test_old_default_ids_move_to_the_new_names(hass: HomeAssistant, aiocli
     registry = await _setup_with_registered(hass, aioclient_mock, {
         "icomm_local_water_bottom": P + "bottom", "icomm_local_water_mid": P + "middle"})
     assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_bottom") \
-        == P + "lower"
+        == P + "average"                                # 0.4.12 -> straight through
     assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_mid") \
         == P + "bottom"
-    assert hass.states.get(P + "middle") is None
+    assert hass.states.get(P + "middle") is None and hass.states.get(P + "lower") is None
     bottom = hass.states.get(P + "bottom")
     assert bottom.state == "77.0"                       # the bottom-most sensor's value
     assert bottom.attributes["friendly_name"] == "iCOMM Water Heater Water, tank bottom"
-    assert hass.states.get(P + "lower").attributes["friendly_name"].endswith("tank lower")
+    assert hass.states.get(P + "average").attributes["friendly_name"].endswith("tank average")
+
+
+async def test_a_0_4_13_install_moves_lower_to_average(hass: HomeAssistant, aioclient_mock):
+    registry = await _setup_with_registered(hass, aioclient_mock, {
+        "icomm_local_water_bottom": P + "lower", "icomm_local_water_mid": P + "bottom"})
+    assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_bottom") \
+        == P + "average"
+    assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_mid") \
+        == P + "bottom"
+
+
+async def test_the_average_explains_its_weighting(hass: HomeAssistant, aioclient_mock):
+    await _setup_with_registered(hass, aioclient_mock, {})
+    attrs = hass.states.get(P + "average").attributes
+    assert attrs["computed"] is True and "heat pump" in attrs["weighting"]
+    top, blend = STATE["water_top"], STATE["water_bottom"]
+    assert attrs["weight_on_top"] == round((blend - 77.0) / (top - 77.0), 2)
+    assert "stale" in attrs                              # the base attributes stay
+
+
+async def test_no_weight_when_top_and_bottom_agree(hass: HomeAssistant, aioclient_mock):
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    from test_integration import _setup
+    await _setup(hass, aioclient_mock, {**STATE, "water_top": 140.0, "water_mid": 138.0,
+                                        "water_bottom": 139.0})
+    assert hass.states.get(P + "average").attributes["weight_on_top"] is None
 
 
 async def test_customised_ids_are_left_alone(hass: HomeAssistant, aioclient_mock) -> None:
@@ -70,9 +96,9 @@ async def test_an_occupied_target_blocks_the_move(hass: HomeAssistant, aioclient
 async def test_a_fresh_install_gets_the_new_names(hass: HomeAssistant, aioclient_mock) -> None:
     registry = await _setup_with_registered(hass, aioclient_mock, {})
     assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_bottom") \
-        == P + "lower"
+        == P + "average"
     assert registry.async_get_entity_id("sensor", "icomm_local", "icomm_local_water_mid") \
         == P + "bottom"
     heater = hass.states.get("water_heater.icomm_water_heater")
-    assert heater.attributes["water_lower"] == STATE["water_bottom"]
+    assert heater.attributes["water_average"] == STATE["water_bottom"]
     assert heater.attributes["water_bottom"] == 77.0

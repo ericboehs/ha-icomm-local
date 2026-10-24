@@ -3,7 +3,7 @@
 The other migration tests run without a recorder. On the live install the
 history API briefly showed the old mapping after the restart (a cache, before
 the recorder caught up), while the database itself was right. This pins the
-database side: old "bottom" history ends up under ..._lower and old "middle"
+database side: old "bottom" history ends up under ..._average and old "middle"
 history under ..._bottom.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ async def test_history_follows_the_renamed_sensors(recorder_mock, hass, aioclien
     reg.async_get_or_create("sensor", "icomm_local", "icomm_local_water_mid", config_entry=entry,
                             suggested_object_id="icomm_water_heater_water_tank_middle")
     start = dt_util.utcnow()
-    hass.states.async_set(P + "bottom", "117")      # the old "bottom" (really lower)
+    hass.states.async_set(P + "bottom", "117")      # the old "bottom" (the blend)
     hass.states.async_set(P + "middle", "77")       # the old "middle" (really bottom)
     await async_wait_recording_done(hass)
     hass.states.async_remove(P + "bottom")          # a restart: no live states yet
@@ -51,7 +51,8 @@ async def test_history_follows_the_renamed_sensors(recorder_mock, hass, aioclien
     await async_wait_recording_done(hass)
     hist = await get_instance(hass).async_add_executor_job(
         lambda: get_significant_states(
-            hass, start, None, [P + name for name in ("lower", "bottom", "middle")]))
-    assert [s.state for s in hist.get(P + "lower", [])][0] == "117"    # old "bottom"
+            hass, start, None, [P + name for name in ("average", "bottom", "middle", "lower")]))
+    assert [s.state for s in hist.get(P + "average", [])][0] == "117"  # old "bottom"
+    assert P + "lower" not in hist
     assert [s.state for s in hist.get(P + "bottom", [])][0] == "77"    # old "middle"
     assert P + "middle" not in hist

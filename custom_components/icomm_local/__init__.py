@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 from aiohttp import ClientError, ClientTimeout
@@ -17,16 +18,19 @@ from .services import async_setup_services
 
 PLATFORMS = ["sensor", "water_heater"]
 
-# 0.4.13 relabelled the tank sensors once their order was measured: the sensor
-# named "middle" is the bottom-most and the one named "bottom" sits above it.
-# Installs still on the old default entity IDs move to the new ones, in this
-# order so the second rename finds its target free. HA carries the recorder
-# history with a registry rename. Customised IDs are left alone.
+# The tank sensors were relabelled twice as their meaning was measured. 0.4.13:
+# "middle" is the bottom thermistor, so "bottom" became "lower". 0.5.2: "lower"
+# is not a thermistor but the controller's blend of top and bottom, so it is
+# the "average". Installs still on an old default entity ID move along the
+# chain, in this order so each rename finds its target free. HA carries the
+# recorder history with a registry rename. Customised IDs are left alone.
 ENTITY_ID_MIGRATIONS = (
     ("icomm_local_water_bottom",
      "sensor.icomm_water_heater_water_tank_bottom", "sensor.icomm_water_heater_water_tank_lower"),
     ("icomm_local_water_mid",
      "sensor.icomm_water_heater_water_tank_middle", "sensor.icomm_water_heater_water_tank_bottom"),
+    ("icomm_local_water_bottom",
+     "sensor.icomm_water_heater_water_tank_lower", "sensor.icomm_water_heater_water_tank_average"),
 )
 
 
@@ -63,6 +67,25 @@ def _firmware_issues(hass: HomeAssistant, entry_id: str, data: dict, raised: set
         ir.async_delete_issue(hass, DOMAIN, issue_id)
     raised.clear()
     raised.update(current)
+
+
+def _tls_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
+    """Ayla's certificate fails the relay's check: cloud sync is down, quietly."""
+    issue_id = f"upstream_certificate_{entry_id}"
+    tls = data.get("upstream_tls") or {}
+    if not tls.get("failing"):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    last_ok = tls.get("last_ok")
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.ERROR, translation_key="upstream_certificate",
+        translation_placeholders={
+            "error": str(tls.get("last_error") or "unknown"),
+            "failures": str(tls.get("failures") or 0),
+            "since": (f"{round((time.time() - last_ok) / 60)} minutes ago"
+                      if isinstance(last_ok, (int, float)) else "not since the relay started"),
+        })
 
 
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
@@ -129,6 +152,13 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             _firmware_issues(hass, entry.entry_id, coordinator.data or {}, firmware_issues)
 
     entry.async_on_unload(coordinator.async_add_listener(_update_firmware_issues))
+
+    def _update_tls_issue() -> None:
+        if coordinator.last_update_success:
+            _tls_issue(hass, entry.entry_id, coordinator.data or {})
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_tls_issue))
+    _update_tls_issue()
     entry.async_on_unload(lambda: _firmware_issues(hass, entry.entry_id, {}, firmware_issues))
     _update_firmware_issues()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -143,6 +173,7 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     unload = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload:
         ir.async_delete_issue(hass, DOMAIN, f"stale_telemetry_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, f"upstream_certificate_{entry.entry_id}")
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             # Last relay gone: services would only raise, so unregister them.

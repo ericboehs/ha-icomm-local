@@ -52,11 +52,11 @@ sections:
     entity: sensor.icomm_water_heater_water_tank_top
     name: Top
   - type: tile
-    entity: sensor.icomm_water_heater_water_tank_lower
-    name: Lower
-  - type: tile
     entity: sensor.icomm_water_heater_water_tank_bottom
     name: Bottom
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_average
+    name: Average
   - type: tile
     entity: sensor.icomm_water_heater_heat_deficit
     name: Heat deficit
@@ -91,10 +91,10 @@ sections:
     entities:
     - entity: sensor.icomm_water_heater_water_tank_top
       name: Top
-    - entity: sensor.icomm_water_heater_water_tank_lower
-      name: Lower
     - entity: sensor.icomm_water_heater_water_tank_bottom
       name: Bottom
+    - entity: sensor.icomm_water_heater_water_tank_average
+      name: Average
     - entity: sensor.icomm_water_heater_active_setpoint
       name: Target
   - type: history-graph

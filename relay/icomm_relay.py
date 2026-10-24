@@ -60,7 +60,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import icomm_frames as frames
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
 from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy
@@ -193,15 +193,14 @@ def decode(blocks: list[bytes]) -> dict:
         # setpoint (block 3) keeps the value to return to. Three identical
         # copies follow at 84, 112 and 114 (research phase 34).
         "active_setpoint": round(fahrenheit(b1[80:82]), 1),
-        # Three tank thermistors. The keys predate knowing their order and are
-        # kept for compatibility; the physical order (research phase 35) is
-        # top [0:2], lower [4:6], bottom [2:4]. "water_mid" is the LOWEST: it
-        # drops first and furthest in a draw (cold inlet water arrives at the
-        # bottom), and runs hottest while the heat pump's condenser, wrapped
-        # around the lower shell, is heating.
+        # Two tank thermistors and the controller's blend of them (research
+        # phase 37). The keys predate knowing which is which and are kept for
+        # compatibility: "water_mid" [2:4] is the bottom thermistor, and
+        # "water_bottom" [4:6] is computed, (top + bottom) / 2 in electric
+        # mode and about (3 top + bottom) / 4 with the heat pump.
         "water_top": round(fahrenheit(b1[0:2]), 1),
-        "water_bottom": round(fahrenheit(b1[4:6]), 1),        # lower
-        "water_mid": round(fahrenheit(b1[2:4]), 1),           # bottom-most
+        "water_bottom": round(fahrenheit(b1[4:6]), 1),        # the blend
+        "water_mid": round(fahrenheit(b1[2:4]), 1),           # bottom thermistor
         "heat_deficit_wh": int.from_bytes(b4[24:26], "big"),
         "hot_water_availability": availability(int.from_bytes(b4[24:26], "big")),
         "mode_raw": f"{pair[0]}/{pair[1]}",
@@ -247,6 +246,13 @@ class Relay:
         self.last_telemetry = 0.0
         self.started = time.time()
         self.upstream_errors = 0
+        # Ayla's certificate failing verification (an expired pin, a new CA)
+        # looks like any outage to the module, which gets synthetic replies
+        # and carries on. Telemetry then stops reaching the cloud and the app
+        # quietly goes stale, so it is tracked apart from other errors.
+        self.upstream_tls: dict = {"failures": 0, "last_failure": None,
+                                   "last_error": None, "last_ok": None}
+        self._tls_warned = 0.0
         self.client: ClientSession | None = None
         # Writes wait here until the appliance asks for them. Only the newest
         # request per register survives: the appliance applies one frame at a
@@ -339,6 +345,7 @@ class Relay:
                 headers=headers, data=body, allow_redirects=False,
                 ssl=self.upstream_ssl,
             ) as upstream:
+                self.upstream_tls["last_ok"] = time.time()
                 payload = await upstream.read()
                 if (upstream.status == 200 and "commands.xml" in request.path
                         and request.get(TRUSTED, True)):
@@ -353,10 +360,12 @@ class Relay:
                                         "connection", "content-encoding"}:
                         response.headers[k] = v
                 return response
-        except Exception:
+        except Exception as err:
             # Ayla is often down or slow; the module must never see our failure
             # become its own. Synthetic replies keep its conversation alive.
             self.upstream_errors += 1
+            if isinstance(err, (ClientSSLError, ssl.SSLError)):
+                self._note_tls_failure(err)
             if request.method == "POST":
                 return web.Response(status=200, text="")
             if "commands.xml" in request.path:
@@ -371,6 +380,25 @@ class Relay:
                 return web.Response(status=200, content_type="application/xml",
                                     text=synthetic)
             return web.Response(status=503, text="")
+
+    def _note_tls_failure(self, err: Exception) -> None:
+        cause = getattr(err, "certificate_error", None) or err
+        message = (getattr(cause, "verify_message", None) or getattr(cause, "reason", None)
+                   or type(cause).__name__)
+        now = time.time()
+        self.upstream_tls.update(failures=self.upstream_tls["failures"] + 1,
+                                 last_failure=now, last_error=str(message)[:200])
+        if now - self._tls_warned > 3600:
+            self._tls_warned = now
+            _LOGGER.warning("upstream TLS failed verifying %s: %s -- cloud sync is down "
+                            "until the relay trusts Ayla's certificate again",
+                            self.upstream, message)
+
+    def tls_status(self) -> dict:
+        tls = dict(self.upstream_tls)
+        failed, ok = tls["last_failure"], tls["last_ok"]
+        tls["failing"] = failed is not None and (ok is None or failed > ok)
+        return tls
 
     async def telemetry(self, request: web.Request) -> web.Response:
         """superBlockDyn1 POST: decode, then forward as if we were not here."""
@@ -897,6 +925,7 @@ class Relay:
         age = round(time.time() - self.last_telemetry, 1) if self.last_telemetry else None
         out["last_telemetry_age"] = age
         out["upstream_errors"] = self.upstream_errors
+        out["upstream_tls"] = self.tls_status()
         out["pending"] = {kind: write.public() for kind, write in self.pending.items()}
         out["last_write"] = self.last_write
         out["health"] = self.health()

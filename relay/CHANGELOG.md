@@ -10,6 +10,33 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-24
+
+### Changed
+- **"Water, tank lower" is now "Water, tank average"**: it was never a
+  thermistor. The tank has two, top and bottom. This value is the
+  controller's blend of them: (top + bottom) / 2 in electric mode (67 of 67
+  reports within 0.5 °F, even with the two 65 °F apart), and about
+  (3 × top + bottom) / 4 with the heat pump.
+  - The sensor's attributes say so: `computed`, `weighting`, and the live
+    `weight_on_top`.
+  - Default entity IDs migrate with history: `..._water_tank_lower` →
+    `..._water_tank_average`, and a 0.4.12 install's `..._water_tank_bottom`
+    goes straight there. **Dashboards and automations aren't rewritten by
+    HA**, so point them at `..._water_tank_average`.
+  - The water heater's `water_lower` attribute is now `water_average`.
+  - The demo dashboard shows Top, Bottom and Average.
+
+### Added
+- **A repair when the relay can't verify Ayla's certificate.** To the module,
+  a TLS verification failure looks like any outage: it gets synthetic
+  replies and carries on. Meanwhile its data stops reaching Ayla, and the
+  app goes stale without anything saying why. The relay now tracks these
+  failures apart from other errors (`upstream_tls` in `/state`: count, last
+  error, last success, `failing`) and logs a warning at most hourly. Home
+  Assistant raises an error-level repair while it's failing, and clears it
+  on the next verified reply.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
@@ -356,7 +383,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...v0.5.0
 [0.4.14]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.13...v0.4.14

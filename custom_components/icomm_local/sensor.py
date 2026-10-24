@@ -25,10 +25,9 @@ F = UnitOfTemperature.FAHRENHEIT
 
 # field on the relay's state, display name, unit, device class, state class
 SPECS = [
-    # Relay keys predate knowing the sensors' order: "water_bottom" is the
-    # lower sensor and "water_mid" the bottom-most (research phase 35).
+    # Relay keys predate knowing what they are: "water_mid" is the bottom
+    # thermistor; "water_bottom" is the blend (TankAverageSensor, below).
     ("water_top", "Water, tank top", F, SensorDeviceClass.TEMPERATURE, None),
-    ("water_bottom", "Water, tank lower", F, SensorDeviceClass.TEMPERATURE, None),
     ("water_mid", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
     ("hot_water_availability", "Hot water available", PERCENTAGE, None,
      SensorStateClass.MEASUREMENT),
@@ -54,7 +53,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         IcommSensor(coordinator, field, name, unit, device_class, state_class)
         for field, name, unit, device_class, state_class in SPECS
     ]
-    entities += [ModeSensor(coordinator), HeatingElementSensor(coordinator),
+    entities += [TankAverageSensor(coordinator),
+                 ModeSensor(coordinator), HeatingElementSensor(coordinator),
                  RelayHealthSensor(coordinator),
                  PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator)]
     async_add_entities(entities)
@@ -201,6 +201,34 @@ class LastAppWriteSensor(_RelaySensor):
                 "frame": last.get("frame"),
                 "replaced_by_local": last.get("replaced_by_local"),
                 "cloud_writes": data.get("cloud_writes")}
+
+
+class TankAverageSensor(IcommSensor):
+    """The controller's tank temperature: a blend of the two thermistors.
+
+    Not a third sensor (research phase 37). Measured: (top + bottom) / 2 in
+    electric mode, about (3 top + bottom) / 4 with the heat pump. The live
+    weight is shown so the blend can be followed (and re-measured) in other
+    modes.
+    """
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "water_bottom", "Water, tank average", F,
+                         SensorDeviceClass.TEMPERATURE)
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        top, bottom, blend = (data.get(k) for k in ("water_top", "water_mid", "water_bottom"))
+        weight = None
+        if all(isinstance(v, (int, float)) for v in (top, bottom, blend)) and top - bottom >= 5:
+            weight = round((blend - bottom) / (top - bottom), 2)
+        return {
+            **super().extra_state_attributes,
+            "computed": True,
+            "weighting": "electric: (top + bottom) / 2; heat pump: about (3 × top + bottom) / 4",
+            "weight_on_top": weight,
+        }
 
 
 ELEMENTS = ["upper", "lower", "off"]
