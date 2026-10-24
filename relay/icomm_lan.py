@@ -160,6 +160,13 @@ class LanServer:
         self._wake_event: asyncio.Event | None = None
         self.wakes = 0
         self.readback_retries = 0
+        # Stall detection. Live 2026-10-23 23:50: after an app (cloud) write the
+        # module kept answering our PUT heartbeats with 202 but stopped polling
+        # commands.json for 5+ minutes. A fresh POST registration (new LAN
+        # session, key exchange) resumed it within a second.
+        self.last_poll = 0.0
+        self.stall_recoveries = 0
+        self.stall_after = float(os.environ.get("LAN_STALL_AFTER", "60"))
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
 
@@ -254,6 +261,19 @@ class LanServer:
         if self._runner:
             await self._runner.cleanup()
 
+    def _check_stall(self) -> None:
+        """Heartbeats accepted but no polls: drop to a fresh POST registration."""
+        if not self.registered or not self.last_poll or self.stall_after <= 0:
+            return
+        quiet = time.time() - self.last_poll
+        if quiet > self.stall_after:
+            self.stall_recoveries += 1
+            self.registered = False
+            self.last_poll = time.time()     # one re-registration per stall window
+            _LOGGER.warning("LAN mode: heartbeats accepted but no command poll for "
+                            "%.0f s; re-registering to reset the module's LAN session",
+                            quiet)
+
     def wake(self) -> None:
         """Send the next heartbeat now: notify=1 makes the module poll at once."""
         if self._wake_event is not None and self.registered:
@@ -285,7 +305,9 @@ class LanServer:
                 "needs_key_push": self.needs_key_push,
                 "refresh_pending": self.refresh_pending,
                 "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
-                "readback_retries": self.readback_retries}
+                "readback_retries": self.readback_retries,
+                "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
+                "stall_recoveries": self.stall_recoveries}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
@@ -308,6 +330,7 @@ class LanServer:
                 if not self.module_ip:
                     delay = 5.0
                 else:
+                    self._check_stall()
                     body = self._registration_body()
                     method = "PUT" if self.registered else "POST"
                     assert self._client is not None
@@ -362,6 +385,7 @@ class LanServer:
         except (KeyError, TypeError, AttributeError):
             return web.Response(status=400)
         self.session_verified = False
+        self.last_poll = time.time()       # a new session counts as contact
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
         if self.exchanges_since_update >= 3 and not self.needs_key_push:
@@ -396,6 +420,7 @@ class LanServer:
         """The 10-second local poll: deliver one write or telemetry request."""
         if self.session is None:
             return web.Response(status=400)
+        self.last_poll = time.time()
         self.seq_no += 1
         data: dict = {}
         write = self.relay.take_pending_for_lan()

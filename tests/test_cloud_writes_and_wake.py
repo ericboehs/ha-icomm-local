@@ -128,3 +128,28 @@ async def test_answered_readback_is_not_retried(tmp_path, monkeypatch, blocks_el
     lan.relay._ingest_blocks(blocks_electric)   # telemetry arrived after the ack
     await asyncio.sleep(0.12)
     assert lan.readback_retries == 0
+
+
+def test_accepted_heartbeats_without_polls_trigger_a_fresh_registration(tmp_path):
+    """Live 23:50: PUT 202 every 10 s, zero polls for 5 min; POST fixed it."""
+    lan = _server(tmp_path)
+    lan.registered = True
+    lan.last_poll = time.time() - 30
+    lan._check_stall()
+    assert lan.registered and lan.stall_recoveries == 0      # within the window
+    lan.last_poll = time.time() - 61
+    lan._check_stall()
+    assert not lan.registered and lan.stall_recoveries == 1  # next heartbeat is a POST
+    lan.registered = True
+    lan._check_stall()
+    assert lan.registered and lan.stall_recoveries == 1      # one per window, no churn
+
+
+async def test_a_poll_resets_the_stall_clock(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+    lan = _server(tmp_path)
+    lan.last_poll = 0.0
+    await lan._commands(make_mocked_request("GET", "/local_lan/commands.json",
+                                            app=web.Application()))
+    assert time.time() - lan.last_poll < 1
