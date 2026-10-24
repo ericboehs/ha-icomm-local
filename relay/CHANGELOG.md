@@ -14,7 +14,7 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 - Add-on dependency floors raised to what CI and image builds already
   installed: aiohttp 3.14.5, pycryptodome 4.1.0. pycryptodome 4.0's breaking
   changes don't touch AES-CBC, the only primitive the relay uses.
-- CI actions: setup-python 7, gitleaks-action 3, docker build-push 7,
+- CI actions: checkout 7, CodeQL 4, setup-python 7, gitleaks-action 3, docker build-push 7,
   setup-buildx 4, setup-qemu 4. Dev tools: pytest 9, pytest-asyncio 1.4,
   ruff 0.17.
 - Dependabot opens one grouped PR per ecosystem.
