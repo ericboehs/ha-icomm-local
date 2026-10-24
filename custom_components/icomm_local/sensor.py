@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         for field, name, unit, device_class, state_class in SPECS
     ]
     entities += [ModeSensor(coordinator), RelayHealthSensor(coordinator),
-                 PendingWriteSensor(coordinator)]
+                 PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator)]
     async_add_entities(entities)
 
 
@@ -164,6 +164,37 @@ class PendingWriteSensor(_RelaySensor):
         return {"status": {kind: w.get("status") for kind, w in pending.items()} or None,
                 "pending": pending or None, "last_write": data.get("last_write"),
                 "writes_confirmed": data.get("writes_confirmed")}
+
+
+class LastAppWriteSensor(_RelaySensor):
+    """The last write that came through the cloud (A.O. Smith app or its API).
+
+    Seen by the relay as setBlockParameter in a commands.xml reply, so app and
+    Home Assistant writes can be told apart. Since the relay started.
+    """
+
+    _attr_unique_id = "icomm_local_last_app_write"
+    _attr_name = "Last app write"
+    _attr_icon = "mdi:cellphone-arrow-down"
+
+    @property
+    def native_value(self):
+        last = (self.coordinator.data or {}).get("last_cloud_write")
+        if not last:
+            return "none"
+        return f"{last.get('kind')} {last.get('value')}"
+
+    @property
+    def extra_state_attributes(self):
+        from datetime import UTC, datetime
+
+        data = self.coordinator.data or {}
+        last = data.get("last_cloud_write") or {}
+        at = last.get("at")
+        return {"at": datetime.fromtimestamp(at, UTC).isoformat() if at else None,
+                "frame": last.get("frame"),
+                "replaced_by_local": last.get("replaced_by_local"),
+                "cloud_writes": data.get("cloud_writes")}
 
 
 class ModeSensor(IcommSensor):

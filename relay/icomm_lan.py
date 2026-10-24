@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hmac
 import json
 import logging
@@ -156,6 +157,8 @@ class LanServer:
         # LAN session is fine. One read-only MCU read per interval prevents it.
         self.refresh_interval = float(os.environ.get("LAN_REFRESH_INTERVAL", "300"))
         self._client: ClientSession | None = None
+        self._wake_event: asyncio.Event | None = None
+        self.wakes = 0
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
 
@@ -237,6 +240,7 @@ class LanServer:
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
         self._client = ClientSession(timeout=ClientTimeout(total=5))
+        self._wake_event = asyncio.Event()
         self._task = asyncio.create_task(self._registration_loop())
         _LOGGER.info("LAN mode: listening on :%s (module %s)", self.port,
                      self.module_ip or "learned at registration")
@@ -248,6 +252,20 @@ class LanServer:
             await self._client.close()
         if self._runner:
             await self._runner.cleanup()
+
+    def wake(self) -> None:
+        """Send the next heartbeat now: notify=1 makes the module poll at once."""
+        if self._wake_event is not None and self.registered:
+            self.wakes += 1
+            self._wake_event.set()
+
+    async def _pause(self, delay: float) -> None:
+        if self._wake_event is None:
+            await asyncio.sleep(delay)
+            return
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._wake_event.wait(), delay)
+        self._wake_event.clear()
 
     def status(self) -> dict:
         now = time.time()
@@ -265,7 +283,7 @@ class LanServer:
                 "registration_failures": self.registration_failures,
                 "needs_key_push": self.needs_key_push,
                 "refresh_pending": self.refresh_pending,
-                "telemetry_requests": self.telemetry_requests}
+                "telemetry_requests": self.telemetry_requests, "wakes": self.wakes}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
@@ -321,7 +339,7 @@ class LanServer:
                 self.registered = False
                 self.last_registration_result = type(err).__name__
                 delay = 15.0
-            await asyncio.sleep(delay)
+            await self._pause(delay)
 
     # -- the module-facing endpoints --------------------------------------
     async def _key_exchange(self, request: web.Request) -> web.Response:

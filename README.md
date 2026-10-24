@@ -23,7 +23,8 @@ cloud keep working.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode`,
   `icomm_local.cancel_writes`.
 - Writes go over the LAN and are usually confirmed by the tank's own telemetry
-  within **5–10 seconds**. The mobile app and A.O. Smith cloud keep working in
+  within a few seconds. Writes made in the A.O. Smith app are recorded too
+  (*Last app write*), so app and Home Assistant changes can be told apart. The mobile app and A.O. Smith cloud keep working in
   parallel.
 
 ## How it works (one paragraph)

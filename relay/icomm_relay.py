@@ -255,6 +255,10 @@ class Relay:
         self.reporting_interval_s: int | None = None
         self.writes_confirmed = 0
         self.injections_held = 0
+        # Writes that came from the cloud (the A.O. Smith app or its API), seen
+        # as setBlockParameter in a commands.xml reply on their way to the module.
+        self.cloud_writes = 0
+        self.last_cloud_write: dict | None = None
         # Pinned Entrust G2 for upstream verification: certifi dropped it, so
         # default verification fails against Ayla's ingress. Public CA cert.
         ca = Path(__file__).parent / "upstream-entrust-g2.pem"
@@ -360,9 +364,10 @@ class Relay:
             self._record_ack(data.get("id"), data.get("ack_status"))
             if str(data.get("ack_status")) == "200":
                 # The tank does not reliably report after a local write. Ask
-                # the MCU for a fresh value on the next poll instead of
-                # re-sending the write or waiting for a spontaneous report.
+                # the MCU for a fresh value now instead of re-sending the write
+                # or waiting for a spontaneous report.
                 self.lan.request_telemetry()
+                self.lan.wake()
 
     def _record_ack(self, command_id, status) -> None:
         """Attach a LAN ack to the write it answers (matched by property id)."""
@@ -545,6 +550,10 @@ class Relay:
                              superseded=superseded or None)
         self.pending[kind] = write
         self._save_queue()
+        # Do not wait up to 10 s for the module's next poll: an out-of-band
+        # heartbeat with notify=1 makes it fetch commands now (libada
+        # client_lan_refresh sets lan->pending and wakes the agent).
+        self.lan.wake()
         return write
 
     def _confirm_pending(self) -> None:
@@ -631,12 +640,50 @@ class Relay:
         self._mark_delivered(write)
         return rewritten.encode()
 
-    def _transform_commands(self, payload: bytes) -> bytes | None:
-        """Apply the queued write (if any) and the lanip push (if armed)."""
+    def _note_cloud_write(self, payload: bytes, path_qs: str) -> None:
+        """Record a write the cloud is delivering: the app's, not ours.
+
+        A plain commands.xml reply carrying setBlockParameter is a command
+        delivery. The re-registration fetch (commands.xml?input=true) also
+        carries it, but there it describes the current state, so it is skipped.
+        """
+        if "input=true" in path_qs:
+            return
+        found = frames.SET_BLOCK_PROPERTY.search(payload.decode(errors="replace"))
+        frame = found.group(2).strip() if found else ""
+        if not frame:
+            return
+        try:
+            decoded = frames.decode_frame(frame)
+        except ValueError:
+            decoded = {}
+        kind = "setpoint" if "setpoint" in decoded else "mode" if "mode" in decoded else "frame"
+        self.cloud_writes += 1
+        self.last_cloud_write = {
+            "at": time.time(), "kind": kind, "value": decoded.get(kind, frame),
+            "frame": frame, "source": "cloud",
+            # Filled in by _transform_commands if a local write replaces it.
+            "replaced_by_local": False}
+        _LOGGER.warning("cloud write: %s %s (frame %s) -- from the A.O. Smith app or API",
+                        kind, self.last_cloud_write["value"], frame)
+
+    def _transform_commands(self, payload: bytes, path_qs: str = "") -> bytes | None:
+        """Note any cloud write, then apply the queued write and the lanip push."""
+        self._note_cloud_write(payload, path_qs)
         rewritten = self._inject(payload)
+        if rewritten is not None and self.last_cloud_write and \
+                time.time() - self.last_cloud_write["at"] < 1:
+            # Ours replaced the app's in this same reply; the app's never lands.
+            self.last_cloud_write["replaced_by_local"] = True
+            _LOGGER.warning("cloud write superseded by a queued local write")
         if rewritten is not None:
             payload = rewritten
-        return self._maybe_push_lanip(payload)
+        pushed = self._maybe_push_lanip(payload)
+        # None means "unchanged" to proxy(). Returning the push result alone
+        # (since 0.3.1) silently discarded every injected write whenever no
+        # key push was armed: the module got Ayla's original reply while the
+        # write was counted as delivered. LAN delivery masked it.
+        return pushed if pushed is not None else rewritten
 
     def _maybe_push_lanip(self, payload: bytes) -> bytes | None:
         """Deliver Ayla's key-rotation command: PUT lanip.json in <cmds>.
@@ -748,6 +795,8 @@ class Relay:
         out["writes_delivered"] = self.writes_delivered
         out["writes_confirmed"] = self.writes_confirmed
         out["injections_held"] = self.injections_held
+        out["cloud_writes"] = self.cloud_writes
+        out["last_cloud_write"] = self.last_cloud_write
         out["lan"] = self.lan.status()
         out["peers"] = self.peers.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
@@ -1013,7 +1062,9 @@ class Relay:
                 return web.Response(status=401, text="")
             return await self.telemetry(request)
         if "commands.xml" in request.path:
-            return await self.proxy(request, transform=self._transform_commands)
+            path_qs = request.path_qs
+            return await self.proxy(
+                request, transform=lambda payload: self._transform_commands(payload, path_qs))
         if request.method == "PUT" and "lanip.json" in request.path:
             # The module's reverse-REST ack: /devices/<key>/lanip.json?cmd_id=N&status=M
             if "status=204" in request.query_string or "status=200" in request.query_string:
