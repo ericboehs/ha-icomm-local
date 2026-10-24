@@ -15,8 +15,9 @@ cloud keep working.
 
 - `water_heater.icomm_water_heater`: target temperature and mode
   (electric / heat pump / eco = hybrid) from the thermostat card.
-- Sensors: water temperature (top and bottom of the tank), setpoint, max
-  setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
+- Sensors: water temperature (top, middle and bottom of the tank), **hot water
+  available %** (the same 0/50/100 figure the A.O. Smith app shows, computed
+  locally), heat deficit (Wh), setpoint, max setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
   idle), line voltage, air temperature at the unit, Wi-Fi RSSI, relay health, and
   the pending write's status.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode`,

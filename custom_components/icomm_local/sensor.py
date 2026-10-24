@@ -8,8 +8,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricPotential,
+    UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
 )
@@ -25,6 +27,11 @@ F = UnitOfTemperature.FAHRENHEIT
 SPECS = [
     ("water_top", "Water, tank top", F, SensorDeviceClass.TEMPERATURE, None),
     ("water_bottom", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
+    ("water_mid", "Water, tank middle", F, SensorDeviceClass.TEMPERATURE, None),
+    ("hot_water_availability", "Hot water available", PERCENTAGE, None,
+     SensorStateClass.MEASUREMENT),
+    ("heat_deficit_wh", "Heat deficit", UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY,
+     SensorStateClass.MEASUREMENT),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
     ("max_setpoint", "Max setpoint", F, SensorDeviceClass.TEMPERATURE, None),
     ("watts", "Power", UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),

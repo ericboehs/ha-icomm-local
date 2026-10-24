@@ -142,3 +142,47 @@ def test_telemetry_blocks_rejects_junk(body: bytes) -> None:
     become a proxy failure.
     """
     assert telemetry_blocks(body) is None
+
+
+def test_hot_water_availability_matches_the_cloud() -> None:
+    """A.O. Smith's 0/50/100 % against the controller's energy-deficit counter.
+
+    The labels are the cloud sensor's value in effect when each capture was taken.
+    The cloud recomputes it on each report, so a capture taken in the second
+    before the cloud updated still carries the previous label. Exactly two such
+    lag samples exist, and both match the *next* cloud value.
+    """
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "fixtures/availability_labelled.json").read_text())
+    lagged = 0
+    for sample in data["samples"]:
+        got = decode([bytes.fromhex(b) for b in sample["blocks"]])["hot_water_availability"]
+        if got != sample["cloud"]:
+            lagged += 1
+            assert got == sample["next_cloud"], sample["t"]
+    assert len(data["samples"]) == 33
+    assert lagged <= 2
+
+
+def test_heat_deficit_falls_at_the_elements_rate() -> None:
+    """Falls at roughly the element's 75 Wh/min (4500 W x 1/60 h): evidence for Wh.
+
+    Not exact: the controller recomputes the counter in steps (150, 75, 120...),
+    so it measured 76 Wh/min over the full 40-minute recovery and 86 Wh/min over
+    the labelled 26 minutes used here.
+    """
+    import json
+    from pathlib import Path
+
+    from icomm_relay import availability
+
+    data = json.loads((Path(__file__).parent / "fixtures/availability_labelled.json").read_text())
+    heating = [(s["t"], decode([bytes.fromhex(b) for b in s["blocks"]]))
+               for s in data["samples"]]
+    heating = [(t, d["heat_deficit_wh"]) for t, d in heating if d["watts"] == 4500]
+    (t0, d0), (t1, d1) = heating[0], heating[-1]
+    rate = (d0 - d1) / ((t1 - t0) / 60)
+    assert 65 <= rate <= 95, rate
+    assert availability(5100) == 0 and availability(4800) == 50 and availability(450) == 100

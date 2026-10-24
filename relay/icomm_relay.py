@@ -131,6 +131,24 @@ REPORTING_INTERVAL = re.compile(
     r"<name>\s*superBlockDynDataUpdateRate\s*</name>\s*<value>\s*(\d+)\s*</value>")
 
 
+# Hot-water availability, as A.O. Smith's cloud computes it: their 0/50/100 %
+# follows the controller's own energy-deficit counter (block 4 offset 24, Wh),
+# which falls at roughly the 4500 W element's 75 Wh per minute (76/min over a
+# 40-minute recovery). Matched against 33
+# cloud-labelled captures (research phase 31): 4950-5100 Wh read 0 %, 906-4800
+# read 50 %, 0-450 read 100 %. The 0->50 edge landed exactly as the counter went
+# 4950 -> 4800. The 50->100 edge is somewhere in 450-906 and is not pinned yet,
+# so the midpoint is used.
+AVAILABILITY_EMPTY_WH = 4875
+AVAILABILITY_FULL_WH = 678
+
+
+def availability(deficit_wh: int) -> int:
+    if deficit_wh >= AVAILABILITY_EMPTY_WH:
+        return 0
+    return 100 if deficit_wh <= AVAILABILITY_FULL_WH else 50
+
+
 def fahrenheit(raw: bytes) -> float:
     return int.from_bytes(raw, "big") * TEMP_F + 32
 
@@ -144,6 +162,11 @@ def decode(blocks: list[bytes]) -> dict:
         "max_setpoint": round(fahrenheit(b1[86:88]), 1),
         "water_top": round(fahrenheit(b1[0:2]), 1),
         "water_bottom": round(fahrenheit(b1[4:6]), 1),
+        # A third thermistor: equal to top and bottom at rest, last to recover
+        # during heating (69 -> 145 F while the top sat at 146).
+        "water_mid": round(fahrenheit(b1[2:4]), 1),
+        "heat_deficit_wh": int.from_bytes(b4[24:26], "big"),
+        "hot_water_availability": availability(int.from_bytes(b4[24:26], "big")),
         "mode_raw": f"{pair[0]}/{pair[1]}",
         "mode": MODE_PAIRS.get(pair, "unknown"),
         "watts": int.from_bytes(b4[12:14], "big"),
