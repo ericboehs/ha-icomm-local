@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /relay            # what the add-on image installs
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /                 # dev and test tooling
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /relay
+    schedule:
+      interval: weekly

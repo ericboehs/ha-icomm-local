@@ -1,0 +1,37 @@
+name: add-on image
+
+# Build the relay image for both architectures the add-on declares, so a broken
+# Dockerfile or dependency fails here instead of in a user's Supervisor.
+on:
+  push:
+    branches: [main]
+    paths: ["relay/**", ".github/workflows/build.yml"]
+  pull_request:
+    paths: ["relay/**", ".github/workflows/build.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]   # add-on arch: amd64, aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: relay
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: true
+          tags: icomm-relay:ci
+      - name: The image starts and imports the relay
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 icomm-relay:ci \
+            -c "import icomm_relay, icomm_lan, icomm_peers, icomm_frames; print('imports ok')"

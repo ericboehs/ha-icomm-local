@@ -48,7 +48,13 @@ async def _post(hass: HomeAssistant, path: str, payload: dict | None = None,
     try:
         async with session.post(url, json=payload or {},
                                 timeout=ClientTimeout(total=TIMEOUT_SECONDS)) as resp:
-            body = await resp.json(content_type=None)
+            try:
+                body = await resp.json(content_type=None)
+            except ValueError:
+                # A proxy's HTML 502 or a relay mid-restart: say so plainly.
+                body = None
+            if not isinstance(body, dict):
+                raise HomeAssistantError(f"relay returned {resp.status} with no JSON body")
             if resp.status != 200:
                 raise HomeAssistantError(body.get("error") or f"relay returned {resp.status}")
             return body

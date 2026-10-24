@@ -317,7 +317,7 @@ class Relay:
                     rewritten = transform(synthetic.encode())
                     if rewritten is not None:
                         synthetic = rewritten.decode(errors="replace")
-                return web.Response(status=200, text_type="application/xml",
+                return web.Response(status=200, content_type="application/xml",
                                     text=synthetic)
             return web.Response(status=503, text="")
 

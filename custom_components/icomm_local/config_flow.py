@@ -24,8 +24,11 @@ async def _relay_reachable(hass: HomeAssistant, url: str) -> dict | None:
         return None
     if resp.status != 200:
         return None
-    data = await resp.json(content_type=None)
-    return data if data.get("ok") else None
+    try:
+        data = await resp.json(content_type=None)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) and data.get("ok") else None
 
 
 class IcommLocalConfigFlow(config_entries.ConfigFlow, domain="icomm_local"):

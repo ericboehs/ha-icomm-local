@@ -28,7 +28,10 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             raise UpdateFailed(f"relay unreachable: {err}") from err
         if resp.status != 200:
             raise UpdateFailed(f"relay returned {resp.status}")
-        data = await resp.json(content_type=None)
+        try:
+            data = await resp.json(content_type=None)
+        except ValueError as err:
+            raise UpdateFailed(f"relay returned a non-JSON reply: {err}") from err
         # A stale-but-reachable relay is not a failure: entities keep their
         # last-known values and a Repairs warning says the data is old.
         return data

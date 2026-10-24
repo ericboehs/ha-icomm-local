@@ -24,8 +24,19 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Lint
         run: ruff check .
-      - name: Test
-        run: python -m pytest
+      - name: Test (coverage gate 95%)
+        run: |
+          python -m pytest --cov=relay --cov-report=term-missing \
+            --cov-report=markdown:coverage.md --cov-fail-under=95
+      - name: Coverage summary
+        if: always() && matrix.python-version == '3.12'
+        run: |
+          echo "### Relay coverage (Python ${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Changelog mirror and versions agree
+        run: |
+          python scripts/release_check.py mirror
+          python scripts/release_check.py same-version
 
   addon-lint:
     runs-on: ubuntu-latest
@@ -54,6 +65,14 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install Home Assistant test harness
-        run: pip install pytest-homeassistant-custom-component
-      - name: Test
-        run: python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto
+        run: pip install pytest-homeassistant-custom-component pytest-cov
+      - name: Test (coverage gate 95%)
+        run: |
+          python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto \
+            --cov=custom_components/icomm_local --cov-report=term-missing \
+            --cov-report=markdown:coverage.md --cov-fail-under=95
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "### Integration coverage" >> "$GITHUB_STEP_SUMMARY"
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

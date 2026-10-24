@@ -7,3 +7,8 @@ pending.json
 
 # LAN-mode shared key (never commit)
 lanip.json
+.coverage
+.coverage.*
+coverage.md
+coverage.xml
+htmlcov/
