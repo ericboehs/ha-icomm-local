@@ -70,10 +70,11 @@ should not delete that file after the module has learned it.
   **Confirmation is still the tank's own telemetry, never the ack.** An ack can
   be followed by a fresh report that still contains the old setpoint: that
   means the appliance did not apply the write, not that confirmation should be
-  inferred from delivery. In one measured case A.O. Smith's API accepted
-  138 °F and both cloud and LAN delivered it, but the tank stayed at 135 °F;
-  140 °F and a subsequent local 135 °F write both applied. This single negative
-  result does not establish a general temperature-step rule.
+  inferred from delivery. Measured: over about an hour, four writes (LAN and
+  cloud, 135/138/140 °F) were acked but not applied. Afterwards, a full sweep
+  of every integer from 95–150 °F applied, all values within about 5 s. The
+  failures were a transient appliance state, not bad values, and the relay
+  keeps no block-list. If it happens again, the write shows `not_applied`.
 
 ## Write status
 
