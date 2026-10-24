@@ -273,6 +273,9 @@ class Relay:
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
         data = update.get("data") or {}
+        _LOGGER.info("LAN update: %s (%d chars)", data.get("name") or
+                     ("ack" if "ack_status" in data else "?"),
+                     len(str(data.get("value", ""))))
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)
@@ -293,6 +296,12 @@ class Relay:
         if not self.pending:
             return None
         write = self.pending[sorted(self.pending)[0]]
+        if write.attempts >= 3:
+            # Acked and re-sent three times with no confirming telemetry: the
+            # appliance is accepting the frame without applying it, or not
+            # reporting. More copies will not help; leave it to the cloud path
+            # and let /state show the unconfirmed attempts.
+            return None
         if write.delivered and time.time() - write.delivered < 60:
             # The LAN poll comes every ~10 s; re-sending the same frame each
             # time until telemetry confirms would hammer the appliance. One

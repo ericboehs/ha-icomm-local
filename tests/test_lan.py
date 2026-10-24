@@ -174,3 +174,17 @@ def test_module_ip_learned_from_the_dsn_reply(tmp_path):
     body = server._registration_body()["local_reg"]
     assert body["port"] == 8888 and body["uri"] == "/local_lan" and body["notify"] == 1
     assert body["ip"]                          # the address the module calls back on
+
+
+async def test_lan_delivery_stops_after_three_unconfirmed_attempts(tmp_path):
+    """Live finding: an acked write with no confirming telemetry was re-sent
+    every 60 s indefinitely. Three attempts, then the LAN path stops."""
+    server = _server(tmp_path)
+    server.relay.queue_write("setpoint", 135)
+    write = server.relay.pending["setpoint"]
+    for _ in range(3):
+        write.delivered = 0.0                 # pretend the retry window passed
+        assert server.relay.take_pending_for_lan() is write
+    write.delivered = 0.0
+    assert server.relay.take_pending_for_lan() is None
+    assert write.attempts == 3
