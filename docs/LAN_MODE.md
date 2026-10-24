@@ -62,6 +62,26 @@ should not delete that file after the module has learned it.
   the encrypted response returns to the normal datapoint endpoint. Measured
   response time: **0.3 s**. This avoids waiting for the appliance's potentially
   hours-long spontaneous reporting interval.
+- **Wake on write:** queueing a write (or receiving its ack) sends an
+  immediate out-of-band `PUT local_reg.json` with `notify: 1`. libada's
+  `client_lan_refresh` sets the session's pending flag and wakes the agent,
+  so the module fetches commands at once instead of on the next ~10 s
+  heartbeat. Measured: delivery about 0.1 s after the HA service call, and
+  confirmation in 1–2 s when the read-back is answered.
+- **The read-back after an ack is sometimes ignored, and retrying does not
+  help.** In about half of live writes, the module did not answer the
+  read-back sent right after the ack. Confirmation then came from its own
+  report about 4–5 s after the write. 0.4.4 retried the read at +1.5 s and
+  +3.0 s. In every such case (3 of 6 writes, 6 retries) the retries were
+  ignored too, and confirmation still arrived at 4–5 s. The module appears
+  busy for a few seconds after applying some writes (it is also posting the
+  change to the cloud). 0.4.6 removed the retry. Do not reintroduce it
+  without new evidence.
+- **Stalled polling:** once, right after an app (cloud) write, the module kept
+  answering `PUT local_reg.json` with 202 but stopped polling for 5+
+  minutes. A fresh `POST` registration (new session, key exchange) resumed
+  it within a second. The relay now re-registers after `LAN_STALL_AFTER`
+  (default 60 s) of accepted heartbeats without a poll.
 - **Keep-alive reads:** while a LAN session is up, the same read is issued
   whenever telemetry is more than 5 minutes old (`LAN_REFRESH_INTERVAL`, `0`
   disables). Without it an idle tank goes 10+ minutes without reporting, the

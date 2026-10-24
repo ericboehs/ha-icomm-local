@@ -159,7 +159,6 @@ class LanServer:
         self._client: ClientSession | None = None
         self._wake_event: asyncio.Event | None = None
         self.wakes = 0
-        self.readback_retries = 0
         # Stall detection. Live 2026-10-23 23:50: after an app (cloud) write the
         # module kept answering our PUT heartbeats with 202 but stopped polling
         # commands.json for 5+ minutes. A fresh POST registration (new LAN
@@ -305,7 +304,6 @@ class LanServer:
                 "needs_key_push": self.needs_key_push,
                 "refresh_pending": self.refresh_pending,
                 "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
-                "readback_retries": self.readback_retries,
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
                 "stall_recoveries": self.stall_recoveries}
 
