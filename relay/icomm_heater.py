@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -131,13 +132,17 @@ class Heater:
         clean = clean_dsn(dsn)
         if self.dsn or not clean:
             return
-        heaters = (self.data_dir / "heaters").resolve()
-        target = (heaters / clean).resolve()
-        if target.parent != heaters:            # belt and braces: one level, inside heaters/
+        # Belt and braces (and CodeQL's path-injection pattern): the directory
+        # must normalize to somewhere inside heaters/.
+        heaters = os.path.realpath(self.data_dir / "heaters")
+        full = os.path.normpath(os.path.join(heaters, clean))
+        if not full.startswith(heaters + os.sep):
             return
+        target = Path(full)
         if self.dir.is_dir() and not target.exists():
             self.dir.rename(target)
-            _LOGGER.warning("storage: heaters/%s is now heaters/%s", self.dir.name, target.name)
+            name = target.name.replace("\r", "").replace("\n", "")
+            _LOGGER.warning("storage: heaters/%s is now heaters/%s", self.dir.name, name)
         self.dsn, self.dir = clean, target
         self.device.path = target / "device.json"
         self.offline.cached = target / "dsn-original.xml"

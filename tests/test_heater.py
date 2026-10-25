@@ -143,8 +143,7 @@ def test_a_dsn_is_only_ever_a_plain_name(tmp_path):
 
 
 def test_adopt_stays_inside_heaters(tmp_path, monkeypatch):
-    import icomm_heater
     heater = Heater(tmp_path)
-    monkeypatch.setattr(icomm_heater, "clean_dsn", lambda value: "..")   # if validation slipped
+    monkeypatch.setattr("icomm_heater.clean_dsn", lambda value: "..")    # if validation slipped
     heater.adopt("anything")
     assert heater.dsn is None and heater.dir.name == "default"
