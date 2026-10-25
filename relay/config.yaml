@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.5.4"
+version: "0.5.5"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -22,6 +22,8 @@ options:
   trusted_peers: ""
   firmware_updates: hold
   reporting_mask_renew: false
+  dns_server: false
+  dns_upstream: ""
 schema:
   listen_port: port
   state_port: port
@@ -50,5 +52,11 @@ schema:
   # session, and the data freezes. On: the relay re-sends the app's reporting
   # mask over the LAN session after 30 minutes frozen (at most every 30).
   reporting_mask_renew: bool?
+  # For routers that can't do the NAT steering: serve DNS on this host's port
+  # 53. The water heater's cloud name resolves here (the relay also listens on
+  # 443); everything else is forwarded to dns_upstream, by default the host's
+  # gateway. Then set the router's DHCP DNS server to this host's address.
+  dns_server: bool?
+  dns_upstream: str?
 map:
   - share:ro

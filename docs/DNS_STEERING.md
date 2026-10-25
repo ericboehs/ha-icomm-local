@@ -6,6 +6,43 @@ with DNS instead: a local DNS server answers the module's cloud hostname with
 the relay's address, so the module connects to the relay on port 443 by
 itself.
 
+There are two ways to run the DNS side:
+
+- **Built in (0.5.5+):** turn on the add-on's `dns_server` option. The relay
+  serves DNS on the Home Assistant host. Most people want this.
+- **Your own resolver:** if you already run AdGuard Home, Pi-hole or similar,
+  add one rewrite there (below) and leave `dns_server` off.
+
+## Built in: `dns_server`
+
+1. In the add-on's configuration, turn on **`dns_server`** and restart the
+   add-on. The relay then:
+   - answers DNS on port 53 of the HA host;
+   - resolves the A.O. Smith module's cloud name
+     (`<model>-71538015-device.aylanetworks.com`) to the HA host, with no IPv6
+     answer for it;
+   - forwards every other query unchanged to `dns_upstream`, by default your
+     router (the host's default gateway);
+   - also listens on 443 for the module.
+2. In your router, set the **DHCP DNS server** to your Home Assistant host's IP
+   address. Leave the secondary DNS empty: if the heater picks the secondary
+   when it boots, it reaches Ayla directly and local control stays off until
+   the next boot.
+3. Power-cycle the water heater once (breaker off for about 30 seconds).
+
+Home Assistant raises a repair if port 53 or 443 is already taken on the host,
+for example by an AdGuard, Pi-hole or NGINX SSL add-on. In that case use the
+resolver you already have, as below.
+
+**The trade-off:** with the router handing out Home Assistant as DNS, every
+device on the network resolves through it. While Home Assistant is down, name
+lookups on the network fail. That's the price of not needing a router that can
+do NAT steering. To limit it to the water heater, put the heater on its own
+network or VLAN and set only that network's DHCP DNS to Home Assistant, if your
+router can.
+
+## Your own resolver
+
 **Tested** on the real tank (2026-10-25), with AdGuard Home and the relay on a
 Linux host and no NAT in the HTTPS path. From the breaker coming back on to a
 verified Local Connect session took about 30 seconds. Details are under

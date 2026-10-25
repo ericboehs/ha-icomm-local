@@ -10,6 +10,24 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-25
+
+### Added
+- **Built-in DNS steering (`dns_server`, off by default)** for routers that
+  can't do the NAT rules, which is most mesh and ISP routers. With it on:
+  - The relay serves DNS on the host's port 53. It answers the A.O. Smith
+    module's cloud name (`<model>-71538015-device.aylanetworks.com`) with the
+    host's own address, returns no IPv6 answer for it, and forwards every
+    other query byte for byte to `dns_upstream` (default: the host's gateway,
+    to avoid a loop through itself).
+  - The relay also listens on 443, the port the module dials, alongside
+    `listen_port`, so NAT steering keeps working during a switch-over.
+  - Setup: point the router's DHCP DNS server at Home Assistant and
+    power-cycle the heater once. The 0.5.3 pinning trusts the module's own
+    address without `module_ip`.
+  - Home Assistant raises an error repair if port 53 or 443 is taken on the
+    host (AdGuard, Pi-hole, an SSL proxy).
+
 ## [0.5.4] - 2026-10-25
 
 ### Added
@@ -432,7 +450,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...v0.5.2

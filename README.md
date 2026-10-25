@@ -53,10 +53,11 @@ used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md).
     plus source NAT for the hairpin. UniFi (Network 9.3+) is tested. Linux,
     OpenWrt, pfSense and OPNsense should work but are untested.
     See [docs/STEERING.md](docs/STEERING.md).
-  - **Or DNS:** a DNS server you control (for example the AdGuard Home
-    add-on) that the heater gets through DHCP, plus port 443 free on the relay
-    host. This works with mesh and ISP routers that can't do NAT. Tested.
-    See [docs/DNS_STEERING.md](docs/DNS_STEERING.md).
+  - **Or DNS:** turn on the add-on's built-in `dns_server` and set the
+    router's DHCP DNS server to Home Assistant. This works with mesh and ISP
+    routers that can't do NAT, and needs ports 53 and 443 free on the HA host.
+    If you already run AdGuard or Pi-hole, add one rewrite there instead. See
+    [docs/DNS_STEERING.md](docs/DNS_STEERING.md).
 - The Home Assistant host and the water heater on the **same subnet/VLAN**
   (Local Connect calls back to the relay directly).
 - Access to the water heater's breaker for one power cycle during setup.
@@ -222,6 +223,8 @@ Add-on options, or environment variables when running the relay directly:
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
 | `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen) |
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
+| `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
+| `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
 | `reporting_mask_renew` / `REPORTING_MASK_RENEW` | off | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, at most once per that interval |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |

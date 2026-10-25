@@ -62,6 +62,7 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
+from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy, normalize
@@ -288,6 +289,10 @@ class Relay:
         # the fallback. No A.O. Smith account anywhere.
         self.lan = LanServer(self)
         self.peers = PeerPolicy(lambda: self.lan.module_ip)
+        self.dns = DnsServer()
+        # DNS steering lands the module on 443, the port its cloud name uses.
+        # Listened on beside listen_port, so NAT steering keeps working too.
+        self.dns_https_error: str | None = None
         # The 401 nudge: an experiment, not a doorbell. Phase 24 measured that
         # a 401 on a telemetry POST is simply retried and provokes no poll, so
         # this is left at 0 unless someone explicitly asks. LAN mode is the
@@ -980,6 +985,7 @@ class Relay:
         out["lan"] = self.lan.status()
         out["peers"] = self.peers.status()
         out["firmware"] = self.firmware.status()
+        out["dns"] = {**self.dns.status(), "https_error": self.dns_https_error}
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -1043,6 +1049,16 @@ class Relay:
         # per dial and re-dials on its own; nothing here needs to outlive it.
         await web.TCPSite(runner_module, "0.0.0.0", self.listen_port,
                          ssl_context=self.tls_context()).start()
+        if self.dns.enabled and self.listen_port != 443:
+            try:
+                await web.TCPSite(runner_module, "0.0.0.0", 443,
+                                 ssl_context=self.tls_context()).start()
+            except OSError as err:
+                self.dns_https_error = f"port 443 is in use: {err.strerror or err}"
+                _LOGGER.error("DNS steering: %s. Another add-on (an SSL proxy?) owns it; "
+                              "the module can't reach the relay until it's free.",
+                              self.dns_https_error)
+        await self.dns.start()
 
         self._load_queue()
         await self.lan.start()
@@ -1069,6 +1085,7 @@ class Relay:
             for sig in handled:
                 loop.remove_signal_handler(sig)
             await self.lan.stop()
+            await self.dns.stop()
             await self.client.close()
             await runner_module.cleanup()
             await runner_state.cleanup()

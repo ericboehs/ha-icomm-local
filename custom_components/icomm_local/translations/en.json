@@ -60,6 +60,10 @@
     "telemetry_frozen": {
       "title": "Water heater data is frozen",
       "description": "The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The controller's live reporting has lapsed, which happens some hours after the A.O. Smith app was last opened, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected.\n\nTo fix it now, **open the A.O. Smith app** and view the water heater: that re-arms reporting within seconds. To have the relay do it automatically, turn on the add-on's `reporting_mask_renew` option. This warning clears by itself once the data changes again."
+    },
+    "dns_server_failed": {
+      "title": "The iCOMM relay's DNS steering isn't working",
+      "description": "The relay add-on's `dns_server` option is on, but {problem}. Until that's fixed, the water heater can't reach the relay through DNS, and local control stops at its next reboot.\n\nUsually another add-on owns the port: a DNS server such as AdGuard or Pi-hole (port 53), or an SSL proxy such as NGINX (port 443). Either stop that add-on, or turn `dns_server` off and use that add-on instead (for AdGuard, add a DNS rewrite for the water heater's name)."
     }
   },
   "options": {

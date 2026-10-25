@@ -126,6 +126,20 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict) -> None:
         })
 
 
+def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
+    """dns_server is on but can't steer: port 53 or 443 is taken on the host."""
+    issue_id = f"dns_server_failed_{entry_id}"
+    dns = data.get("dns") or {}
+    problem = dns.get("error") or dns.get("https_error") if dns.get("enabled") else None
+    if not problem:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.ERROR, translation_key="dns_server_failed",
+        translation_placeholders={"problem": str(problem)})
+
+
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     for unique_id, old, new in ENTITY_ID_MIGRATIONS:
@@ -204,6 +218,13 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     entry.async_on_unload(coordinator.async_add_listener(_update_frozen_issue))
     _update_frozen_issue()
+
+    def _update_dns_issue() -> None:
+        if coordinator.last_update_success:
+            _dns_issue(hass, entry.entry_id, coordinator.data or {})
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_dns_issue))
+    _update_dns_issue()
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     entry.async_on_unload(lambda: _firmware_issues(hass, entry.entry_id, {}, firmware_issues))
     _update_firmware_issues()
@@ -225,6 +246,7 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
         ir.async_delete_issue(hass, DOMAIN, f"stale_telemetry_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"upstream_certificate_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"telemetry_frozen_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, f"dns_server_failed_{entry.entry_id}")
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             # Last relay gone: services would only raise, so unregister them.

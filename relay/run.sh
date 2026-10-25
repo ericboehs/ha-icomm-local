@@ -42,11 +42,14 @@ if opts.get("lan_mode") is False:
     print("export LAN_MODE=0")
 if opts.get("reporting_mask_renew") is True:
     print("export REPORTING_MASK_RENEW=1")
+if opts.get("dns_server") is True:
+    print("export DNS_SERVER=1")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),
                  ("relay_ip", "RELAY_IP"), ("trusted_peers", "TRUSTED_PEERS"),
-                 ("firmware_updates", "FIRMWARE_UPDATES")):
+                 ("firmware_updates", "FIRMWARE_UPDATES"),
+                 ("dns_upstream", "DNS_UPSTREAM")):
     if opts.get(key) not in (None, ""):
         print(f"export {env}={shlex.quote(str(opts[key]))}")
 PY
