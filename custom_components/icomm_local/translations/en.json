@@ -59,7 +59,7 @@
     },
     "telemetry_frozen": {
       "title": "Water heater data is frozen",
-      "description": "The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The controller's live reporting has lapsed, which happens some hours after the A.O. Smith app was last opened, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected.\n\nTo fix it now, **open the A.O. Smith app** and view the water heater: that re-arms reporting within seconds. To have the relay do it automatically, turn on the add-on's `reporting_mask_renew` option. This warning clears by itself once the data changes again."
+      "description": "The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The controller's live reporting has lapsed, which happens some hours after the A.O. Smith app was last opened and after a reboot, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected.\n\n{fix} This warning clears by itself once the data changes again."
     },
     "dns_server_failed": {
       "title": "The iCOMM relay's DNS steering isn't working",

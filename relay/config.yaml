@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.5.8"
+version: "0.5.9"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -21,7 +21,7 @@ options:
   relay_ip: ""
   trusted_peers: ""
   firmware_updates: hold
-  reporting_mask_renew: false
+  reporting_mask_renew: true
   dns_server: false
   dns_upstream: ""
   offline_fallback: true
@@ -50,8 +50,9 @@ schema:
   # passes them as before.
   firmware_updates: list(hold|allow)
   # The controller's live reporting lapses hours after the last A.O. Smith app
-  # session, and the data freezes. On: the relay re-sends the app's reporting
-  # mask over the LAN session after 30 minutes frozen (at most every 30).
+  # session (and after a reboot), and the data freezes. On (default): the relay
+  # re-sends the app's reporting mask over the LAN session after 30 minutes
+  # frozen (at most every 30), which brings live data back in minutes.
   reporting_mask_renew: bool?
   # For routers that can't do the NAT steering: serve DNS on this host's port
   # 53. The water heater's cloud name resolves here (the relay also listens on

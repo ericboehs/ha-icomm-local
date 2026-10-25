@@ -10,6 +10,21 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-10-25
+
+### Changed
+- **`reporting_mask_renew` is now on by default.** Phase 47 proved the
+  mask alone revives frozen data. After a reboot, with Ayla unreachable and no
+  app involved, the data went live about 3 minutes after the relay re-sent the
+  app's reporting mask over LAN. So the relay now re-arms reporting by itself
+  after 30 minutes frozen, at most once every 30 minutes.
+  - **Upgrading:** if you've ever saved the add-on's options, the old `false`
+    is stored. Turn `reporting_mask_renew` on in the add-on's Configuration tab.
+- The *Water heater data is frozen* repair says the relay re-arms reporting
+  automatically, and how many times it has tried. It points to the A.O. Smith
+  app only if the warning stays, or if renewal is off.
+- `/state.reporting_mask`: `renew`, `after_s`, `sent`.
+
 ## [0.5.8] - 2026-10-25
 
 ### Added
@@ -502,7 +517,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...v0.5.6

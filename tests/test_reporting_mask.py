@@ -104,8 +104,10 @@ def test_frozen_contents_renew_the_mask_once_per_interval(tmp_path):
     assert server.mask_pending is False
 
 
-def test_renewal_is_off_by_default(tmp_path):
-    server = _renewing_relay(tmp_path, enabled="0")
+def test_renewal_is_on_by_default_and_can_be_turned_off(tmp_path):
+    os.environ.pop("REPORTING_MASK_RENEW", None)
+    assert _server(tmp_path).relay.mask_renew is True
+    server = _renewing_relay(tmp_path / "off", enabled="0")
     relay = server.relay
     relay._ingest_blocks(telemetry_blocks(_telemetry_body()))
     relay.contents_changed -= 7200

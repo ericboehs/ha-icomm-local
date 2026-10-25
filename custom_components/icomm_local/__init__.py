@@ -124,7 +124,22 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict) -> None:
             "minutes": str(round((unchanged or 0) / 60)),
             "power": (f" Meanwhile your power sensor shows the heater drawing {round(power)} W."
                       if running else ""),
+            "fix": _frozen_fix(data.get("reporting_mask") or {}),
         })
+
+
+def _frozen_fix(mask: dict) -> str:
+    """What to do about frozen data: the relay re-arms it itself, or the app."""
+    if mask.get("renew"):
+        return ("The relay re-arms reporting automatically: after "
+                f"{round((mask.get('after_s') or 1800) / 60)} minutes frozen it re-sends the "
+                "app's reporting request over the local connection "
+                f"({mask.get('sent', 0)} sent since the relay started), which brings live data "
+                "back within a few minutes. If this warning stays, **open the A.O. Smith app** "
+                "and view the water heater.")
+    return ("To fix it now, **open the A.O. Smith app** and view the water heater: that "
+            "re-arms reporting within seconds. To have the relay do it automatically, turn on "
+            "the add-on's `reporting_mask_renew` option.")
 
 
 def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:

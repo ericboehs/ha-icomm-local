@@ -41,10 +41,20 @@ async def test_relay_flagged_stale_raises_and_a_change_clears(hass: HomeAssistan
                          {**STATE, "contents_unchanged_s": 6000, "contents_stale": True})
     issue = _issue(hass, entry)
     assert issue.severity is ir.IssueSeverity.WARNING and not issue.is_fixable
-    assert issue.translation_placeholders == {"minutes": "100", "power": ""}
+    placeholders = issue.translation_placeholders
+    assert (placeholders["minutes"], placeholders["power"]) == ("100", "")
+    assert "turn on the add-on's `reporting_mask_renew`" in placeholders["fix"]   # older relay
     await _refresh(hass, entry, aioclient_mock,
                    {**STATE, "contents_unchanged_s": 4, "contents_stale": False})
     assert _issue(hass, entry) is None
+
+
+async def test_with_renewal_on_it_says_the_relay_is_on_it(hass: HomeAssistant, aioclient_mock):
+    entry = await _setup(hass, aioclient_mock, {
+        **STATE, "contents_unchanged_s": 6000, "contents_stale": True,
+        "reporting_mask": {"renew": True, "after_s": 1800, "sent": 2}})
+    fix = _issue(hass, entry).translation_placeholders["fix"]
+    assert "re-arms reporting automatically: after 30 minutes" in fix and "(2 sent" in fix
 
 
 async def test_power_sensor_flags_it_sooner(hass: HomeAssistant, aioclient_mock):

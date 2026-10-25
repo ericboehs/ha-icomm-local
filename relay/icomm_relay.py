@@ -260,7 +260,7 @@ class Relay:
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Renew the controller's periodic reporting when the contents freeze
         # (phase 42). Off by default until confirmed on the tank.
-        self.mask_renew = os.environ.get("REPORTING_MASK_RENEW", "0") == "1"
+        self.mask_renew = os.environ.get("REPORTING_MASK_RENEW", "1") != "0"
         self.mask_renew_after = float(os.environ.get("REPORTING_MASK_RENEW_AFTER", "1800"))
         self.started = time.time()
         self.upstream_errors = 0
@@ -1027,6 +1027,9 @@ class Relay:
         out["dns"] = {**self.dns.status(), "https_error": self.dns_https_error}
         out["device"] = self.device.status()
         out["offline"] = self.offline.status()
+        out["reporting_mask"] = {"renew": self.mask_renew,
+                                 "after_s": self.mask_renew_after,
+                                 "sent": self.lan.masks_sent}
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
