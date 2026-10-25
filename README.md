@@ -135,6 +135,7 @@ view with three sections:
 
 - **Water heater:** the thermostat with mode buttons, hot water available, power
   and the heating element.
+- **Device:** controller and Wi-Fi module firmware (diagnostic sensors, and on the device page).
 - **Tank:** top, bottom and average temperatures, heat deficit, the last app
   write, Wi-Fi and line voltage.
 - **Last 24 hours:** tank temperatures against the active target (vacation

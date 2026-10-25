@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
@@ -56,7 +57,11 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
     entities += [TankAverageSensor(coordinator),
                  ModeSensor(coordinator), HeatingElementSensor(coordinator),
                  RelayHealthSensor(coordinator),
-                 PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator)]
+                 PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator),
+                 FirmwareSensor(coordinator, "controller_firmware", "Controller firmware",
+                                ("controller_firmware_standby",)),
+                 FirmwareSensor(coordinator, "module_firmware", "Wi-Fi module firmware",
+                                ("module_hardware", "model", "dsn", "mac"))]
     async_add_entities(entities)
 
 
@@ -120,6 +125,29 @@ class _RelaySensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         return DEVICE_INFO
+
+
+class FirmwareSensor(_RelaySensor):
+    """Firmware the heater reports: the controller's (the app's "Firmware
+    Version") at each boot, the Wi-Fi module's agent in its config reply."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:chip"
+
+    def __init__(self, coordinator, key: str, name: str, extras: tuple[str, ...]) -> None:
+        super().__init__(coordinator)
+        self._key, self._extras = key, extras
+        self._attr_unique_id = f"icomm_local_{key}"
+        self._attr_name = name
+
+    @property
+    def native_value(self):
+        return ((self.coordinator.data or {}).get("device") or {}).get(self._key)
+
+    @property
+    def extra_state_attributes(self):
+        device = (self.coordinator.data or {}).get("device") or {}
+        return {key: device.get(key) for key in self._extras if device.get(key)}
 
 
 class RelayHealthSensor(_RelaySensor):

@@ -12,6 +12,20 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [0.5.6] - 2026-10-25
 
+### Added
+- **Firmware and identity in Home Assistant.**
+  - **Controller firmware**: the version the A.O. Smith app shows as
+    "Firmware Version", e.g. 2.14. It's reported by the module at each boot,
+    over LAN or as a cloud upload.
+  - **Wi-Fi module firmware**: the Ayla agent's version, from the config reply.
+    Its attributes carry the module hardware, the Ayla model, the DSN and the MAC.
+  - Both are diagnostic sensors, so a firmware change gets history. The HA
+    device page now shows the firmware and model too.
+  - The relay keeps these facts in `device.json`, with no secrets, so they
+    survive restarts. `/state` reports them as `device`.
+  - `/raw` now also includes the static blocks, where the app's model and
+    serial numbers probably live; they aren't decoded yet.
+
 ### Fixed
 - With DNS steering, the module's first config fetch at every boot (before
   Ayla has checked its credentials) logged a misleading warning: the wrong

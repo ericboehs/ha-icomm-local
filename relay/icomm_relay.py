@@ -62,6 +62,7 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
+from icomm_device import DeviceFacts
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
@@ -278,6 +279,7 @@ class Relay:
         self.writes_delivered = 0
         self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
         # Firmware updates wait for the owner (icomm_firmware explains why).
+        self.device = DeviceFacts(self.queue_file.parent / "device.json")
         self.firmware = FirmwareGate(os.environ.get("FIRMWARE_UPDATES", "hold"),
                                      self.queue_file.parent / "firmware.json")
         # A restored write older than this is dropped rather than delivered: an
@@ -474,7 +476,7 @@ class Relay:
         """GET /raw: the last superBlockDyn1 as hex, one string per block."""
         if self.last_raw is None:
             return web.json_response({"error": "no telemetry yet"}, status=404)
-        return web.json_response(self.last_raw)
+        return web.json_response({**self.last_raw, "static": self.device.static})
 
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
@@ -490,6 +492,7 @@ class Relay:
                 self.lan.note_mask(value)
         else:
             _LOGGER.info("LAN update: %r (%d chars)", name, len(value))
+        self.device.note_property(name, value)
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)
@@ -883,6 +886,7 @@ class Relay:
         """
         text = payload.decode(errors="replace")
         self.firmware.note_dsn(text)
+        self.device.note_dsn(text)
         switched = []
         for element in ("lan-enabled", "local-access-enabled"):
             off = f"<{element}>false</{element}>"
@@ -987,6 +991,7 @@ class Relay:
         out["peers"] = self.peers.status()
         out["firmware"] = self.firmware.status()
         out["dns"] = {**self.dns.status(), "https_error": self.dns_https_error}
+        out["device"] = self.device.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
@@ -1307,6 +1312,12 @@ class Relay:
             # the local behavior (the key, telemetry, writes, DSN rewrite).
             return await self.proxy(request)
         self._note_request(request.path)
+        found = DSN_PATH_RE.search(request.path)
+        if found:
+            self.device.note_dsn_id(found.group(1))
+        if (request.method == "POST" and "/properties/" in request.path
+                and "superBlockDyn1" not in request.path):
+            self.device.note_upload(request.path, await request.read())
         target = self.firmware.download_target(request.host, request.path)
         if target is not None:
             return await self.fetch_firmware(request, target)

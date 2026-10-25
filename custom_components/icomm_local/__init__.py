@@ -8,6 +8,7 @@ from datetime import timedelta
 from aiohttp import ClientError, ClientTimeout
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -140,6 +141,19 @@ def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
         translation_placeholders={"problem": str(problem)})
 
 
+def _device_registry(hass: HomeAssistant, entry_id: str, data: dict) -> None:
+    """Show the heater's firmware and model on its HA device page."""
+    device = data.get("device") or {}
+    registry = dr.async_get(hass)
+    lookup = getattr(registry, "async_get_device_by_identifier", None)
+    entry = (lookup((DOMAIN, "water_heater"), entry_id) if lookup     # HA 2026.x+
+             else registry.async_get_device(identifiers={(DOMAIN, "water_heater")}))
+    wanted = {"sw_version": device.get("controller_firmware"), "model": device.get("model")}
+    wanted = {k: v for k, v in wanted.items() if v}
+    if entry and any(getattr(entry, k) != v for k, v in wanted.items()):
+        dr.async_get(hass).async_update_device(entry.id, **wanted)
+
+
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     for unique_id, old, new in ENTITY_ID_MIGRATIONS:
@@ -233,6 +247,13 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         await async_setup_services(hass)
     _migrate_entity_ids(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    def _update_device_registry() -> None:
+        if coordinator.last_update_success:
+            _device_registry(hass, entry.entry_id, coordinator.data or {})
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_device_registry))
+    _update_device_registry()
     return True
 
 
