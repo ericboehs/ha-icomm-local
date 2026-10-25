@@ -140,7 +140,10 @@ reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
 - **First arming needs one re-registration.** Power-cycle the module once
   (breaker, ~10 s) after enabling LAN mode. The tank's own thermostat is
   unaffected. After that the module persists both the enable flag and the key,
-  so subsequent reboots need nothing.
+  so subsequent reboots need nothing **as long as the relay stays in the
+  path**. Measured (research phase 39): one boot talking to the real Ayla and
+  registration returns 404, because Ayla's reply turns the flag back off. A
+  Wi-Fi reconnect (`kick-sta`) does not re-register; only a power cycle does.
 - **If `registered` stays false:** check `last_registration_result`. 404 means
   the rewritten config was never fetched — re-register again. 412 means the
   module is armed but has no key — it should then fetch `lan.json`; watch for
