@@ -148,8 +148,9 @@ class LanServer:
         self.module_dsn: str | None = None
         self.advertise_ip = os.environ.get("RELAY_IP", "") or None
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
-        self.key_file = Path(os.environ.get(
-            "LANIP_FILE", str(relay.queue_file.parent / "lanip.json")))
+        # LANIP_FILE pins the key somewhere fixed (development); otherwise it
+        # follows the heater's directory, which may be renamed once its DSN is known.
+        self._key_file_override = os.environ.get("LANIP_FILE", "")
         self.key = self._load_or_create_key()
         self.key_served_at = 0.0          # when we last answered lan.json
         self.registered = False
@@ -201,6 +202,12 @@ class LanServer:
         self.read_queue: list[str] = []
         self.masks_sent = 0
         self.last_mask_sent = 0.0
+
+    @property
+    def key_file(self) -> Path:
+        if self._key_file_override:
+            return Path(self._key_file_override)
+        return self.relay.heater.key_file
 
     # -- the shared secret ---------------------------------------------
     def _load_or_create_key(self) -> str:
@@ -305,6 +312,7 @@ class LanServer:
         if peer == self.module_ip and self.module_ip_observed:
             return True
         self.module_ip, self.module_ip_observed, self.module_dsn = peer, True, dsn
+        self.relay.heater.adopt(dsn)
         _LOGGER.warning("LAN mode: module %s is at %s (its own address: steered by DNS, "
                         "not NAT)", dsn, peer)
         self._persist()

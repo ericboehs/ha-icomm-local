@@ -54,7 +54,7 @@ def nameplate(value: str) -> dict[str, str]:
     out = {}
     for key, (offset, length) in NAMEPLATE.items():
         text = swapped[offset:offset + length].split(b"\0", 1)[0].decode("ascii", "replace")
-        if text and SAFE.match(text) and re.fullmatch(r"[A-Za-z0-9-]{4,24}", text):
+        if text and SAFE.fullmatch(text) and re.fullmatch(r"[A-Za-z0-9-]{4,24}", text):
             out[key] = text
     return out
 
@@ -67,31 +67,31 @@ class DeviceFacts:
         with contextlib.suppress(OSError, ValueError):
             saved = json.loads(path.read_text())
             self.facts = {k: v for k, v in (saved.get("facts") or {}).items()
-                          if isinstance(v, str) and SAFE.match(v)}
+                          if isinstance(v, str) and SAFE.fullmatch(v)}
             self.static = {k: v for k, v in (saved.get("static") or {}).items()
-                           if k in STATIC and isinstance(v, str) and HEX_LIST.match(v)}
+                           if k in STATIC and isinstance(v, str) and HEX_LIST.fullmatch(v)}
 
     def note_dsn(self, text: str) -> None:
         changed = False
         for element, key in DSN_FIELDS.items():
             found = re.search(rf"<{element}>([^<]{{1,80}})</{element}>", text)
-            if found and SAFE.match(found.group(1).strip()):
+            if found and SAFE.fullmatch(found.group(1).strip()):
                 changed |= self._set(key, found.group(1).strip())
         if changed:
             self._save()
 
     def note_dsn_id(self, dsn: str) -> None:
         """The DSN is in the config fetch's path, not its body."""
-        if SAFE.match(dsn) and self._set("dsn", dsn):
+        if SAFE.fullmatch(dsn) and self._set("dsn", dsn):
             self._save()
 
     def note_property(self, name: str, value: str) -> None:
-        if name in PROPERTIES and SAFE.match(value.strip()) and value.strip() != "None":
+        if name in PROPERTIES and SAFE.fullmatch(value.strip()) and value.strip() != "None":
             if self._set(PROPERTIES[name], value.strip()):
                 if name == "active_image_version":
                     _LOGGER.warning("controller firmware: %s", value.strip())
                 self._save()
-        elif name in STATIC and HEX_LIST.match(value) and self.static.get(name) != value:
+        elif name in STATIC and HEX_LIST.fullmatch(value) and self.static.get(name) != value:
             self.static[name] = value
             if name == "superBlockStatic1":
                 for key, found in nameplate(value).items():

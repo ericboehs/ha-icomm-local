@@ -10,6 +10,26 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-25
+
+### Changed
+- **Storage layout: one directory per heater** (#18, phase 1, groundwork for
+  multiple heaters; the relay still serves one).
+  - The heater's files now live in `/data/heaters/<DSN>/`: its LAN key
+    (`lanip.json`), write queue (`pending.json`), device facts and saved config
+    reply.
+  - Relay-wide files (`firmware.json`, `certs/`) stay in `/data`.
+  - It migrates by itself on first start:
+    - the key, facts and config reply are **copied**, so downgrading to 0.5.x
+      still finds the key and the heater's Local Connect carries on;
+    - the queue is **moved**, so an older relay can't replay writes this one
+      already delivered.
+  - A heater whose DSN isn't known yet lives in `heaters/default/` until its
+    first config fetch.
+  - `/state` gains `heater: {dsn, dir}`, and `queue_file` points to the new
+    location.
+  - No other behavior changes.
+
 ## [0.5.9] - 2026-10-25
 
 ### Changed
@@ -517,7 +537,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.9...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.9...v0.6.0
 [0.5.9]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...v0.5.7

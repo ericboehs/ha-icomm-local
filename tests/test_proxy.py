@@ -355,7 +355,7 @@ async def test_cancel_drops_everything_and_persists(tmp_path, monkeypatch):
     assert set(body["cancelled"]) == {"setpoint", "mode"}
     assert body["cancelled"]["setpoint"]["value"] == 140.0
     assert relay.pending == {}
-    assert json.loads((tmp_path / "pending.json").read_text())["pending"] == {}
+    assert json.loads(relay.queue_file.read_text())["pending"] == {}
 
 
 async def test_state_handler_reports_everything_the_integration_reads(
@@ -371,7 +371,8 @@ async def test_state_handler_reports_everything_the_integration_reads(
     assert body["upstream_errors"] == 4
     assert body["pending"]["setpoint"]["status"] == "queued"
     assert body["health"]["state"] == "unknown"           # too few dials yet
-    assert body["queue_file"] == str(tmp_path / "pending.json")
+    assert body["queue_file"] == str(tmp_path / "heaters" / "default" / "pending.json")
+    assert body["heater"] == {"dsn": None, "dir": str(tmp_path / "heaters" / "default")}
     assert body["queue_restored"] == 0
     assert body["writes_delivered"] == 0 and body["writes_confirmed"] == 0
     assert body["injections_held"] == 0 and body["cloud_writes"] == 0
@@ -400,7 +401,8 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
         tmp_path, monkeypatch, capsys):
     relay = _relay(tmp_path, monkeypatch, STATE_PORT="18124", LISTEN_PORT="18444",
                    LAN_PORT="18888")
-    (tmp_path / "pending.json").write_text(json.dumps({"pending": {"setpoint": {
+    relay.queue_file.parent.mkdir(parents=True, exist_ok=True)
+    relay.queue_file.write_text(json.dumps({"pending": {"setpoint": {
         "kind": "setpoint", "value": 140.0, "frame": "BD 40 08 0B 06 3C 00 6E",
         "queued": time.time()}}, "last_write": None}))
     FakeSite.started = []

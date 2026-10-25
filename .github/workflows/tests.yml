@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            relay/requirements.txt
+            requirements-dev.txt
       - name: Install
         run: |
           pip install --require-hashes -r relay/requirements.txt
@@ -71,8 +75,14 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+      # uv and its cache: the harness pulls in all of Home Assistant, which took
+      # pip ~100 s of a ~110 s job.
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: .github/workflows/tests.yml
       - name: Install Home Assistant test harness
-        run: pip install pytest-homeassistant-custom-component pytest-cov
+        run: uv pip install --system pytest-homeassistant-custom-component pytest-cov
       - name: Test (coverage gate 95%)
         run: |
           python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto \

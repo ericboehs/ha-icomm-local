@@ -33,7 +33,7 @@ async def test_the_config_reply_and_a_lan_report(tmp_path, monkeypatch):
     assert device["module_firmware"].startswith("bc 2.11.4")
     assert (device["module_hardware"], device["model"]) == ("LBEE5PA1LD-222", "iCOMMNextGenHP")
     assert device["dsn"] == "AC000W019949045" and device["mac"] == "d01769f8f31c"
-    saved = (tmp_path / "device.json").read_text()
+    saved = (relay.heater.dir / "device.json").read_text()
     assert "SECRET" not in saved and "12345" not in saved       # never the keys
 
 
@@ -139,3 +139,10 @@ def test_a_short_or_garbled_static_block_gives_no_nameplate():
     assert nameplate("0212,0") == {}                       # odd-length hex
     assert nameplate("0212," + "00" * 128) == {}            # blank nameplate
     assert nameplate("0212," + "2a2a" * 64) == {}           # "****": not a model
+
+
+def test_a_trailing_newline_is_not_a_safe_value(tmp_path):
+    facts = DeviceFacts(tmp_path / "device.json")
+    facts.note_dsn_id("AC000W019949045\n")
+    facts.note_property("superBlockStatic2", "00ab\n")
+    assert "dsn" not in facts.facts and facts.static == {}

@@ -68,7 +68,7 @@ async def test_what_it_will_not_answer(tmp_path, monkeypatch):
     assert other_dsn.status == 503                                  # not our heater
     stranger = _request("GET", PATH, headers=SIGNED, trusted=False)
     assert relay._offline_config(stranger, None) is None            # pinning needs Ayla
-    (tmp_path / "dsn-original.xml").unlink()
+    (relay.heater.dir / "dsn-original.xml").unlink()
     assert (await relay._route(_request("GET", PATH, headers=SIGNED))).status == 503
     off = _offline_relay(tmp_path, monkeypatch, OFFLINE_FALLBACK="0")
     assert (await off._route(_request("GET", PATH, headers=SIGNED))).status == 503

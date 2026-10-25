@@ -14,14 +14,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Each architecture on its own native runner: arm64 under QEMU took ~8 min
+    # (the whole suite emulated), natively about one.
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux/amd64, linux/arm64]   # add-on arch: amd64, aarch64
+        include:                                # add-on arch: amd64, aarch64
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -31,13 +36,15 @@ jobs:
           push: false
           load: true
           tags: icomm-relay:ci
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
       - name: The image starts and imports the relay
         run: |
           docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 icomm-relay:ci \
-            -c "import sys, icomm_relay, icomm_lan, icomm_peers, icomm_frames, icomm_firmware, icomm_dns, icomm_device, icomm_offline; print('imports ok', sys.version)"
+            -c "import sys, icomm_relay, icomm_lan, icomm_peers, icomm_frames, icomm_firmware, icomm_dns, icomm_device, icomm_offline, icomm_heater; print('imports ok', sys.version)"
       # The relay's test suite inside the image users actually run: its Python,
       # its musl wheels from the hash-checked lock, on each architecture (arm64
-      # under QEMU, as on a Raspberry Pi or HA Green).
+      # as on a Raspberry Pi or HA Green).
       - name: No pip in the shipped image
         run: |
           docker run --rm --platform ${{ matrix.platform }} --entrypoint sh icomm-relay:ci \

@@ -62,11 +62,10 @@ from pathlib import Path
 
 import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
-from icomm_device import DeviceFacts
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
+from icomm_heater import Heater, known_dsn
 from icomm_lan import LanServer
-from icomm_offline import OfflineConfig
 from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
 
@@ -278,18 +277,20 @@ class Relay:
         self.pending: dict[str, PendingWrite] = {}
         self.last_write: dict | None = None
         self.writes_delivered = 0
-        self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
-        # Firmware updates wait for the owner (icomm_firmware explains why).
-        self.device = DeviceFacts(self.queue_file.parent / "device.json")
-        self.offline = OfflineConfig(self.queue_file.parent / "dsn-original.xml",
-                                     os.environ.get("OFFLINE_FALLBACK", "1") != "0")
+        # Relay-wide files sit in the data dir; the heater's own (key, queue,
+        # facts, saved config) in heaters/<DSN>/ under it (icomm_heater, #18).
+        queue_env = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
+        self.data_dir = Path(os.environ.get("DATA_DIR") or queue_env.parent)
+        self.heater = Heater(self.data_dir, known_dsn(self.data_dir, self.device_dsn),
+                             os.environ.get("OFFLINE_FALLBACK", "1") != "0", queue_env.name)
         self._device_read_asked = False
         # Identity from the last real config reply this relay saved (the DSN
         # rewrite evidence), so it shows before the heater's next boot.
         with contextlib.suppress(OSError):
-            self.device.note_dsn((self.queue_file.parent / "dsn-original.xml").read_text())
+            self.device.note_dsn((self.heater.dir / "dsn-original.xml").read_text())
+        # Firmware updates wait for the owner (icomm_firmware explains why).
         self.firmware = FirmwareGate(os.environ.get("FIRMWARE_UPDATES", "hold"),
-                                     self.queue_file.parent / "firmware.json")
+                                     self.data_dir / "firmware.json")
         # A restored write older than this is dropped rather than delivered: an
         # appliance that sat idle overnight should not surprise anyone at breakfast.
         self.queue_max_age_s = int(os.environ.get("QUEUE_MAX_AGE_S", str(24 * 3600)))
@@ -299,6 +300,7 @@ class Relay:
         # the fallback. No A.O. Smith account anywhere.
         self.lan = LanServer(self)
         if self.device_dsn or self.lan.module_dsn:
+            self.heater.adopt(self.device_dsn or self.lan.module_dsn)
             self.device.note_dsn_id(self.device_dsn or self.lan.module_dsn)
         self.peers = PeerPolicy(lambda: self.lan.module_ip)
         self.dns = DnsServer()
@@ -349,6 +351,19 @@ class Relay:
         ca = Path(__file__).parent / "upstream-entrust-g2.pem"
         # aiohttp wants an SSLContext (a bare path string raises on use).
         self.upstream_ssl = ssl.create_default_context(cafile=str(ca)) if ca.exists() else None
+
+    # The heater's components (one heater until #18 phase 2).
+    @property
+    def queue_file(self) -> Path:
+        return self.heater.queue_file
+
+    @property
+    def device(self):
+        return self.heater.device
+
+    @property
+    def offline(self):
+        return self.heater.offline
 
     # -- the module-facing side ---------------------------------------
     async def proxy(self, request: web.Request,
@@ -930,7 +945,7 @@ class Relay:
         if not switched:
             return None
         self.lan.learn_module_ip(text)
-        evidence = self.queue_file.parent
+        evidence = self.heater.dir
         evidence.mkdir(parents=True, exist_ok=True)
         (evidence / "dsn-original.xml").write_bytes(payload)
         (evidence / "dsn-rewritten.xml").write_text(text)
@@ -1027,6 +1042,7 @@ class Relay:
         out["dns"] = {**self.dns.status(), "https_error": self.dns_https_error}
         out["device"] = self.device.status()
         out["offline"] = self.offline.status()
+        out["heater"] = self.heater.status()
         out["reporting_mask"] = {"renew": self.mask_renew,
                                  "after_s": self.mask_renew_after,
                                  "sent": self.lan.masks_sent}
@@ -1352,6 +1368,7 @@ class Relay:
         self._note_request(request.path)
         found = DSN_PATH_RE.search(request.path)
         if found:
+            self.heater.adopt(found.group(1))
             self.device.note_dsn_id(found.group(1))
         if (request.method == "POST" and "/properties/" in request.path
                 and "superBlockDyn1" not in request.path):

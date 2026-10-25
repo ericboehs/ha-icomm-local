@@ -69,7 +69,8 @@ def test_restore_skips_expired_and_frameless_entries_but_keeps_last_write(
         tmp_path, monkeypatch, caplog):
     relay = _relay(tmp_path, monkeypatch)
     now = time.time()
-    (tmp_path / "pending.json").write_text(json.dumps({
+    relay.queue_file.parent.mkdir(parents=True, exist_ok=True)
+    relay.queue_file.write_text(json.dumps({
         "pending": {
             "setpoint": {"kind": "setpoint", "value": 140.0, "frame": "BD 40",
                          "queued": now - relay.queue_max_age_s - 5},
