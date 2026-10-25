@@ -20,7 +20,7 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt \
  && pip uninstall -y -q pip
 
-COPY icomm_relay.py icomm_frames.py icomm_lan.py icomm_peers.py icomm_firmware.py healthcheck.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
+COPY icomm_relay.py icomm_frames.py icomm_lan.py icomm_peers.py icomm_firmware.py icomm_dns.py healthcheck.py upstream-entrust-g2.pem gen-cert.sh run.sh /app/
 RUN chmod +x /app/gen-cert.sh /app/run.sh
 
 # The Supervisor restarts the add-on when this reports unhealthy (with the
