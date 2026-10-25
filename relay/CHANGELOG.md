@@ -10,6 +10,34 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-25
+
+### Added
+- **"Water heater data is frozen" repair.** The module can keep sending
+  reports whose contents never change, re-sending the controller's last
+  snapshot. Measured: 3+ hours frozen while the heat pump ran at ~260 W
+  (seen on an independent power monitor) and iCOMM said 0 W. A healthy idle
+  tank still changes some bytes; the longest identical run seen was 35 minutes.
+  - The relay reports `contents_unchanged_s` and `contents_stale` in `/state`
+    (stale after 90 minutes of identical reports; `CONTENTS_STALE_AFTER`).
+  - Home Assistant raises a warning repair while it's stale, and clears it on
+    the next change.
+  - Optional: choose a power sensor for the heater's circuit under the
+    integration's **Configure**. Then 30 minutes unchanged while it reads
+    over 150 W is enough to raise the repair.
+- **DNS steering without `module_ip`.** With DNS steering the module connects
+  from its own address. The relay now trusts a private IPv4 peer once Ayla
+  accepts its `GET /dsns/<DSN>.xml`, which needs the device's own
+  credentials. It pins that address to that DSN (or `device_dsn`), persists
+  it, and trusts it over Ayla's possibly stale `lan-ip`. A configured
+  `module_ip` always wins. `/state` shows `lan.module_ip_source`.
+- [docs/DNS_STEERING.md](docs/DNS_STEERING.md): steering with an AdGuard (or
+  any DNS) rewrite instead of router NAT, tested end to end.
+
+### Fixed
+- Docs: retracted "DNS override does not work, the module uses 1.1.1.1". The
+  test network's DHCP was handing out 1.1.1.1; the module follows DHCP DNS.
+
 ## [0.5.2] - 2026-10-24
 
 ### Changed
@@ -383,7 +411,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ericboehs/ha-icomm-local/compare/v0.4.14...v0.5.0

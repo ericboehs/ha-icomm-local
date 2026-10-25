@@ -126,6 +126,12 @@ class LanServer:
         # the address Ayla last saw, which lags a network move (0.5.1: a heater
         # moved to its own VLAN was "learned" back at its old address).
         self.module_ip_configured = self.module_ip is not None
+        # With DNS steering the module connects from its own address, which the
+        # relay may not know yet. It is pinned once Ayla accepts that peer's
+        # authenticated config fetch (pin_module), and is then trusted over
+        # Ayla's possibly stale lan-ip, like a configured address.
+        self.module_ip_observed = False
+        self.module_dsn: str | None = None
         self.advertise_ip = os.environ.get("RELAY_IP", "") or None
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         self.key_file = Path(os.environ.get(
@@ -192,6 +198,9 @@ class LanServer:
                 # The module's address is only announced at re-registration,
                 # which can be hours after a relay restart: remember it.
                 self.module_ip = self.module_ip or saved.get("module_ip")
+                self.module_ip_observed = (not self.module_ip_configured
+                                           and bool(saved.get("module_ip_observed")))
+                self.module_dsn = saved.get("module_dsn")
                 return saved["lanip_key"]
         except (OSError, ValueError):
             pass
@@ -214,7 +223,8 @@ class LanServer:
         try:
             self.key_file.write_text(json.dumps({
                 "lanip_key": self.key, "lanip_key_id": self.key_id,
-                "module_ip": self.module_ip}))
+                "module_ip": self.module_ip, "module_ip_observed": self.module_ip_observed,
+                "module_dsn": self.module_dsn}))
             os.chmod(self.key_file, 0o600)
         except OSError as err:
             _LOGGER.warning("LAN mode: could not persist module address: %s", err)
@@ -231,13 +241,37 @@ class LanServer:
         """The registration doc carries the module's own LAN address."""
         found = LAN_IP_RE.search(dsn_xml)
         if found and found.group(1) != self.module_ip:
-            if self.module_ip_configured:
+            if self.module_ip_configured or self.module_ip_observed:
                 _LOGGER.info("LAN mode: Ayla lists the module at %s; keeping the "
                              "configured %s", found.group(1), self.module_ip)
                 return
             self.module_ip = found.group(1)
             _LOGGER.info("LAN mode: module is at %s", self.module_ip)
             self._persist()
+
+    def pin_module(self, peer: str, dsn: str) -> bool:
+        """Trust `peer` as the module: Ayla just accepted its config fetch.
+
+        Ayla answers /dsns/<DSN>.xml only to a requester holding that device's
+        credentials (the module's first try gets 401), and the relay forwards
+        those credentials untouched, so a 200 proves the peer is a real Ayla
+        device. Binding to one DSN stops a different Ayla device on the LAN
+        from taking over later: the first pin wins, or DEVICE_DSN if set.
+        """
+        if self.module_ip_configured:
+            return False
+        expected = self.relay.device_dsn or self.module_dsn
+        if expected and dsn.upper() != expected.upper():
+            _LOGGER.warning("LAN mode: %s fetched config for %s, not this relay's module "
+                            "%s; not trusting it", peer, dsn, expected)
+            return False
+        if peer == self.module_ip and self.module_ip_observed:
+            return True
+        self.module_ip, self.module_ip_observed, self.module_dsn = peer, True, dsn
+        _LOGGER.warning("LAN mode: module %s is at %s (its own address: steered by DNS, "
+                        "not NAT)", dsn, peer)
+        self._persist()
+        return True
 
     # -- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -300,6 +334,9 @@ class LanServer:
         return {"enabled": self.enabled, "registered": self.registered,
                 "session": self.session is not None,
                 "session_verified": self.session_verified, "module_ip": self.module_ip,
+                "module_ip_source": ("configured" if self.module_ip_configured
+                                     else "observed" if self.module_ip_observed
+                                     else "ayla" if self.module_ip else None),
                 "port": self.port, "key_id": self.key_id,
                 "key_served": bool(self.key_served_at),
                 "last_heartbeat_age": round(now - self.last_heartbeat, 1)

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
@@ -63,7 +64,7 @@ import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
 from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
-from icomm_peers import TRUSTED, PeerPolicy
+from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
 
 _LOGGER = logging.getLogger("icomm_relay")
@@ -181,6 +182,9 @@ def heating_element(flags: int) -> str | None:
     return "upper" if upper else "lower" if lower else "off"
 
 
+DSN_PATH_RE = re.compile(r"/dsns/([A-Za-z0-9]{6,32})\.xml$")
+
+
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
     b1, b3, b4 = blocks[1], blocks[3], blocks[4]
@@ -244,6 +248,13 @@ class Relay:
         self.device_dsn = os.environ.get("DEVICE_DSN", "")
         self.state: dict = {"online": False}
         self.last_telemetry = 0.0
+        # Reports can keep arriving with byte-identical contents: the module
+        # re-sends what the controller last told it (measured 2026-10-25,
+        # 3+ hours frozen while the heat pump ran). A healthy idle tank still
+        # changes some bytes; the longest identical run seen was 35 minutes.
+        self.contents_changed = 0.0
+        self._last_blocks: tuple[bytes, ...] | None = None
+        self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         self.started = time.time()
         self.upstream_errors = 0
         # Ayla's certificate failing verification (an expired pin, a new CA)
@@ -413,6 +424,9 @@ class Relay:
             # the offsets someone has already mapped.
             self.last_raw = {"at": time.time(), "mode": None,
                              "blocks": [block.hex() for block in blocks]}
+            if tuple(blocks) != self._last_blocks:
+                self._last_blocks = tuple(blocks)
+                self.contents_changed = time.time()
             try:
                 self.state = decode(blocks)
                 self.state["online"] = True
@@ -942,6 +956,11 @@ class Relay:
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
+        unchanged = (round(time.time() - self.contents_changed)
+                     if self.contents_changed else None)
+        out["contents_unchanged_s"] = unchanged
+        out["contents_stale"] = bool(out["fresh"] and unchanged is not None
+                                     and unchanged >= self.contents_stale_after)
         return web.json_response(out)
 
     async def health_handler(self, request: web.Request) -> web.Response:
@@ -1202,8 +1221,41 @@ class Relay:
         return web.json_response({"nudges_left": self.nudges_left,
                                   "on_telemetry": self.nudge_on_telemetry})
 
+    def _pinnable_dsn(self, request: web.Request) -> str | None:
+        """The DSN if this untrusted request could prove it is the module.
+
+        Only a GET of /dsns/<DSN>.xml from a private IPv4 address that is not a
+        gateway, and only while LAN mode is on and no module_ip is configured.
+        """
+        if not self.lan.enabled or self.lan.module_ip_configured or request.method != "GET":
+            return None
+        found = DSN_PATH_RE.search(request.path)
+        if not found:
+            return None
+        peer = normalize(request.remote)
+        try:
+            address = ipaddress.ip_address(peer)
+        except ValueError:
+            return None
+        if (address.version != 4 or not address.is_private or address.is_loopback
+                or peer in self.peers.gateways):
+            return None
+        return found.group(1)
+
     async def _route(self, request: web.Request) -> web.Response:
         """The module's requests; telemetry gets decoded, polls may get a write."""
+        dsn = None if request.get(TRUSTED, True) else self._pinnable_dsn(request)
+        if dsn:
+            # Forwarded verbatim; only Ayla's 200 (the module's credentials
+            # checked) pins the peer, and then the reply gets the usual rewrite.
+            peer = normalize(request.remote)
+
+            def pin_then_rewrite(payload: bytes) -> bytes | None:
+                if self.lan.pin_module(peer, dsn):
+                    return self._rewrite_dsn(payload)
+                return None
+
+            return await self.proxy(request, transform=pin_then_rewrite)
         if not request.get(TRUSTED, True):
             # Not the module or the gateway: forward untouched, with none of
             # the local behavior (the key, telemetry, writes, DSN rewrite).

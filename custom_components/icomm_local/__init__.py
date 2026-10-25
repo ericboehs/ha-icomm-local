@@ -13,7 +13,15 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, POLL_SECONDS, TIMEOUT_SECONDS, is_stale
+from .const import (
+    CONF_POWER_ENTITY,
+    DOMAIN,
+    FROZEN_POWER_W,
+    FROZEN_WITH_POWER_S,
+    POLL_SECONDS,
+    TIMEOUT_SECONDS,
+    is_stale,
+)
 from .services import async_setup_services
 
 PLATFORMS = ["sensor", "water_heater"]
@@ -89,6 +97,35 @@ def _tls_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
         })
 
 
+def _power_w(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    state = hass.states.get(entity_id) if entity_id else None
+    try:
+        value = float(state.state)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return value * 1000 if state.attributes.get("unit_of_measurement") == "kW" else value
+
+
+def _frozen_issue(hass: HomeAssistant, entry, data: dict) -> None:
+    """Reports arrive, but their contents haven't changed: the data is frozen."""
+    issue_id = f"telemetry_frozen_{entry.entry_id}"
+    unchanged = data.get("contents_unchanged_s")
+    power = _power_w(hass, entry.options.get(CONF_POWER_ENTITY))
+    running = (power is not None and power > FROZEN_POWER_W
+               and isinstance(unchanged, (int, float)) and unchanged >= FROZEN_WITH_POWER_S)
+    if not data.get("fresh") or not (data.get("contents_stale") or running):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.WARNING, translation_key="telemetry_frozen",
+        translation_placeholders={
+            "minutes": str(round((unchanged or 0) / 60)),
+            "power": (f" Meanwhile your power sensor shows the heater drawing {round(power)} W."
+                      if running else ""),
+        })
+
+
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     for unique_id, old, new in ENTITY_ID_MIGRATIONS:
@@ -160,6 +197,14 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     entry.async_on_unload(coordinator.async_add_listener(_update_tls_issue))
     _update_tls_issue()
+
+    def _update_frozen_issue() -> None:
+        if coordinator.last_update_success:
+            _frozen_issue(hass, entry, coordinator.data or {})
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_frozen_issue))
+    _update_frozen_issue()
+    entry.async_on_unload(entry.add_update_listener(_options_updated))
     entry.async_on_unload(lambda: _firmware_issues(hass, entry.entry_id, {}, firmware_issues))
     _update_firmware_issues()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -170,11 +215,16 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     return True
 
 
+async def _options_updated(hass: HomeAssistant, entry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     unload = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload:
         ir.async_delete_issue(hass, DOMAIN, f"stale_telemetry_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"upstream_certificate_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, f"telemetry_frozen_{entry.entry_id}")
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             # Last relay gone: services would only raise, so unregister them.

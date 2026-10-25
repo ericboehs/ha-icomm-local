@@ -28,7 +28,7 @@ reconnect doesn't trigger this; only a power cycle does.
 | The water heater using it | the module uses whatever DNS server **DHCP** hands it, so point your router's DHCP DNS setting at your DNS server (this usually applies to every device on the network, which is fine: only one hostname is changed) |
 | Port 443 free on the relay host | the module only dials 443. On Home Assistant, check that no other add-on owns it (the NGINX SSL proxy add-on, and some device bridges, do). If it's taken, run the relay on another host ([README](../README.md#without-the-add-on-ha-container-core-or-another-host)) |
 | The relay and heater on the same subnet | Local Connect calls back to the relay directly. Across VLANs you need the gateway rule from [NETWORK_ISOLATION.md](NETWORK_ISOLATION.md) |
-| A DHCP reservation for the heater | the relay must know the heater's address in advance (see `module_ip` below) |
+| A DHCP reservation for the heater | recommended: the relay follows a move, but a stable address is easier to firewall |
 
 ## 1. The DNS rewrite
 
@@ -81,7 +81,7 @@ a service):
 | Option | Value | Why |
 |---|---|---|
 | `listen_port` | `443` | the module connects to the rewritten name on 443; no NAT moves it to 8444 |
-| `module_ip` | the heater's reserved IP | **required here.** The relay only answers the module and the gateway. With NAT the module arrives as the gateway; with DNS it arrives as itself, so the relay must know its address before the first connection |
+| `module_ip` | leave empty (0.5.3+) | with DNS the module arrives from its own address. The relay trusts it once Ayla accepts that peer's config fetch, which needs the device's own credentials, and pins it to that one DSN (or `device_dsn`, if set). Relays before 0.5.3 need `module_ip` set here |
 | `relay_ip` | the relay host's IP | the address the module calls back for Local Connect |
 
 ## 3. Power-cycle the heater once

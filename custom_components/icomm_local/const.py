@@ -27,3 +27,8 @@ def is_stale(data: dict | None) -> bool:
     """Reachable relay, known tank, but no fresh report: warn, do not hide."""
     data = data or {}
     return has_telemetry(data) and not data.get("fresh")
+
+# Options: a power sensor on the heater's own circuit, for the frozen-data check.
+CONF_POWER_ENTITY = "power_entity"
+FROZEN_POWER_W = 150          # above this the heater is running (heat pump ~260 W)
+FROZEN_WITH_POWER_S = 1800    # unchanged this long while drawing power: frozen

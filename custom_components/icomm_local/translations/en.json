@@ -56,6 +56,21 @@
     "upstream_certificate": {
       "title": "The iCOMM relay can't verify Ayla's cloud",
       "description": "The relay refused Ayla's TLS certificate ({error}). That has happened {failures} times; Ayla last verified {since}. Until it's resolved, the heater's data no longer reaches Ayla, so the A.O. Smith app goes stale and app commands stop. Local control through Home Assistant still works.\n\nMost likely Ayla moved to a certificate that no longer chains to the root the relay trusts (Entrust Root G2). Update the iCOMM Local Relay add-on, or report it at {issues_url}. The other possibility is something between your network and Ayla presenting its own certificate, which is exactly what this check is for."
+    },
+    "telemetry_frozen": {
+      "title": "Water heater data is frozen",
+      "description": "The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The module is re-sending the controller's last snapshot, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected. A power cycle of the water heater's breaker gets one fresh snapshot, but it may freeze again. This warning clears by itself once the data changes again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optional power sensor",
+        "description": "A power sensor on the water heater's own circuit (for example an Emporia or smart-plug channel). It lets Home Assistant spot frozen water heater data sooner: unchanged for 30 minutes while this sensor shows the heater running.",
+        "data": {
+          "power_entity": "Water heater power sensor"
+        }
+      }
     }
   }
 }

@@ -162,6 +162,7 @@ Check the add-on log first, then the relay's state from the HA host:
 | Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, set `module_ip` |
 | `lan.last_registration_result: PUT 404` / `POST 404` | Local Connect not armed yet | Power-cycle the heater (install step 3) |
 | `PUT 412` | armed, waiting for the key | Wait a minute; if it persists, power-cycle |
+| Repair: *Water heater data is frozen* | reports keep arriving but their contents haven't changed for 90 minutes (30 with a power sensor showing the heater running). The module re-sends the controller's last snapshot | Heating isn't affected. A breaker power cycle gets one fresh snapshot. Optional: set a power sensor for the heater's circuit under the integration's **Configure** to catch it sooner |
 | `lan.needs_key_push: true` | the module holds a key this relay did not issue | Automatic: the relay pushes its key on the next cloud poll. See [docs/LAN_MODE.md](docs/LAN_MODE.md) |
 | Integration setup: *Could not reach the relay* | add-on not running, or a different URL | Start the add-on; use `http://127.0.0.1:8124` |
 | App shows the heater offline | relay stopped while the NAT rules are active | Start the add-on, or disable the NAT rules |
@@ -216,10 +217,11 @@ Add-on options, or environment variables when running the relay directly:
 | `upstream` / `UPSTREAM` | `proxy-ingress-usfield.aylanetworks.com` | the real Ayla endpoint every module request is forwarded to (US field) |
 | `lan_mode` / `LAN_MODE` | on | Local Connect; off means writes wait for a cloud poll |
 | `lan_port` / `LAN_PORT` | 8888 | Local Connect callback port |
-| `module_ip` / `MODULE_IP` | learned | heater IP; normally learned from its registration |
+| `module_ip` / `MODULE_IP` | learned | heater IP. Normally learned: from its registration with NAT steering, or pinned when Ayla accepts its config fetch with DNS steering |
 | `relay_ip` / `RELAY_IP` | detected | the address the module should call back on |
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
-| `device_dsn` / `DEVICE_DSN` | — | cosmetic: shown in `/state` |
+| `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen) |
+| `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |
 | `LAN_REFRESH_INTERVAL` | 300 | seconds between keep-alive telemetry reads; 0 disables |
