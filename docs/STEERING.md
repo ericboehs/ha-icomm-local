@@ -18,10 +18,14 @@ Then break the module's existing connection once, so it re-dials through the new
 rules (`conntrack -D -s <module-ip> -p tcp --dport 443`, or just wait — it re-dials
 every few minutes while active, but can stay quiet for hours when idle).
 
-Things that do **not** work, measured:
+**No NAT-capable router?** Use DNS instead: see [DNS_STEERING.md](DNS_STEERING.md)
+(tested). An earlier version of this page said DNS override couldn't work
+because the module "uses 1.1.1.1 directly". **That was wrong:** the test
+network's DHCP was handing out 1.1.1.1, and the module simply uses the DNS
+server DHCP gives it (measured 2026-10-25).
 
-- **DNS override.** The module resolves with 1.1.1.1 directly and ignores the
-  gateway's DNS, so a local DNS record for `*.aylanetworks.com` is never consulted.
+What does **not** work:
+
 - **Plain port forwarding** (WAN → LAN). That is for inbound traffic from the
   internet; this traffic starts on the LAN.
 

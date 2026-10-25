@@ -5,12 +5,15 @@ accepts a self-signed certificate, and how to steer the water heater here.
 
 Two things need doing outside Home Assistant:
 
-1. The relay only sees the module if the water heater's traffic is steered to
-   this host (`iptables` DNAT + `conntrack` flush on the router — a DNS override
-   does **not** work; the module resolves its own endpoints via 1.1.1.1).
-2. Point that DNAT at this host's `listen_port` (default 8444) — recipes, including
-   native UniFi NAT rules that survive reboots, are in
-   [docs/STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/STEERING.md). There is no need
-   to take port 443 from whatever already owns it — DNAT chooses the port.
+1. The relay only sees the module if the water heater's HTTPS is steered to
+   this host. Either:
+   - **NAT on the router** to this host's `listen_port` (default 8444).
+     Recipes, including native UniFi NAT rules that survive reboots, are in
+     [docs/STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/STEERING.md).
+     DNAT chooses the port, so 443 can stay with whatever already owns it.
+   - **Or a DNS rewrite** of the module's device hostname to this host, with
+     `listen_port: 443` and `module_ip` set. That needs port 443 free here. See
+     [docs/DNS_STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DNS_STEERING.md).
+2. Power-cycle the water heater once so it registers through the relay.
 
 Keys are generated into `/data/certs` on first start and never leave the box.

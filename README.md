@@ -48,12 +48,15 @@ used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md).
 
 - **Home Assistant OS or Supervised** (for the add-on). HA Container/Core users
   can run the relay as a plain Python service; see *Without the add-on* below.
-- A router that can do **destination NAT matched on a LAN source address**, plus
-  source NAT for the hairpin. UniFi (Network 9.3+) is tested. Any Linux,
-  OpenWrt, pfSense or OPNsense router should work, but those are untested.
-  **Most mesh and ISP routers (Eero, Google/Nest Wifi, typical ISP gateways)
-  cannot do this, so this project will not work with them.** A DNS override does
-  *not* work, because the module uses 1.1.1.1 directly.
+- A way to steer the water heater's HTTPS to the relay, either:
+  - **NAT on the router:** destination NAT matched on a LAN source address,
+    plus source NAT for the hairpin. UniFi (Network 9.3+) is tested. Linux,
+    OpenWrt, pfSense and OPNsense should work but are untested.
+    See [docs/STEERING.md](docs/STEERING.md).
+  - **Or DNS:** a DNS server you control (for example the AdGuard Home
+    add-on) that the heater gets through DHCP, plus port 443 free on the relay
+    host. This works with mesh and ISP routers that can't do NAT. Tested.
+    See [docs/DNS_STEERING.md](docs/DNS_STEERING.md).
 - The Home Assistant host and the water heater on the **same subnet/VLAN**
   (Local Connect calls back to the relay directly).
 - Access to the water heater's breaker for one power cycle during setup.
@@ -78,7 +81,9 @@ used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md).
 
 ### 2. The router (steering)
 
-Create the two NAT rules from **[docs/STEERING.md](docs/STEERING.md)**:
+No NAT-capable router? Follow **[docs/DNS_STEERING.md](docs/DNS_STEERING.md)**
+instead, then continue at step 3. Otherwise create the two NAT rules from
+**[docs/STEERING.md](docs/STEERING.md)**:
 destination NAT from `<heater-ip>` TCP 443 to `<ha-ip>:8444`, and source NAT
 for that flow to `<gateway-ip>`. The page has the native UniFi recipe, which
 survives reboots, plus the raw iptables version.
@@ -251,6 +256,7 @@ Add-on options, or environment variables when running the relay directly:
 - [docs/LAN_MODE.md](docs/LAN_MODE.md): the Local Connect protocol, write status, key repair
 - [docs/BEHAVIOR.md](docs/BEHAVIOR.md): measured appliance behavior and write-delivery details
 - [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md): the heater on its own VLAN, reaching only the relay
+- [docs/DNS_STEERING.md](docs/DNS_STEERING.md): steering with a DNS rewrite instead of router NAT
 - Research and protocol notes: [ericboehs/aosmith-water-heater](https://github.com/ericboehs/aosmith-water-heater)
 
 ## Development
