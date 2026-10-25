@@ -9,9 +9,12 @@ Two sources, both already passing through the relay:
     as "Firmware Version" (2.14), `inactive_image_version` the standby image.
 
 The reports only arrive at boot, so the latest values are saved beside the
-write queue (`device.json`, no secrets) and survive relay restarts. The
-superBlockStatic blocks are kept raw too: the app's model and serial numbers
-probably live there, and are not decoded yet.
+write queue (`device.json`, no secrets) and survive relay restarts.
+
+superBlockStatic1, part 1, carries the nameplate the app shows (phase 45). Its
+ASCII is stored as 16-bit words with the bytes swapped ("PH1S-0..." is
+"HPS10-..."): the model at offset 32 and the serial number at offset 72, both
+NUL-padded. The other blocks are kept raw for later decoding.
 """
 
 from __future__ import annotations
@@ -34,8 +37,26 @@ PROPERTIES = {"active_image_version": "controller_firmware",
 STATIC = ("superBlockStatic1", "superBlockStatic2", "superBlockStatic3")
 SAFE = re.compile(r"^[\x20-\x7e]{1,80}$")
 HEX_LIST = re.compile(r"^[0-9a-fA-F,]{1,4096}$")
+# (offset, length) in superBlockStatic1 part 1, after the byte swap.
+NAMEPLATE = {"model_number": (32, 24), "serial_number": (72, 16)}
 DATAPOINT = re.compile(r"/properties/([A-Za-z0-9_]{1,64})/datapoints\.xml$")
 VALUE = re.compile(rb"<value>([^<]{0,4096})</value>")
+
+
+def nameplate(value: str) -> dict[str, str]:
+    """Model and serial number from superBlockStatic1 (comma-separated hex parts)."""
+    parts = value.split(",")
+    try:
+        raw = bytes.fromhex(parts[1]) if len(parts) > 1 else b""
+    except ValueError:
+        return {}
+    swapped = bytes(b for i in range(0, len(raw) - 1, 2) for b in (raw[i + 1], raw[i]))
+    out = {}
+    for key, (offset, length) in NAMEPLATE.items():
+        text = swapped[offset:offset + length].split(b"\0", 1)[0].decode("ascii", "replace")
+        if text and SAFE.match(text) and re.fullmatch(r"[A-Za-z0-9-]{4,24}", text):
+            out[key] = text
+    return out
 
 
 class DeviceFacts:
@@ -72,6 +93,9 @@ class DeviceFacts:
                 self._save()
         elif name in STATIC and HEX_LIST.match(value) and self.static.get(name) != value:
             self.static[name] = value
+            if name == "superBlockStatic1":
+                for key, found in nameplate(value).items():
+                    self._set(key, found)
             self._save()
 
     def note_upload(self, path: str, body: bytes) -> None:

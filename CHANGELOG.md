@@ -10,6 +10,24 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-10-25
+
+### Added
+- **Offline fallback** (add-on option `offline_fallback`, on by default). If
+  Ayla is unreachable or answers 5xx when the heater boots, the relay answers
+  the boot config fetch itself, the way Ayla does:
+  1. a 401 with the server time;
+  2. then the last real reply, with a fresh `<unix-time>` and a made-up auth key.
+
+  LAN mode arms as usual, so a power cut during an Ayla outage no longer takes
+  local control down until Ayla returns. Once Ayla is back, the heater signs in
+  to it again by itself. It only answers the trusted module, for the DSN the
+  relay knows. `/state.offline` counts the replies.
+- **Model and serial number** on the HA device page and as attributes of the
+  controller firmware sensor. They are decoded from `superBlockStatic1`, whose
+  ASCII is stored with each 16-bit pair of bytes swapped, and read once over
+  LAN, so no reboot is needed.
+
 ## [0.5.7] - 2026-10-25
 
 ### Fixed
@@ -484,7 +502,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...v0.5.5

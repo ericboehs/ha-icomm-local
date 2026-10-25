@@ -44,10 +44,10 @@ async def test_a_cloud_upload_and_static_blocks(tmp_path, monkeypatch):
     await relay._route(_request("POST", "/devices/1/properties/active_image_version/datapoints.xml",
                                 body))
     assert relay.client.calls[-1]["data"] == body                # still forwarded intact
-    await relay.ingest_lan_update({"data": {"name": "superBlockStatic1", "value": "00ab,cd"}})
+    await relay.ingest_lan_update({"data": {"name": "superBlockStatic2", "value": "00ab,cd"}})
     assert (await _state(relay))["controller_firmware"] == "2.15"
     raw = json.loads((await relay.raw_handler(None)).body) if relay.last_raw else None
-    assert raw is None and relay.device.static == {"superBlockStatic1": "00ab,cd"}
+    assert raw is None and relay.device.static == {"superBlockStatic2": "00ab,cd"}
 
 
 def test_facts_survive_a_restart_and_junk_is_dropped(tmp_path):
@@ -103,7 +103,7 @@ async def test_the_firmware_is_read_once_over_lan_when_unknown(tmp_path):
     relay = server.relay
     await relay.ingest_lan_update({"data": {"name": "faultCode", "value": "0"}})
     await relay.ingest_lan_update({"data": {"name": "faultCode", "value": "0"}})
-    assert server.read_queue == ["active_image_version"]          # asked once
+    assert server.read_queue == ["active_image_version", "superBlockStatic1"]  # asked once
     poll = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
     _, rx = module_directions(SECRET.encode(), EXCHANGE, server.session.random_2,
                               server.session.time_2)
@@ -111,6 +111,31 @@ async def test_the_firmware_is_read_once_over_lan_when_unknown(tmp_path):
         (await server._commands(poll)).body)["enc"])).rstrip(bytes([0])).decode())
     cmd = reply["data"]["cmds"][0]["cmd"]
     assert cmd["method"] == "GET" and cmd["resource"] == "property.json?name=active_image_version"
-    assert server.read_queue == []
+    assert server.read_queue == ["superBlockStatic1"]
     await relay.ingest_lan_update({"data": {"name": "active_image_version", "value": "2.14"}})
     assert relay.device.status()["controller_firmware"] == "2.14"
+
+
+# The heater's own superBlockStatic1 (phase 18 boot capture): the app shows
+# model HPS10-50H45DV and serial 134274434.
+STATIC1 = ("0212016300031C,020E000000000000000000000000021200000000000000000000000000000000"
+           "504831532D3030353448443500560000000000000000000000000000000000000000000000000000"
+           "333132343437333400340000000000000000303133303035333400320000000000000000000000"
+           "000000AB52000000000000000000000000,00000032000111940164000000F0,"
+           "41593030314d544c310000020b0444303137363946384633314300")
+
+
+def test_the_nameplate_is_decoded_from_the_static_block(tmp_path):
+    facts = DeviceFacts(tmp_path / "device.json")
+    facts.note_property("superBlockStatic1", STATIC1)
+    assert facts.status()["model_number"] == "HPS10-50H45DV"
+    assert facts.status()["serial_number"] == "134274434"
+    assert DeviceFacts(tmp_path / "device.json").facts["serial_number"] == "134274434"
+
+
+def test_a_short_or_garbled_static_block_gives_no_nameplate():
+    from icomm_device import nameplate
+    assert nameplate("0212") == {}
+    assert nameplate("0212,0") == {}                       # odd-length hex
+    assert nameplate("0212," + "00" * 128) == {}            # blank nameplate
+    assert nameplate("0212," + "2a2a" * 64) == {}           # "****": not a model

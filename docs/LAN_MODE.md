@@ -177,6 +177,19 @@ reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
   have to make it re-register against the *real* Ayla without the relay in the
   path (remove the NAT steering first).
 
+## When Ayla is down
+
+| Situation | What happens |
+|---|---|
+| Ayla down, heater keeps running | Local control unaffected. Telemetry and write acks are answered 200 locally, polls get an empty `commands.xml` (which can still carry a queued write) |
+| Ayla down across a heater reboot | `offline_fallback` (default on) answers the boot config fetch: a 401 with `x-ayla-server-time`, then 200 with the saved reply (fresh `<unix-time>`, LAN switches on) and a made-up `x-ayla-auth-key`. LAN mode arms as usual |
+| Ayla back | The made-up key gets Ayla's 401 without a server time; libada clears it and signs in again with its device key |
+
+Conditions: the request comes from the trusted module, for the DSN the relay
+knows, and `dsn-original.xml` (saved at the last real boot) exists. A new
+install still needs Ayla once: pinning a DSN-steered module needs Ayla's real
+200. `/state.offline` counts the challenges and replies served.
+
 ## Security notes
 
 - The shared key is generated locally and never sent to A.O. Smith. It is not

@@ -59,7 +59,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
                  RelayHealthSensor(coordinator),
                  PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator),
                  FirmwareSensor(coordinator, "controller_firmware", "Controller firmware",
-                                ("controller_firmware_standby",)),
+                                ("controller_firmware_standby", "model_number",
+                                 "serial_number")),
                  FirmwareSensor(coordinator, "module_firmware", "Wi-Fi module firmware",
                                 ("module_hardware", "model", "dsn", "mac"))]
     async_add_entities(entities)

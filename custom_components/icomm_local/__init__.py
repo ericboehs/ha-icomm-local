@@ -148,7 +148,9 @@ def _device_registry(hass: HomeAssistant, entry_id: str, data: dict) -> None:
     lookup = getattr(registry, "async_get_device_by_identifier", None)
     entry = (lookup((DOMAIN, "water_heater"), entry_id) if lookup     # HA 2026.x+
              else registry.async_get_device(identifiers={(DOMAIN, "water_heater")}))
-    wanted = {"sw_version": device.get("controller_firmware"), "model": device.get("model")}
+    wanted = {"sw_version": device.get("controller_firmware"),
+              "model": device.get("model_number") or device.get("model"),
+              "serial_number": device.get("serial_number")}
     wanted = {k: v for k, v in wanted.items() if v}
     if entry and any(getattr(entry, k) != v for k, v in wanted.items()):
         dr.async_get(hass).async_update_device(entry.id, **wanted)

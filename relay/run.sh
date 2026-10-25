@@ -42,6 +42,8 @@ if opts.get("lan_mode") is False:
     print("export LAN_MODE=0")
 if opts.get("reporting_mask_renew") is True:
     print("export REPORTING_MASK_RENEW=1")
+if opts.get("offline_fallback") is False:
+    print("export OFFLINE_FALLBACK=0")
 if opts.get("dns_server") is True:
     print("export DNS_SERVER=1")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),

@@ -10,6 +10,7 @@ from test_integration import STATE, URL, _setup
 DEVICE = {"controller_firmware": "2.14", "module_firmware": "bc 2.11.4 05/13/25",
           "module_hardware": "LBEE5PA1LD-222", "model": "iCOMMNextGenHP",
           "dsn": "AC000W019949045", "mac": "d01769f8f31c", "updated": "2026-10-25T16:14:07"}
+NAMEPLATE = {"model_number": "HPS10-50H45DV", "serial_number": "134274434"}
 
 
 def _device(hass, entry):
@@ -36,6 +37,15 @@ async def test_sensors_and_device_page(hass: HomeAssistant, aioclient_mock):
     await hass.async_block_till_done()
     device = _device(hass, entry)
     assert device.sw_version == "2.15"
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{URL}/state", json={**STATE, "device": {**DEVICE, **NAMEPLATE}})
+    await hass.data["icomm_local"][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    device = _device(hass, entry)
+    assert (device.model, device.serial_number) == ("HPS10-50H45DV", "134274434")
+    attributes = hass.states.get("sensor.icomm_water_heater_controller_firmware").attributes
+    assert attributes["serial_number"] == "134274434"
 
 
 async def test_an_older_relay_leaves_them_unknown(hass: HomeAssistant, aioclient_mock):

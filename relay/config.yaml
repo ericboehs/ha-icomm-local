@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.5.7"
+version: "0.5.8"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -24,6 +24,7 @@ options:
   reporting_mask_renew: false
   dns_server: false
   dns_upstream: ""
+  offline_fallback: true
 schema:
   listen_port: port
   state_port: port
@@ -58,5 +59,9 @@ schema:
   # gateway. Then set the router's DHCP DNS server to this host's address.
   dns_server: bool?
   dns_upstream: str?
+  # If Ayla is unreachable when the water heater boots (a power cut during an
+  # outage), answer its config fetch from the last real reply, so local control
+  # comes back without Ayla. Does nothing while Ayla answers.
+  offline_fallback: bool?
 map:
   - share:ro

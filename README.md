@@ -135,7 +135,8 @@ view with three sections:
 
 - **Water heater:** the thermostat with mode buttons, hot water available, power
   and the heating element.
-- **Device:** controller and Wi-Fi module firmware (diagnostic sensors, and on the device page).
+- **Device:** controller and Wi-Fi module firmware (diagnostic sensors), and the
+  model, serial number and firmware on the HA device page.
 - **Tank:** top, bottom and average temperatures, heat deficit, the last app
   write, Wi-Fi and line voltage.
 - **Last 24 hours:** tank temperatures against the active target (vacation
@@ -170,6 +171,16 @@ Check the add-on log first, then the relay's state from the HA host:
 | App shows the heater offline | relay stopped while the NAT rules are active | Start the add-on, or disable the NAT rules |
 | The A.O. Smith/iCOMM app keeps logging you out | A.O. Smith allows **one login session per account**. Home Assistant's built-in *A. O. Smith* cloud integration on the same account logs the app out, and the app logs it out in turn. Every reload or HA restart is a new login. iCOMM Local uses no account, so it is not the cause | Disable the built-in A. O. Smith integration (iCOMM Local covers its entities locally), or give it a separate account through the app's device sharing |
 | A write shows `not_applied` | the tank accepted the frame but did not apply it | Retry later. A transient window of this was observed once; it cleared on its own |
+
+## When Ayla is down
+
+Local control doesn't need Ayla once the heater is running: telemetry, writes
+and the HA entities keep working through an outage (the A.O. Smith app won't).
+The weak point is a reboot, because the heater asks Ayla for its configuration
+first. With `offline_fallback` on (the default), the relay answers that itself
+from the last real reply, so a power cut during an outage doesn't take local
+control down with it. When Ayla comes back, the heater signs in to it again on
+its own. Details: `docs/LAN_MODE.md`, *When Ayla is down*.
 
 ## Important: the NAT rules make the relay mandatory
 
@@ -226,6 +237,7 @@ Add-on options, or environment variables when running the relay directly:
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
+| `offline_fallback` / `OFFLINE_FALLBACK` | on | if Ayla is unreachable (or answers 5xx) when the heater boots, answer its config fetch from the last real reply, so local control survives a power cut during an outage. See `docs/LAN_MODE.md`, *When Ayla is down* |
 | `reporting_mask_renew` / `REPORTING_MASK_RENEW` | off | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, at most once per that interval |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |

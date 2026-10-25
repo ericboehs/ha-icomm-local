@@ -66,6 +66,7 @@ from icomm_device import DeviceFacts
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
 from icomm_lan import LanServer
+from icomm_offline import OfflineConfig
 from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
 
@@ -280,6 +281,8 @@ class Relay:
         self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
         # Firmware updates wait for the owner (icomm_firmware explains why).
         self.device = DeviceFacts(self.queue_file.parent / "device.json")
+        self.offline = OfflineConfig(self.queue_file.parent / "dsn-original.xml",
+                                     os.environ.get("OFFLINE_FALLBACK", "1") != "0")
         self._device_read_asked = False
         # Identity from the last real config reply this relay saved (the DSN
         # rewrite evidence), so it shows before the heater's next boot.
@@ -376,6 +379,12 @@ class Relay:
                 ssl=self.upstream_ssl,
             ) as upstream:
                 self.upstream_tls["last_ok"] = time.time()
+                if upstream.status >= 500:
+                    # Ayla's ingress is up but its backend isn't: the outage case.
+                    offline = self._offline_config(request, transform)
+                    if offline is not None:
+                        self.upstream_errors += 1
+                        return offline
                 payload = await upstream.read()
                 if (upstream.status == 200 and "commands.xml" in request.path
                         and request.get(TRUSTED, True)):
@@ -396,6 +405,9 @@ class Relay:
             self.upstream_errors += 1
             if isinstance(err, (ClientSSLError, ssl.SSLError)):
                 self._note_tls_failure(err)
+            offline = self._offline_config(request, transform)
+            if offline is not None:
+                return offline
             if request.method == "POST":
                 return web.Response(status=200, text="")
             if "commands.xml" in request.path:
@@ -410,6 +422,14 @@ class Relay:
                 return web.Response(status=200, content_type="application/xml",
                                     text=synthetic)
             return web.Response(status=503, text="")
+
+    def _offline_config(self, request: web.Request, transform) -> web.Response | None:
+        """The module's own config fetch, answered locally while Ayla is out."""
+        found = DSN_PATH_RE.search(request.path)
+        if not found or not request.get(TRUSTED, True):
+            return None
+        known = self.device_dsn or self.lan.module_dsn or self.device.facts.get("dsn")
+        return self.offline.answer(request, found.group(1), known, transform)
 
     def _note_tls_failure(self, err: Exception) -> None:
         cause = getattr(err, "certificate_error", None) or err
@@ -500,11 +520,13 @@ class Relay:
         else:
             _LOGGER.info("LAN update: %r (%d chars)", name, len(value))
         self.device.note_property(name, value)
-        if (not self._device_read_asked and self.lan.session_verified
-                and "controller_firmware" not in self.device.facts):
+        if not self._device_read_asked and self.lan.session_verified:
             # Reported only at boot: ask once, instead of waiting for one.
             self._device_read_asked = True
-            self.lan.read_queue.append("active_image_version")
+            if "controller_firmware" not in self.device.facts:
+                self.lan.read_queue.append("active_image_version")
+            if "serial_number" not in self.device.facts:
+                self.lan.read_queue.append("superBlockStatic1")
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)
@@ -1004,6 +1026,7 @@ class Relay:
         out["firmware"] = self.firmware.status()
         out["dns"] = {**self.dns.status(), "https_error": self.dns_https_error}
         out["device"] = self.device.status()
+        out["offline"] = self.offline.status()
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
