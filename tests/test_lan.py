@@ -189,7 +189,7 @@ def test_key_is_persisted_not_logged(tmp_path):
     try:
         first = Relay().lan
         assert first.key and len(first.key) <= 32
-        mode = (tmp_path / "lanip.json").stat().st_mode & 0o777
+        mode = first.key_file.stat().st_mode & 0o777
         assert mode == 0o600
         second = Relay().lan
         assert second.key == first.key           # a restart keeps the same key
@@ -253,7 +253,7 @@ def test_module_address_survives_a_relay_restart(tmp_path, monkeypatch):
     second = Relay().lan
     assert second.module_ip == "10.0.1.187"
     assert second.key == first.key
-    assert (tmp_path / "lanip.json").stat().st_mode & 0o777 == 0o600
+    assert second.key_file.stat().st_mode & 0o777 == 0o600
 
 
 async def test_repeated_exchanges_without_updates_flag_a_foreign_key(tmp_path):

@@ -43,15 +43,15 @@ def test_both_switches_flipped_and_nothing_else(tmp_path, monkeypatch):
     assert text.replace("lan-enabled>true", "lan-enabled>false") \
                .replace("local-access-enabled>true", "local-access-enabled>false") == DSN
     assert "registered>0" in text                      # untouched
-    assert (tmp_path / "dsn-original.xml").read_bytes() == DSN.encode()
-    assert (tmp_path / "dsn-rewritten.xml").exists()
+    assert (relay.heater.dir / "dsn-original.xml").read_bytes() == DSN.encode()
+    assert (relay.heater.dir / "dsn-rewritten.xml").exists()
     assert relay.lan.module_ip == "10.0.1.187"         # learned for the callback
 
 
 def test_reply_without_switches_passes_through(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch)
     assert relay._rewrite_dsn(b"<device><registered>0</registered></device>") is None
-    assert not (tmp_path / "dsn-original.xml").exists()
+    assert not (relay.heater.dir / "dsn-original.xml").exists()
 
 
 def test_one_switch_still_rewrites(tmp_path, monkeypatch):

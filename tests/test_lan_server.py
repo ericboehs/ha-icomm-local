@@ -308,7 +308,7 @@ def test_unparsable_key_file_is_replaced_with_a_fresh_key(tmp_path, monkeypatch)
     relay = _relay(tmp_path, monkeypatch)
     monkeypatch.delenv("LANIP_KEY")
     lan = LanServer(relay)
-    saved = json.loads((tmp_path / "lanip.json").read_text())
+    saved = json.loads(lan.key_file.read_text())
     assert saved == {"lanip_key": lan.key, "lanip_key_id": 1}
     assert len(lan.key) == 28
 
@@ -319,7 +319,7 @@ def test_key_file_without_a_key_mints_a_fresh_one(tmp_path, monkeypatch):
     monkeypatch.delenv("LANIP_KEY")
     lan = LanServer(relay)
     assert lan.key and lan.key_id == 1          # the empty record's id is not trusted
-    assert json.loads((tmp_path / "lanip.json").read_text())["lanip_key"] == lan.key
+    assert json.loads(lan.key_file.read_text())["lanip_key"] == lan.key
 
 
 def test_saved_key_id_and_module_address_are_restored(tmp_path, monkeypatch):
@@ -337,7 +337,7 @@ def test_dev_key_override_is_never_written(tmp_path, monkeypatch):
     assert lan.key == SECRET
     lan.learn_module_ip("<lan-ip>10.0.1.187</lan-ip>")
     assert lan.module_ip == "10.0.1.187"
-    assert not (tmp_path / "lanip.json").exists()
+    assert not lan.key_file.exists()
 
 
 def test_unwritable_key_file_still_yields_a_working_key(tmp_path, monkeypatch, caplog):
@@ -359,6 +359,6 @@ def test_key_file_is_owner_only(tmp_path, monkeypatch):
     monkeypatch.delenv("LANIP_KEY")
     lan = LanServer(relay)
     lan.learn_module_ip("<lan-ip>10.0.1.9</lan-ip>")
-    path = tmp_path / "lanip.json"
+    path = lan.key_file
     assert os.stat(path).st_mode & 0o777 == 0o600
     assert json.loads(path.read_text())["module_ip"] == "10.0.1.9"

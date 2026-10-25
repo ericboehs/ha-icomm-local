@@ -25,8 +25,9 @@ from *its configured cloud* when `lan-enabled` is true **and it has no stored
 key**. Behind the relay, that cloud is us. It accepts the key in the answer and
 persists it; there is no OEM signature on it. The agent only asks when it has
 no key, and nothing in the protocol wipes a key over the network — which is why
-the relay persists its own key (`/data/lanip.json`, mode 0600) and why you
-should not delete that file after the module has learned it.
+the relay persists its own key (`/data/heaters/<DSN>/lanip.json`, mode 0600;
+`/data/lanip.json` before 0.6.0, still kept as a copy) and why you should not
+delete that file after the module has learned it.
 
 ## The protocol (as implemented)
 
@@ -149,7 +150,7 @@ reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
   module is armed but has no key — it should then fetch `lan.json`; watch for
   `key_served: true`.
 - **If the module holds a key this relay did not issue** (an earlier
-  experiment, or a deleted `/data/lanip.json`): it will not ask for a
+  experiment, or a deleted `lanip.json`): it will not ask for a
   replacement — `lan.json` is only fetched when keyless. Measured on the real
   tank: Wi-Fi re-provisioning does **not** clear the stored key, and neither
   does the Wi-Fi radio factory reset (handbook p. 69, 10-second hold).
@@ -193,7 +194,7 @@ install still needs Ayla once: pinning a DSN-steered module needs Ayla's real
 ## Security notes
 
 - The shared key is generated locally and never sent to A.O. Smith. It is not
-  logged. It is stored unencrypted at `/data/lanip.json` with mode 0600 —
+  logged. It is stored unencrypted at `/data/heaters/<DSN>/lanip.json` with mode 0600 —
   protect `/data` accordingly.
 - The LAN endpoints speak only the encrypted protocol, and since 0.3.8 they
   answer only the module's address (plus loopback and `TRUSTED_PEERS`). The

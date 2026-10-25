@@ -12,7 +12,7 @@ a cloud write asked for 142 °F: the tank took 139. Delivery is *not* success; t
 write stays `pending` until telemetry shows it took effect, because a frame can be
 delivered and ignored (the BLE map's mode register at block 26 is exactly that).
 
-Queued writes are **persisted** (`QUEUE_FILE`, `/data/pending.json` in the add-on), so
+Queued writes are **persisted** (`/data/heaters/<DSN>/pending.json` in the add-on; `QUEUE_FILE` names the data directory), so
 a restart no longer drops them — it used to, which was demonstrated while waiting on
 an idle appliance. The file is written atomically, a corrupt one is ignored rather
 than fatal, and a write older than `QUEUE_MAX_AGE_S` (default 24 h) is dropped on

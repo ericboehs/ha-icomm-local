@@ -14,9 +14,10 @@ from icomm_relay import Relay, decode
 
 @pytest.fixture
 def queue_file(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    path = tmp_path / "state" / "pending.json"
-    monkeypatch.setenv("QUEUE_FILE", str(path))
-    return path
+    """Where the queue really lives: the heater's directory under the data dir
+    QUEUE_FILE names (heaters/default/ until the DSN is known, #18)."""
+    monkeypatch.setenv("QUEUE_FILE", str(tmp_path / "state" / "pending.json"))
+    return tmp_path / "state" / "heaters" / "default" / "pending.json"
 
 
 def _relay(tmp_path) -> Relay:
@@ -127,3 +128,4 @@ def test_state_file_lives_where_the_addon_keeps_data(queue_file) -> None:
     """Default location is overridable, because /data is what survives in a container."""
     relay = _relay(queue_file)
     assert str(relay.queue_file) == str(queue_file)
+    assert relay.data_dir == queue_file.parents[2]

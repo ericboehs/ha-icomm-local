@@ -197,7 +197,7 @@ Do it in this order:
    the cloud directly again. Then break its existing connection, or power-cycle
    it.
 2. Remove the *iCOMM Local* integration (and its HACS entry).
-3. Uninstall the add-on. This deletes `/data/lanip.json`. The module keeps that
+3. Uninstall the add-on. This deletes its key (`/data/heaters/<DSN>/lanip.json`). The module keeps that
    now-orphaned Local Connect key, which is harmless: the app does not use
    Local Connect. If you reinstall later, the relay detects the foreign key and
    pushes its new one on the next cloud poll. Power-cycle the heater to force

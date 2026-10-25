@@ -111,7 +111,7 @@ async def test_the_pin_survives_a_restart(tmp_path, monkeypatch):
     monkeypatch.delenv("LANIP_KEY", raising=False)
     relay = Relay()                                        # mints and saves a key
     await _fetch_dsn(relay)
-    saved = json.loads((tmp_path / "lanip.json").read_text())
+    saved = json.loads(relay.lan.key_file.read_text())
     assert saved["module_ip"] == HEATER and saved["module_ip_observed"] is True
     assert saved["module_dsn"] == "AC000W019949045"
     again = Relay()

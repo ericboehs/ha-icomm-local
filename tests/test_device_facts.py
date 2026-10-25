@@ -33,7 +33,7 @@ async def test_the_config_reply_and_a_lan_report(tmp_path, monkeypatch):
     assert device["module_firmware"].startswith("bc 2.11.4")
     assert (device["module_hardware"], device["model"]) == ("LBEE5PA1LD-222", "iCOMMNextGenHP")
     assert device["dsn"] == "AC000W019949045" and device["mac"] == "d01769f8f31c"
-    saved = (tmp_path / "device.json").read_text()
+    saved = (relay.heater.dir / "device.json").read_text()
     assert "SECRET" not in saved and "12345" not in saved       # never the keys
 
 
