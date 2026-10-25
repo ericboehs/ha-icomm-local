@@ -138,11 +138,17 @@ async def test_ack_queues_a_read_only_mcu_telemetry_request(tmp_path):
     assert server.refresh_pending is False
     assert server.telemetry_requests == 1
 
-    # No response means no automatic retry.
+    # No response means no automatic retry: the next poll carries only the
+    # one-time controller-firmware read (0.5.6), and then nothing.
+    def next_command():
+        return json.loads(rx["cipher"].decrypt(base64.b64decode(json.loads(
+            response.body)["enc"])).rstrip(bytes([0])).decode())
     response = await server._commands(request)
-    command = json.loads(rx["cipher"].decrypt(
-        base64.b64decode(json.loads(response.body)["enc"])).rstrip(bytes([0])).decode())
-    assert command["data"] == {}
+    assert next_command()["data"]["cmds"][0]["cmd"]["resource"] == (
+        "property.json?name=active_image_version")
+    response = await server._commands(request)
+    assert next_command()["data"] == {}
+    assert server.telemetry_requests == 1
 
 
 async def test_lan_telemetry_updates_state_and_confirms_the_write(tmp_path):

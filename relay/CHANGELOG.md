@@ -10,6 +10,16 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-25
+
+### Fixed
+- Firmware and identity no longer wait for the heater's next boot after an
+  upgrade or a relay restart:
+  - the identity fields are seeded from the last config reply the relay saved;
+  - the DSN comes from the saved pin or `device_dsn`;
+  - the controller firmware is read once over LAN (a read-only property GET,
+    queued after any pending telemetry refresh).
+
 ## [0.5.6] - 2026-10-25
 
 ### Added
@@ -474,7 +484,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...v0.5.4

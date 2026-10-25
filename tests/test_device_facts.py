@@ -84,3 +84,33 @@ async def test_raw_includes_the_static_blocks(tmp_path, monkeypatch):
     relay.device.note_property("superBlockStatic3", "0102")
     raw = json.loads((await relay.raw_handler(None)).body)
     assert raw["static"] == {"superBlockStatic3": "0102"} and raw["blocks"]
+
+
+def test_identity_is_seeded_from_the_saved_config_reply(tmp_path, monkeypatch):
+    (tmp_path / "dsn-original.xml").write_text(REAL_DSN)
+    relay = _relay(tmp_path, monkeypatch, DEVICE_DSN="AC000W019949045")
+    facts = relay.device.status()
+    assert facts["module_hardware"] == "LBEE5PA1LD-222" and facts["dsn"] == "AC000W019949045"
+
+
+async def test_the_firmware_is_read_once_over_lan_when_unknown(tmp_path):
+    import base64
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+    from test_lan import EXCHANGE, SECRET, _server, module_directions
+    server = _server(tmp_path)
+    relay = server.relay
+    await relay.ingest_lan_update({"data": {"name": "faultCode", "value": "0"}})
+    await relay.ingest_lan_update({"data": {"name": "faultCode", "value": "0"}})
+    assert server.read_queue == ["active_image_version"]          # asked once
+    poll = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
+    _, rx = module_directions(SECRET.encode(), EXCHANGE, server.session.random_2,
+                              server.session.time_2)
+    reply = json.loads(rx["cipher"].decrypt(base64.b64decode(json.loads(
+        (await server._commands(poll)).body)["enc"])).rstrip(bytes([0])).decode())
+    cmd = reply["data"]["cmds"][0]["cmd"]
+    assert cmd["method"] == "GET" and cmd["resource"] == "property.json?name=active_image_version"
+    assert server.read_queue == []
+    await relay.ingest_lan_update({"data": {"name": "active_image_version", "value": "2.14"}})
+    assert relay.device.status()["controller_firmware"] == "2.14"

@@ -280,6 +280,11 @@ class Relay:
         self.queue_file = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
         # Firmware updates wait for the owner (icomm_firmware explains why).
         self.device = DeviceFacts(self.queue_file.parent / "device.json")
+        self._device_read_asked = False
+        # Identity from the last real config reply this relay saved (the DSN
+        # rewrite evidence), so it shows before the heater's next boot.
+        with contextlib.suppress(OSError):
+            self.device.note_dsn((self.queue_file.parent / "dsn-original.xml").read_text())
         self.firmware = FirmwareGate(os.environ.get("FIRMWARE_UPDATES", "hold"),
                                      self.queue_file.parent / "firmware.json")
         # A restored write older than this is dropped rather than delivered: an
@@ -290,6 +295,8 @@ class Relay:
         # (phase 28). LAN delivery and LAN telemetry; the cloud poll stays as
         # the fallback. No A.O. Smith account anywhere.
         self.lan = LanServer(self)
+        if self.device_dsn or self.lan.module_dsn:
+            self.device.note_dsn_id(self.device_dsn or self.lan.module_dsn)
         self.peers = PeerPolicy(lambda: self.lan.module_ip)
         self.dns = DnsServer()
         self.peers.pin_candidate = lambda request: self._pinnable_dsn(request) is not None
@@ -493,6 +500,11 @@ class Relay:
         else:
             _LOGGER.info("LAN update: %r (%d chars)", name, len(value))
         self.device.note_property(name, value)
+        if (not self._device_read_asked and self.lan.session_verified
+                and "controller_firmware" not in self.device.facts):
+            # Reported only at boot: ask once, instead of waiting for one.
+            self._device_read_asked = True
+            self.lan.read_queue.append("active_image_version")
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)

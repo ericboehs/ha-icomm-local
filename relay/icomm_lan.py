@@ -196,6 +196,9 @@ class LanServer:
         # write; the module echoes the value back as a LAN update.
         self.reporting_mask = APP_REPORTING_MASK
         self.mask_pending = False
+        # One-shot reads of other properties (the controller firmware, which
+        # otherwise only arrives at boot). Same read-only GET as telemetry.
+        self.read_queue: list[str] = []
         self.masks_sent = 0
         self.last_mask_sent = 0.0
 
@@ -536,6 +539,14 @@ class LanServer:
                 "uri": "/local_lan/property/datapoint.json"}}]}
             _LOGGER.info("LAN mode: requesting fresh telemetry (cmd %d)",
                          self.refresh_cmd_id)
+        elif self.read_queue:      # after any refresh a write is waiting on
+            name = self.read_queue.pop(0)
+            self.refresh_cmd_id += 1
+            data = {"cmds": [{"cmd": {
+                "method": "GET", "resource": f"property.json?name={name}",
+                "data": "", "cmd_id": self.refresh_cmd_id,
+                "uri": "/local_lan/property/datapoint.json"}}]}
+            _LOGGER.info("LAN mode: reading %s (cmd %d)", name, self.refresh_cmd_id)
         return web.json_response(self.session.app.encrypt_sign(
             {"seq_no": self.seq_no, "data": data}))
 
