@@ -129,3 +129,22 @@ def test_a_custom_queue_name_and_an_existing_default(tmp_path):
     home = migrate(tmp_path, DSN, "queue.json")
     assert home == tmp_path / "heaters" / DSN                      # default renamed
     assert (home / "pending.json").exists() and not (tmp_path / "queue.json").exists()
+
+
+def test_a_dsn_is_only_ever_a_plain_name(tmp_path):
+    from icomm_heater import clean_dsn
+    assert clean_dsn("ac000w019949045") == DSN
+    for bad in ("AC000W019949045\n", "../../etc", "AC000W/0199", "", None, 42, "x" * 33):
+        assert clean_dsn(bad) is None
+    heater = Heater(tmp_path, "AC000W019949045\n")                # rejected: default slot
+    assert heater.dsn is None and heater.dir.name == "default"
+    heater.adopt("AC000W019949045\nINJECTED")
+    assert heater.dsn is None
+
+
+def test_adopt_stays_inside_heaters(tmp_path, monkeypatch):
+    import icomm_heater
+    heater = Heater(tmp_path)
+    monkeypatch.setattr(icomm_heater, "clean_dsn", lambda value: "..")   # if validation slipped
+    heater.adopt("anything")
+    assert heater.dsn is None and heater.dir.name == "default"

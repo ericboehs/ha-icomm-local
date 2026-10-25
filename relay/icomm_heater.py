@@ -38,10 +38,20 @@ from icomm_offline import OfflineConfig
 
 _LOGGER = logging.getLogger("icomm_heater")
 
-DSN_RE = re.compile(r"^[A-Za-z0-9]{6,32}$")
+DSN_RE = re.compile(r"[A-Za-z0-9]{6,32}")
 DEFAULT_SLOT = "default"
 COPIED = ("lanip.json", "device.json", "dsn-original.xml", "dsn-rewritten.xml")
 MOVED = ("pending.json",)
+
+
+def clean_dsn(value) -> str | None:
+    """A DSN fit for a directory name, or None.
+
+    fullmatch, not match with ^$: "$" also matches before a trailing newline.
+    The result is rebuilt from the match, so nothing else of the input survives.
+    """
+    found = DSN_RE.fullmatch(value) if isinstance(value, str) else None
+    return found.group(0).upper() if found else None
 
 
 def _json(path: Path) -> dict:
@@ -61,15 +71,17 @@ def known_dsn(data_dir: Path, configured: str = "") -> str | None:
                              if p.is_dir() and p.name != DEFAULT_SLOT)
     candidates += [_json(data_dir / "lanip.json").get("module_dsn"),
                    (_json(data_dir / "device.json").get("facts") or {}).get("dsn")]
-    for dsn in candidates:
-        if isinstance(dsn, str) and DSN_RE.match(dsn):
-            return dsn.upper()
+    for candidate in candidates:
+        dsn = clean_dsn(candidate)
+        if dsn:
+            return dsn
     return None
 
 
 def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json") -> Path:
     """Give the heater its directory, bringing the single-heater files along."""
     heaters = data_dir / "heaters"
+    dsn = clean_dsn(dsn)
     target = heaters / (dsn or DEFAULT_SLOT)
     default = heaters / DEFAULT_SLOT
     if dsn and default.is_dir() and not target.exists():
@@ -98,6 +110,7 @@ class Heater:
     def __init__(self, data_dir: Path, dsn: str | None = None,
                  offline_enabled: bool = True, queue_name: str = "pending.json") -> None:
         self.data_dir = data_dir
+        dsn = clean_dsn(dsn)
         self.dsn = dsn
         self.dir = migrate(data_dir, dsn, queue_name)
         self.device = DeviceFacts(self.dir / "device.json")
@@ -115,14 +128,17 @@ class Heater:
 
     def adopt(self, dsn: str) -> None:
         """The DSN turned up: move out of heaters/default into heaters/<DSN>."""
-        if self.dsn or not DSN_RE.match(dsn):
+        clean = clean_dsn(dsn)
+        if self.dsn or not clean:
             return
-        dsn = dsn.upper()
-        target = self.data_dir / "heaters" / dsn
+        heaters = (self.data_dir / "heaters").resolve()
+        target = (heaters / clean).resolve()
+        if target.parent != heaters:            # belt and braces: one level, inside heaters/
+            return
         if self.dir.is_dir() and not target.exists():
             self.dir.rename(target)
-            _LOGGER.warning("storage: heaters/%s is now heaters/%s", self.dir.name, dsn)
-        self.dsn, self.dir = dsn, target
+            _LOGGER.warning("storage: heaters/%s is now heaters/%s", self.dir.name, target.name)
+        self.dsn, self.dir = clean, target
         self.device.path = target / "device.json"
         self.offline.cached = target / "dsn-original.xml"
 
