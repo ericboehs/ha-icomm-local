@@ -137,3 +137,45 @@ async def test_no_peer_address_never_pins(tmp_path, monkeypatch):
 def test_pin_module_refuses_when_configured(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch, MODULE_IP="10.0.1.50")
     assert relay.lan.pin_module(HEATER, "AC000W019949045") is False
+
+
+class _Transport:
+    def __init__(self, port):
+        self.port = port
+
+    def get_extra_info(self, name, default=None):
+        if name == "sockname":
+            return ("10.0.1.113", self.port) if self.port else None
+        return default
+
+    def is_closing(self):
+        return False
+
+
+def _arriving(request, remote, port):
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+    clone = make_mocked_request(request.method, request.path, app=web.Application(),
+                                transport=_Transport(port))
+    return clone.clone(remote=remote)
+
+
+async def test_the_first_config_fetch_is_awaited_not_warned(tmp_path, monkeypatch, caplog):
+    relay = _relay(tmp_path, monkeypatch)
+    caplog.set_level("INFO")
+    request = _arriving(_request("GET", DSN_PATH), HEATER, 443)
+    relay.peers.note_untrusted(request, ":8444", "plain-proxying")
+    assert "waiting for Ayla to confirm the module" in caplog.text and "on :443" in caplog.text
+    assert relay.peers.awaiting_pin == 1 and relay.peers.rejected == {}
+    assert "WARNING" not in caplog.text
+
+
+async def test_other_untrusted_requests_warn_with_the_real_port(tmp_path, monkeypatch, caplog):
+    relay = _relay(tmp_path, monkeypatch)
+    request = _arriving(_request("GET", "/devices/1/commands.xml"), HEATER, 443)
+    relay.peers.note_untrusted(request, ":8444", "plain-proxying")
+    assert "on :443" in caplog.text and "power-cycle it so Ayla can confirm it" in caplog.text
+    assert relay.peers.rejected == {HEATER: 1}
+    no_socket = _arriving(_request("GET", "/devices/1/commands.xml"), "10.0.20.9", None)
+    relay.peers.note_untrusted(no_socket, ":8444", "plain-proxying")
+    assert "on :8444" in caplog.text                     # no socket info: the label

@@ -93,6 +93,10 @@ class PeerPolicy:
         self._gateways_read = time.time()
         self.rejected: dict[str, int] = {}
         self._warned: dict[str, float] = {}
+        # Set by the relay: is this untrusted request the module's config
+        # fetch, which can still pin it (DNS steering, before Ayla's 200)?
+        self.pin_candidate = lambda request: False
+        self.awaiting_pin = 0
 
     def _refresh_gateways(self) -> None:
         """The add-on can start before the host has its default route."""
@@ -118,10 +122,27 @@ class PeerPolicy:
 
     def status(self) -> dict:
         return {"gateways": sorted(self.gateways), "extra": sorted(self.extra),
-                "allow_all": self.allow_all, "rejected": dict(self.rejected)}
+                "allow_all": self.allow_all, "rejected": dict(self.rejected),
+                "awaiting_pin": self.awaiting_pin}
+
+    @staticmethod
+    def _port(request: web.Request, fallback: str) -> str:
+        """The port the request really arrived on (one app serves 8444 and 443)."""
+        sockname = request.transport.get_extra_info("sockname") if request.transport else None
+        return f":{sockname[1]}" if isinstance(sockname, tuple) and len(sockname) > 1 else fallback
 
     def note_untrusted(self, request: web.Request, port_label: str, action: str) -> None:
         peer = normalize(request.remote) or "?"
+        port_label = self._port(request, port_label)
+        if self.pin_candidate(request):
+            # Expected once per boot with DNS steering: the module's first
+            # config fetch, before Ayla has checked its credentials.
+            self.awaiting_pin += 1
+            _LOGGER.info("%s from %s on %s: waiting for Ayla to confirm the module "
+                         "(its config fetch) before trusting it",
+                         request.path.replace("\r", "").replace("\n", ""),
+                         peer.replace("\r", "").replace("\n", ""), port_label)
+            return
         if peer in self.rejected or len(self.rejected) < 64:      # bounded
             self.rejected[peer] = self.rejected.get(peer, 0) + 1
         now = time.time()
@@ -136,8 +157,9 @@ class PeerPolicy:
             shown = peer.replace("\r", "").replace("\n", "")
             _LOGGER.warning(
                 "%s %s %r from %s on %s: not a trusted peer (gateways %s, module %s). "
-                "If %s is your router/gateway, add it to the trusted_peers option; "
-                "if it is the water heater, set module_ip.", action, method,
+                "If %s is your router/gateway, add it to the trusted_peers option. If it "
+                "is the water heater, power-cycle it so Ayla can confirm it (DNS "
+                "steering), or set module_ip.", action, method,
                 path, shown, port_label, sorted(self.gateways) or "none detected",
                 self._module_ip() or "unknown", shown)
 

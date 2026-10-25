@@ -377,7 +377,7 @@ async def test_state_handler_reports_everything_the_integration_reads(
     assert body["injections_held"] == 0 and body["cloud_writes"] == 0
     assert body["last_cloud_write"] is None and body["last_write"] is None
     assert body["lan"]["enabled"] is True and body["lan"]["registered"] is False
-    assert set(body["peers"]) == {"gateways", "extra", "allow_all", "rejected"}
+    assert set(body["peers"]) == {"gateways", "extra", "allow_all", "rejected", "awaiting_pin"}
 
     relay.last_telemetry = time.time() - 601
     body = json.loads((await relay.state_handler(None)).body)

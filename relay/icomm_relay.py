@@ -290,6 +290,7 @@ class Relay:
         self.lan = LanServer(self)
         self.peers = PeerPolicy(lambda: self.lan.module_ip)
         self.dns = DnsServer()
+        self.peers.pin_candidate = lambda request: self._pinnable_dsn(request) is not None
         # DNS steering lands the module on 443, the port its cloud name uses.
         # Listened on beside listen_port, so NAT steering keeps working too.
         self.dns_https_error: str | None = None

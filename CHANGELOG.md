@@ -10,6 +10,16 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-25
+
+### Fixed
+- With DNS steering, the module's first config fetch at every boot (before
+  Ayla has checked its credentials) logged a misleading warning: the wrong
+  port (`:8444` for a request that came in on 443) and "set module_ip". It's
+  now an info line, "waiting for Ayla to confirm the module", and is counted
+  in `/state` as `peers.awaiting_pin`. Other untrusted requests are still
+  warned about, with the port they actually arrived on and DNS-aware advice.
+
 ## [0.5.5] - 2026-10-25
 
 ### Added
@@ -450,7 +460,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...v0.5.3
