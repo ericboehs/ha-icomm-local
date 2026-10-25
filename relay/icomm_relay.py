@@ -255,6 +255,10 @@ class Relay:
         self.contents_changed = 0.0
         self._last_blocks: tuple[bytes, ...] | None = None
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
+        # Renew the controller's periodic reporting when the contents freeze
+        # (phase 42). Off by default until confirmed on the tank.
+        self.mask_renew = os.environ.get("REPORTING_MASK_RENEW", "0") == "1"
+        self.mask_renew_after = float(os.environ.get("REPORTING_MASK_RENEW_AFTER", "1800"))
         self.started = time.time()
         self.upstream_errors = 0
         # Ayla's certificate failing verification (an expired pin, a new CA)
@@ -427,6 +431,7 @@ class Relay:
             if tuple(blocks) != self._last_blocks:
                 self._last_blocks = tuple(blocks)
                 self.contents_changed = time.time()
+            self._maybe_renew_mask()
             try:
                 self.state = decode(blocks)
                 self.state["online"] = True
@@ -438,6 +443,26 @@ class Relay:
             except (IndexError, ValueError):
                 pass
             self._confirm_pending()
+
+    def _maybe_renew_mask(self) -> None:
+        """Contents frozen this long: ask for periodic reporting again, at most
+        once per interval, so a mask that doesn't help can't become a loop."""
+        if not self.mask_renew or not self.contents_changed:
+            return
+        now = time.time()
+        if (now - self.contents_changed >= self.mask_renew_after
+                and now - self.lan.last_mask_sent >= self.mask_renew_after
+                and self.lan.request_mask()):
+            _LOGGER.warning("telemetry unchanged for %d min: renewing the reporting mask",
+                            (now - self.contents_changed) // 60)
+
+    async def reporting_mask_handler(self, request: web.Request) -> web.Response:
+        """POST /lan/reporting-mask: send the app's reporting mask once, now."""
+        if not self.lan.request_mask():
+            return web.json_response({"queued": False, "error": "no LAN session"},
+                                     status=409)
+        _LOGGER.warning("reporting mask requested through the state API")
+        return web.json_response({"queued": True})
 
     async def raw_handler(self, request: web.Request) -> web.Response:
         """GET /raw: the last superBlockDyn1 as hex, one string per block."""
@@ -455,6 +480,8 @@ class Relay:
             # setBlockParameter echoes...) carry no secrets, and phase 30 showed
             # that logging only their length leaves a question unanswerable.
             _LOGGER.info("LAN update: %r = %r", name, value)
+            if name == "periodicParameterSetting":
+                self.lan.note_mask(value)
         else:
             _LOGGER.info("LAN update: %r (%d chars)", name, len(value))
         if data.get("name") == "superBlockDyn1" and data.get("value"):
@@ -1004,6 +1031,7 @@ class Relay:
         state_app.router.add_post("/write", self.write_handler)
         state_app.router.add_post("/write/cancel", self.write_cancel_handler)
         state_app.router.add_post("/firmware/allow", self.firmware_allow_handler)
+        state_app.router.add_post("/lan/reporting-mask", self.reporting_mask_handler)
 
         runner_state = web.AppRunner(state_app)
         await runner_state.setup()

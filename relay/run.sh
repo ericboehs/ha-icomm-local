@@ -40,6 +40,8 @@ except (OSError, ValueError):
     opts = {}
 if opts.get("lan_mode") is False:
     print("export LAN_MODE=0")
+if opts.get("reporting_mask_renew") is True:
+    print("export REPORTING_MASK_RENEW=1")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),

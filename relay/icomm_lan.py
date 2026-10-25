@@ -114,6 +114,20 @@ class Session:
         return {"random_2": self.random_2, "time_2": self.time_2}
 
 
+# The periodic-reporting mask the A.O. Smith app has Ayla send when it opens
+# (captured 2026-10-24 and -25, identical): one bit per 16-bit register of
+# telemetry blocks 1-4 (73/105/26/26 bits; research phases 30 and 42). The
+# controller's live reporting lapses some hours after the last app session;
+# sending this again resumes it.
+APP_REPORTING_MASK = (
+    "0000000000000000000000000000000000000000000100000000000000000000000000000,"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000,"
+    "10000000000000010111100000,"
+    "00010000001111110000000001")
+MASK_RE = re.compile(r"^[01]{73},[01]{105},[01]{26},[01]{26}$")
+
+
 class LanServer:
     """The relay's local doorbell: registration, command polls, telemetry."""
 
@@ -178,6 +192,12 @@ class LanServer:
         self.stall_after = float(os.environ.get("LAN_STALL_AFTER", "60"))
         self._task: asyncio.Task | None = None
         self._runner: web.AppRunner | None = None
+        # Reporting-mask renewal (phase 42). Delivered on the next poll like a
+        # write; the module echoes the value back as a LAN update.
+        self.reporting_mask = APP_REPORTING_MASK
+        self.mask_pending = False
+        self.masks_sent = 0
+        self.last_mask_sent = 0.0
 
     # -- the shared secret ---------------------------------------------
     def _load_or_create_key(self) -> str:
@@ -248,6 +268,20 @@ class LanServer:
             self.module_ip = found.group(1)
             _LOGGER.info("LAN mode: module is at %s", self.module_ip)
             self._persist()
+
+    def note_mask(self, value: str) -> None:
+        """Keep the newest mask the app sent, so a renewal repeats it exactly."""
+        if MASK_RE.match(value) and value != self.reporting_mask:
+            self.reporting_mask = value
+            _LOGGER.info("LAN mode: learned a new reporting mask from the app")
+
+    def request_mask(self) -> bool:
+        """Queue one mask delivery; False when there is no session to carry it."""
+        if not self.enabled or self.session is None:
+            return False
+        self.mask_pending = True
+        self.wake()
+        return True
 
     def pin_module(self, peer: str, dsn: str) -> bool:
         """Trust `peer` as the module: Ayla just accepted its config fetch.
@@ -350,7 +384,10 @@ class LanServer:
                 "refresh_pending": self.refresh_pending,
                 "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
-                "stall_recoveries": self.stall_recoveries}
+                "stall_recoveries": self.stall_recoveries,
+                "masks_sent": self.masks_sent,
+                "last_mask_sent_age": round(now - self.last_mask_sent, 1)
+                if self.last_mask_sent else None}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
@@ -477,6 +514,16 @@ class LanServer:
             self.writes_delivered += 1
             _LOGGER.warning("LAN mode: delivering %s = %s locally",
                             write.kind, write.value)
+        elif self.mask_pending:
+            self.mask_pending = False
+            self.masks_sent += 1
+            self.last_mask_sent = time.time()
+            data = {"properties": [{"property": {
+                "base_type": "string", "name": "periodicParameterSetting",
+                "value": self.reporting_mask,
+                "id": "".join(secrets.choice(_ALNUM) for _ in range(8))}}]}
+            _LOGGER.warning("LAN mode: sending the reporting mask (renewal %d)",
+                            self.masks_sent)
         elif self.refresh_pending or self._refresh_due():
             self.refresh_pending = False       # one shot; never retry in a loop
             self.last_refresh_request = time.time()

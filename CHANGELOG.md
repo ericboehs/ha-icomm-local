@@ -10,6 +10,27 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-25
+
+### Added
+- **Reporting-mask renewal (opt-in).** Frozen data has a cause: the
+  controller's live reporting lapses some hours after the A.O. Smith app was
+  last opened, and opening the app re-arms it by sending a
+  `periodicParameterSetting` mask. Measured: data frozen for 4+ hours came
+  back the second the app opened. The relay can now send the same mask over
+  the LAN session:
+  - by hand: `POST /lan/reporting-mask` on the state API;
+  - automatically: the add-on option `reporting_mask_renew`
+    (`REPORTING_MASK_RENEW=1`). After 30 minutes of frozen contents it sends
+    the mask, at most once every 30 minutes. Off until confirmed on more
+    tanks.
+  - The relay learns a newer mask whenever the app sends one, and `/state`
+    shows `lan.masks_sent`.
+
+### Changed
+- The *Water heater data is frozen* repair now says to open the A.O. Smith app
+  (or turn on `reporting_mask_renew`) instead of power-cycling the breaker.
+
 ## [0.5.3] - 2026-10-25
 
 ### Added
@@ -411,7 +432,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ### Added
 - Mode enum sensor and the router steering guide.
 
-[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ericboehs/ha-icomm-local/compare/v0.5.0...v0.5.1
