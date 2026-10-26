@@ -343,8 +343,8 @@ class Hub:
                           "first, or the next primary would inherit it"}, status=409)
         removed = forget(engine.data_dir, dsn, primary, self._queue_name())
         self.removing.append((dsn, primary))
-        _LOGGER.warning("heater %s: removed (%s); restarting the relay", _shown(dsn),
-                        ", ".join(removed) or "nothing on disk")
+        _LOGGER.warning("heater %s: removed (%d files or folders); restarting the relay",
+                        _shown(dsn), len(removed))
         if self._stop is not None:
             asyncio.get_running_loop().call_soon(self._stop.set)
         return web.json_response({"removed": dsn, "primary": primary, "files": removed,

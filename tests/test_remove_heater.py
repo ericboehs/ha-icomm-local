@@ -105,8 +105,7 @@ def test_forget_stays_inside_heaters(tmp_path):
 
 
 def test_forget_checks_the_path_even_for_a_clean_dsn(tmp_path, monkeypatch):
-    import icomm_heater
-    monkeypatch.setattr(icomm_heater, "clean_dsn", lambda value: "../escape")
+    monkeypatch.setattr("icomm_heater.clean_dsn", lambda value: "../escape")
     assert forget(tmp_path, DSN_B, primary=True) == []
 
 
