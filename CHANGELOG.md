@@ -10,6 +10,20 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Docs
+- **DNS steering:**
+  - the built-in `dns_server` is marked tested (live since 0.5.5), with its
+    timeline;
+  - a check step to run before the power cycle, taken from a fresh-install
+    dry run of 0.7.6, with the log lines to expect;
+  - `dns_upstream` for gateways that don't answer DNS;
+  - `relay_ip` for a heater on its own VLAN.
+- **README:**
+  - one power-cycle time (30 s) and the full log sequence;
+  - the IP reservation is optional with DNS steering;
+  - VLANs are workable;
+  - the dashboard wording matches 0.7.5.
+
 ## [0.7.6] - 2026-10-26
 
 ### Fixed

@@ -15,6 +15,12 @@ There are two ways to run the DNS side:
 
 ## Built in: `dns_server`
 
+**Tested** on the real tank: this has been the author's live setup since
+2026-10-25. Local Connect was verified 23 seconds after the heater's first
+DNS lookup, with no `module_ip` set (see *Measured: built in* below). A
+fresh install was also dry-run on 0.7.6: the add-on image with an empty
+`/data` and only `dns_server` turned on.
+
 1. In the add-on's configuration, turn on **`dns_server`** and restart the
    add-on. The relay then:
    - answers DNS on port 53 of the HA host;
@@ -28,7 +34,53 @@ There are two ways to run the DNS side:
    address. Leave the secondary DNS empty: if the heater picks the secondary
    when it boots, it reaches Ayla directly and local control stays off until
    the next boot.
-3. Power-cycle the water heater once (breaker off for about 30 seconds).
+3. Before touching the heater, check from any computer on the network. The
+   heater's name should come back as the Home Assistant host's IP, its IPv6
+   lookup should be empty, and other names should resolve normally:
+
+   ```console
+   $ dig +short @<ha-ip> iCOMMNextGenHP-71538015-device.aylanetworks.com
+   <ha-ip>
+   $ dig +short @<ha-ip> AAAA iCOMMNextGenHP-71538015-device.aylanetworks.com
+   $ dig +short @<ha-ip> ans-field.aylanetworks.com
+   34.45.30.160
+   ```
+
+   The add-on log shows the setup and each rewrite:
+
+   ```
+   DNS: serving on :53; rewriting [a-z0-9-]+-71538015-device\.aylanetworks\.com, forwarding the rest to <gateway-ip>
+   DNS: steering icommnextgenhp-71538015-device.aylanetworks.com for <your-computer> to <ha-ip>
+   ```
+
+   If `ans-field` or other names don't resolve, your gateway doesn't answer
+   DNS (some routers hand out a separate resolver instead). Set
+   **`dns_upstream`** to a resolver that works, such as your ISP's or
+   `1.1.1.1`, and restart the add-on. The dry run hit exactly this: forwarding
+   to a gateway with no DNS server fails for every name except the heater's.
+   Don't skip this check. Once the router hands out Home Assistant as DNS,
+   every device on the network depends on that forwarding.
+4. Power-cycle the water heater once (breaker off for about 30 seconds). Within
+   a minute the add-on log shows:
+
+   ```
+   DNS: steering icommnextgenhp-71538015-device.aylanetworks.com for <heater-ip> to <ha-ip>
+   LAN mode: module <DSN> is at <heater-ip> (its own address: steered by DNS, not NAT)
+   DSN rewrite: flipped lan-enabled, local-access-enabled in config reply
+   LAN mode: module fetched lan.json; answered with our key
+   LAN mode: registered with the module
+   ```
+
+   An earlier line, `… waiting for Ayla to confirm the module`, is normal.
+   The heater's first request at each boot comes before Ayla has checked its
+   credentials. The iCOMM Local integration's *Relay health* then turns
+   healthy once the heater has dialled the cloud a few times.
+
+**Heater on its own VLAN?** Local Connect only calls back to an address on the
+heater's own subnet. Set **`relay_ip`** to the gateway's address on the
+heater's VLAN, and forward its callback port to Home Assistant. See
+[NETWORK_ISOLATION.md](NETWORK_ISOLATION.md), which is the author's setup.
+On a flat network, leave `relay_ip` empty.
 
 Home Assistant raises a repair if port 53 or 443 is already taken on the host,
 for example by an AdGuard, Pi-hole or NGINX SSL add-on. In that case use the
@@ -46,7 +98,7 @@ router can.
 **Tested** on the real tank (2026-10-25), with AdGuard Home and the relay on a
 Linux host and no NAT in the HTTPS path. From the breaker coming back on to a
 verified Local Connect session took about 30 seconds. Details are under
-*Measured* below.
+*Measured: your own resolver* below.
 
 ## Why it has to be on every boot
 
@@ -128,6 +180,7 @@ the config rewrite, and then Local Connect:
 
 ```
 DSN rewrite: flipped lan-enabled, local-access-enabled in config reply
+LAN mode: module fetched lan.json; answered with our key
 LAN mode: registered with the module
 LAN mode: key exchange accepted; session keys derived
 ```
@@ -146,7 +199,20 @@ LAN mode: key exchange accepted; session keys derived
   heater's only route to the cloud. Remove the rewrite before uninstalling the
   relay.
 
-## Measured
+## Measured: built in
+
+Live on Home Assistant OS (relay 0.5.5), 2026-10-25. The heater was on its own
+VLAN, with that VLAN's DHCP DNS pointed at Home Assistant. `module_ip` was
+cleared, the add-on restarted, and then the breaker cycled:
+
+| Time | Event |
+|---|---|
+| 16:13:49 | the heater looked up its name on Home Assistant: **rewritten** |
+| 16:14:01 | its first `GET /dsns/<DSN>.xml` arrived on 443 from its own IP; Ayla answered 401, so the relay doesn't trust it yet |
+| 16:14:07 | the authenticated retry got 200; the relay pinned the module to that address, then rewrote the config reply |
+| 16:14:12 | Local Connect: registered, key exchange OK, telemetry flowing |
+
+## Measured: your own resolver
 
 Test host: Debian with the relay (`listen_port 443`, the same LAN key as the
 Home Assistant add-on) and AdGuard Home v0.107.79. The heater was on its
