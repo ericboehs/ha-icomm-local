@@ -42,6 +42,8 @@ if opts.get("lan_mode") is False:
     print("export LAN_MODE=0")
 if opts.get("reporting_mask_renew") is False:
     print("export REPORTING_MASK_RENEW=0")
+if opts.get("experimental_freeze_reconnect") is True:
+    print("export FREEZE_RECONNECT=1")
 if opts.get("offline_fallback") is False:
     print("export OFFLINE_FALLBACK=0")
 if opts.get("dns_server") is True:

@@ -178,6 +178,11 @@ HOT_WATER_LEVELS = {0: "low", 5: "medium", 10: "high"}
 OPERATING_STATES = {11: "idle", 12: "heating"}
 
 
+# What a frozen snapshot claims about activity is reported as unknown.
+FROZEN_UNKNOWN = ("watts", "operating_state", "operating_state_raw",
+                  "heating_element", "heat_flags")
+
+
 def word(block: bytes, offset: int) -> int:
     return int.from_bytes(block[offset:offset + 2], "big")
 
@@ -306,10 +311,26 @@ class Relay:
         self.contents_changed = 0.0
         self._last_blocks: tuple[bytes, ...] | None = None
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
+        # Heating changes tank temperatures within minutes: the longest healthy
+        # gap between controller pushes while heating was 10 min (n=115); idle
+        # reached 52 (phase 50). So a "heating" report unchanged for 20 min is
+        # frozen -- 10-26 it said 356 W for 1 h 51 m after the compressor stopped.
+        self.contents_stale_heating_after = float(
+            os.environ.get("CONTENTS_STALE_HEATING_AFTER", "1200"))
         # Renew the controller's periodic reporting when the contents freeze
         # (phase 42). Off by default until confirmed on the tank.
         self.mask_renew = os.environ.get("REPORTING_MASK_RENEW", "1") != "0"
         self.mask_renew_after = float(os.environ.get("REPORTING_MASK_RENEW_AFTER", "1800"))
+        # Experimental, off by default: after 2 renewals haven't unfrozen the
+        # data, drop the LAN session so the module re-registers (new key
+        # exchange). 10-26 the only reconnect during a freeze was followed by
+        # live data within 11 min, while 5 renewals were not; 0 of 17 relay
+        # reconnects outside a freeze started one (phase 50). One trial.
+        self.freeze_reconnect = os.environ.get("FREEZE_RECONNECT", "0") == "1"
+        self.freeze_masks = 0            # renewals since the contents last changed
+        self.freeze_reconnected = False  # at most one reconnect per freeze
+        self.freeze_reconnects = 0
+        self.last_freeze_reconnect: float | None = None
         self.started = time.time()
         self.upstream_errors = 0
         # Ayla's certificate failing verification (an expired pin, a new CA)
@@ -554,6 +575,8 @@ class Relay:
             if tuple(blocks) != self._last_blocks:
                 self._last_blocks = tuple(blocks)
                 self.contents_changed = time.time()
+                self.freeze_masks = 0
+                self.freeze_reconnected = False
                 if lan:
                     self.lan_changes.append(self.contents_changed)
             self._maybe_renew_mask()
@@ -569,15 +592,41 @@ class Relay:
                 pass
             self._confirm_pending()
 
+    def _heating(self) -> bool:
+        watts = self.state.get("watts")
+        return isinstance(watts, (int, float)) and watts > 0
+
+    def stale_after(self) -> float:
+        """How long unchanged contents may last before they count as frozen."""
+        if self._heating():
+            return min(self.contents_stale_heating_after, self.contents_stale_after)
+        return self.contents_stale_after
+
+    def renew_after(self) -> float:
+        return min(self.mask_renew_after, self.stale_after())
+
     def _maybe_renew_mask(self) -> None:
         """Contents frozen this long: ask for periodic reporting again, at most
-        once per interval, so a mask that doesn't help can't become a loop."""
+        once per interval, so a mask that doesn't help can't become a loop.
+        With freeze_reconnect, the third attempt is a LAN reconnect instead."""
         if not self.mask_renew or not self.contents_changed:
             return
         now = time.time()
-        if (now - self.contents_changed >= self.mask_renew_after
-                and now - self.lan.last_mask_sent >= self.mask_renew_after
-                and self.lan.request_mask()):
+        after = self.renew_after()
+        if now - self.contents_changed < after or now - self.lan.last_mask_sent < after:
+            return
+        if (self.freeze_reconnect and not self.freeze_reconnected
+                and self.freeze_masks >= 2 and self.lan.reconnect()):
+            self.freeze_reconnected = True
+            self.freeze_reconnects += 1
+            self.last_freeze_reconnect = now
+            self.lan.last_mask_sent = now      # the next renewal waits a full interval
+            _LOGGER.warning("telemetry unchanged for %d min after %d reporting-mask renewals: "
+                            "reconnecting the LAN session (experimental_freeze_reconnect)",
+                            (now - self.contents_changed) // 60, self.freeze_masks)
+            return
+        if self.lan.request_mask():
+            self.freeze_masks += 1
             _LOGGER.warning("telemetry unchanged for %d min: renewing the reporting mask",
                             (now - self.contents_changed) // 60)
 
@@ -1131,16 +1180,28 @@ class Relay:
         out["heater"] = self.heater.status()
         out["heaters"] = self.heaters_list()
         out["reporting_mask"] = {"renew": self.mask_renew,
-                                 "after_s": self.mask_renew_after,
+                                 "after_s": self.renew_after(),
                                  "sent": self.lan.masks_sent}
+        out["freeze_reconnect"] = {"enabled": self.freeze_reconnect,
+                                   "reconnects": self.freeze_reconnects,
+                                   "last": self.last_freeze_reconnect}
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
         unchanged = (round(time.time() - self.contents_changed)
                      if self.contents_changed else None)
         out["contents_unchanged_s"] = unchanged
+        out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None
-                                     and unchanged >= self.contents_stale_after)
+                                     and unchanged >= out["contents_stale_after_s"])
+        if out["contents_stale"]:
+            # The last report's activity can't be trusted: the module resends a
+            # cached snapshot while the heater may have stopped (or started).
+            # Tank temperatures stay, as the last known values.
+            for key in FROZEN_UNKNOWN:
+                if key in out:
+                    out[key] = None
+            out["frozen_unknown"] = list(FROZEN_UNKNOWN)
         return web.json_response(out)
 
     async def health_handler(self, request: web.Request) -> web.Response:

@@ -22,6 +22,7 @@ options:
   trusted_peers: ""
   firmware_updates: hold
   reporting_mask_renew: true
+  experimental_freeze_reconnect: false
   dns_server: false
   dns_upstream: ""
   offline_fallback: true
@@ -52,9 +53,14 @@ schema:
   firmware_updates: list(hold|allow)
   # The controller's live reporting lapses hours after the last A.O. Smith app
   # session (and after a reboot), and the data freezes. On (default): the relay
-  # re-sends the app's reporting mask over the LAN session after 30 minutes
-  # frozen (at most every 30), which brings live data back in minutes.
+  # re-sends the app's reporting mask over the LAN session once the data has
+  # been frozen 30 minutes (20 while it claims to be heating), and again at
+  # most that often. It has fixed a freeze in minutes, and also failed to.
   reporting_mask_renew: bool?
+  # Experimental, off by default. After 2 mask renewals haven't unfrozen the
+  # data, reconnect the LAN session once (a new registration and key exchange,
+  # as after a heartbeat timeout), then carry on renewing. Seen to help once.
+  experimental_freeze_reconnect: bool?
   # For routers that can't do the NAT steering: serve DNS on this host's port
   # 53. The water heater's cloud name resolves here (the relay also listens on
   # 443); everything else is forwarded to dns_upstream, by default the host's

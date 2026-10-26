@@ -31,7 +31,27 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   *Hot water available %* matches the app in heat pump mode too (18 of those
   captures), so it stays as is.
 
+- **Frozen data is caught sooner while heating.** If the last report said
+  heating and nothing has changed for 20 minutes, the data is frozen. Idle
+  is still 90 minutes. The longest healthy gap seen while heating was
+  10 minutes; idle reached 52.
+- **While frozen, power, operating state and heating element show as
+  unknown.** The heater's module keeps resending a cached snapshot. On
+  10-26 it claimed "heating, 356 W" for 1 h 51 m after the compressor had
+  stopped. Tank temperatures stay, as the last known values.
+- **The frozen-data repair no longer promises** that the relay's
+  reporting-mask renewal always brings data back: 5 renewals didn't on 10-26.
+
 ### Added
+- **`experimental_freeze_reconnect` add-on option** (off by default). When 2
+  reporting-mask renewals haven't unfrozen the data, it reconnects the LAN
+  session once per freeze (new registration and key exchange), then keeps
+  renewing. The state API reports `freeze_reconnect`.
+  - **Why try it:** the one reconnect seen during a freeze was followed by
+    live data within 11 minutes.
+  - **Why it should be safe:** none of 17 relay reconnects outside a freeze
+    started one. The 10-26 freeze began after the heater restarted its own
+    session.
 - **Time to recover:** minutes of heating left, energy to setpoint ÷ power.
   It's 0 once satisfied, and unknown between cycles, when there's no rate.
 

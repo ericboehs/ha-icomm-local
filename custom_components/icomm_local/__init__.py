@@ -173,11 +173,12 @@ def _cloud_idle_issue(hass: HomeAssistant, data: dict, issue_id: str,
 def _frozen_fix(mask: dict) -> str:
     """What to do about frozen data: the relay re-arms it itself, or the app."""
     if mask.get("renew"):
-        return ("The relay re-arms reporting automatically: after "
+        return ("The relay tries to re-arm reporting itself: after "
                 f"{round((mask.get('after_s') or 1800) / 60)} minutes frozen it re-sends the "
                 "app's reporting request over the local connection "
-                f"({mask.get('sent', 0)} sent since the relay started), which brings live data "
-                "back within a few minutes. If this warning stays, **open the A.O. Smith app** "
+                f"({mask.get('sent', 0)} sent since the relay started). That has brought live "
+                "data back within minutes, but not every time. Until then, power and operating "
+                "state show as unknown. If this warning stays, **open the A.O. Smith app** "
                 "and view the water heater.")
     return ("To fix it now, **open the A.O. Smith app** and view the water heater: that "
             "re-arms reporting within seconds. To have the relay do it automatically, turn on "

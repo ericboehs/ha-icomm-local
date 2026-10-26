@@ -55,3 +55,19 @@ async def test_time_to_recover_without_telemetry(hass, aioclient_mock):
                                               "last_telemetry_age": None})
     assert hass.states.get("sensor.icomm_water_heater_time_to_recover").state in (
         "unknown", "unavailable")
+
+
+async def test_frozen_activity_shows_unknown(hass, aioclient_mock):
+    """The relay blanks what a frozen snapshot claims about activity (phase 50);
+    tank temperatures stay as the last known values."""
+    frozen = {**STATE, "watts": None, "operating_state": None, "operating_state_raw": None,
+              "heating_element": None, "heat_flags": None, "heat_deficit_wh": 420,
+              "contents_stale": True, "contents_unchanged_s": 1300,
+              "frozen_unknown": ["watts", "operating_state", "operating_state_raw",
+                                 "heating_element", "heat_flags"]}
+    await _setup(hass, aioclient_mock, state=frozen)
+    for entity in ("power", "operating_state", "heating_element", "time_to_recover"):
+        assert hass.states.get(f"sensor.icomm_water_heater_{entity}").state == "unknown", entity
+    assert hass.states.get("sensor.icomm_water_heater_water_tank_top").state not in (
+        "unknown", "unavailable")
+    assert hass.states.get("water_heater.icomm_water_heater").attributes["power_w"] is None

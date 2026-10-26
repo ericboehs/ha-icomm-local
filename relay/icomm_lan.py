@@ -367,6 +367,17 @@ class LanServer:
                             "%.0f s; re-registering to reset the module's LAN session",
                             quiet)
 
+    def reconnect(self) -> bool:
+        """Drop to a fresh POST registration: a new LAN session and key
+        exchange, as after a heartbeat timeout. Used for frozen telemetry."""
+        if not self.registered:
+            return False
+        self.registered = False
+        if self._wake_event is not None:
+            self._wake_event.set()
+        _LOGGER.warning("LAN mode: reconnecting (new registration and key exchange)")
+        return True
+
     def wake(self) -> None:
         """Send the next heartbeat now: notify=1 makes the module poll at once."""
         if self._wake_event is not None and self.registered:
