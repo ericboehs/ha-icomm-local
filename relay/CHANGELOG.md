@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-25
+
 ### Changed
 - **The water heater's current temperature is now the tank average**, not the
   top thermistor. The average is the controller's own tank temperature, the
