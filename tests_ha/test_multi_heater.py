@@ -336,3 +336,21 @@ async def test_rekey_leaves_others_and_never_collides(hass):
                                  config_entry=entry, suggested_object_id="already_there")
     assert rekey(hass, entry, A, B) == 0                    # watts and mode both taken
     assert registry.async_get_entity_id("sensor", "icomm_local", f"icomm_local_{A}_watts")
+
+
+async def test_a_promoted_second_heater_is_not_a_replacement(hass, aioclient_mock):
+    """Final review: A removed from a two-heater relay, B becomes primary. B
+    keeps its own number, device and entities; A's are not moved onto B."""
+    entry = await _setup(hass, aioclient_mock)
+    device_b = _device(hass, entry, B)
+    _relay(aioclient_mock, a={**STATE_B, "heaters": [B]})
+    await hass.data["icomm_local"][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    assert registry.async_get("sensor.icomm_water_heater_power").unique_id == (
+        f"icomm_local_{A}_watts")                                        # A's, untouched
+    assert registry.async_get("sensor.icomm_water_heater_2_power").unique_id == (
+        f"icomm_local_{B}_watts")
+    assert _device(hass, entry, B).id == device_b.id
+    assert entry.data["heater_numbers"] == {A: 1, B: 2} and entry.data["dsn"] == B
+    assert hass.states.get("water_heater.icomm_water_heater_2").state == "electric"

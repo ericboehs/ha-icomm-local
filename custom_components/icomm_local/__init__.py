@@ -219,7 +219,8 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         # single-heater keys then would register every entity a second time.
         stored, reported = valid_dsn(entry.data.get(CONF_DSN)), primary_dsn(data)
         listed = data.get("heaters") if multi_capable(data) else []
-        if reported and stored and reported != stored and stored not in listed:
+        if (reported and stored and reported != stored and stored not in listed
+                and reported not in coordinator.numbers):     # new, not a promoted secondary
             # The heater was replaced: the old one is gone from the relay
             # entirely. Its entities and device become the new one's, by a
             # (re)load that re-keys them before anything is added under the
