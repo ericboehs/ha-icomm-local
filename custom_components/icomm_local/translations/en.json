@@ -36,7 +36,7 @@
   "issues": {
     "stale_telemetry": {
       "title": "Water heater data is stale",
-      "description": "The iCOMM relay is running, but the tank has not reported for {age} minutes (LAN session: {lan}; relay health: {health}). The water heater shows its last-known values and writes are still accepted and queued. If this persists, check the relay's Pending write and Relay health sensors, or power-cycle the water heater's breaker."
+      "description": "**{heater}**: The iCOMM relay is running, but the tank has not reported for {age} minutes (LAN session: {lan}; relay health: {health}). The water heater shows its last-known values and writes are still accepted and queued. If this persists, check the relay's Pending write and Relay health sensors, or power-cycle the water heater's breaker."
     },
     "firmware_held": {
       "title": "Firmware update held for the {target} ({version})",
@@ -59,7 +59,7 @@
     },
     "telemetry_frozen": {
       "title": "Water heater data is frozen",
-      "description": "The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The controller's live reporting has lapsed, which happens some hours after the A.O. Smith app was last opened and after a reboot, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected.\n\n{fix} This warning clears by itself once the data changes again."
+      "description": "**{heater}**: The water heater keeps reporting, but every report for the last {minutes} minutes has been identical.{power} The controller's live reporting has lapsed, which happens some hours after the A.O. Smith app was last opened and after a reboot, so the temperatures, power and hot-water figures in Home Assistant may be wrong. Heating itself isn't affected.\n\n{fix} This warning clears by itself once the data changes again."
     },
     "dns_server_failed": {
       "title": "The iCOMM relay's DNS steering isn't working",

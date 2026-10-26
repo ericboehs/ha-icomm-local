@@ -13,9 +13,11 @@ DEVICE = {"controller_firmware": "2.14", "module_firmware": "bc 2.11.4 05/13/25"
 NAMEPLATE = {"model_number": "HPS10-50H45DV", "serial_number": "134274434"}
 
 
-def _device(hass, entry):
+def _device(hass, entry, identifier="AC000W019949045"):
+    """The relay names the DSN (device.dsn), so the device is keyed by it (#18);
+    an older relay's has no DSN and keeps ("icomm_local", "water_heater")."""
     return dr.async_get(hass).async_get_device_by_identifier(
-        ("icomm_local", "water_heater"), entry.entry_id)
+        ("icomm_local", identifier), entry.entry_id)
 
 
 async def test_sensors_and_device_page(hass: HomeAssistant, aioclient_mock):
@@ -51,7 +53,8 @@ async def test_sensors_and_device_page(hass: HomeAssistant, aioclient_mock):
 async def test_an_older_relay_leaves_them_unknown(hass: HomeAssistant, aioclient_mock):
     entry = await _setup(hass, aioclient_mock)
     assert hass.states.get("sensor.icomm_water_heater_controller_firmware").state == "unknown"
-    device = _device(hass, entry)
+    assert _device(hass, entry) is None
+    device = _device(hass, entry, "water_heater")
     assert device.sw_version is None
 
 
@@ -67,4 +70,5 @@ async def test_an_older_home_assistant_without_the_new_lookup(hass, aioclient_mo
     monkeypatch.delattr(dr.DeviceRegistry, "async_get_device_by_identifier")
     monkeypatch.setattr(registry, "async_get_device", old_lookup)
     await _setup(hass, aioclient_mock, {**STATE, "device": DEVICE})
-    assert found and found[0] == {("icomm_local", "water_heater")}
+    assert {("icomm_local", "water_heater")} in found       # the migration looks it up
+    assert {("icomm_local", "AC000W019949045")} in found

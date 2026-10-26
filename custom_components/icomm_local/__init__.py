@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import timedelta
 
 from aiohttp import ClientError, ClientTimeout
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_DSN,
+    CONF_NUMBERS,
     CONF_POWER_ENTITY,
     DOMAIN,
     FROZEN_POWER_W,
@@ -22,6 +24,15 @@ from .const import (
     POLL_SECONDS,
     TIMEOUT_SECONDS,
     is_stale,
+)
+from .heaters import (
+    heater_name,
+    migrate_to_dsn,
+    multi_capable,
+    primary_dsn,
+    rekey,
+    update_device_pages,
+    valid_dsn,
 )
 from .services import async_setup_services
 
@@ -107,9 +118,15 @@ def _power_w(hass: HomeAssistant, entity_id: str | None) -> float | None:
     return value * 1000 if state.attributes.get("unit_of_measurement") == "kW" else value
 
 
-def _frozen_issue(hass: HomeAssistant, entry, data: dict) -> None:
+def _heater_issue_id(kind: str, entry_id: str, dsn: str | None, primary: str | None) -> str:
+    """The primary heater keeps the single-heater issue IDs; others add their DSN."""
+    return f"{kind}_{entry_id}" if dsn is None or dsn == primary else f"{kind}_{entry_id}_{dsn}"
+
+
+def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None = None,
+                  heater: str = "iCOMM Water Heater") -> None:
     """Reports arrive, but their contents haven't changed: the data is frozen."""
-    issue_id = f"telemetry_frozen_{entry.entry_id}"
+    issue_id = issue_id or f"telemetry_frozen_{entry.entry_id}"
     unchanged = data.get("contents_unchanged_s")
     power = _power_w(hass, entry.options.get(CONF_POWER_ENTITY))
     running = (power is not None and power > FROZEN_POWER_W
@@ -121,6 +138,7 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict) -> None:
         hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
         severity=ir.IssueSeverity.WARNING, translation_key="telemetry_frozen",
         translation_placeholders={
+            "heater": heater,
             "minutes": str(round((unchanged or 0) / 60)),
             "power": (f" Meanwhile your power sensor shows the heater drawing {round(power)} W."
                       if running else ""),
@@ -156,21 +174,6 @@ def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
         translation_placeholders={"problem": str(problem)})
 
 
-def _device_registry(hass: HomeAssistant, entry_id: str, data: dict) -> None:
-    """Show the heater's firmware and model on its HA device page."""
-    device = data.get("device") or {}
-    registry = dr.async_get(hass)
-    lookup = getattr(registry, "async_get_device_by_identifier", None)
-    entry = (lookup((DOMAIN, "water_heater"), entry_id) if lookup     # HA 2026.x+
-             else registry.async_get_device(identifiers={(DOMAIN, "water_heater")}))
-    wanted = {"sw_version": device.get("controller_firmware"),
-              "model": device.get("model_number") or device.get("model"),
-              "serial_number": device.get("serial_number")}
-    wanted = {k: v for k, v in wanted.items() if v}
-    if entry and any(getattr(entry, k) != v for k, v in wanted.items()):
-        dr.async_get(hass).async_update_device(entry.id, **wanted)
-
-
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
     registry = er.async_get(hass)
     for unique_id, old, new in ENTITY_ID_MIGRATIONS:
@@ -196,7 +199,62 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
             raise UpdateFailed(f"relay returned a non-JSON reply: {err}") from err
         # A stale-but-reachable relay is not a failure: entities keep their
         # last-known values and a Repairs warning says the data is old.
+        await _fetch_heaters(data)
         return data
+
+    async def _fetch_one(dsn: str) -> dict | None:
+        try:
+            resp = await session.get(f"{url}/heaters/{dsn}/state",
+                                     timeout=ClientTimeout(total=TIMEOUT_SECONDS))
+            body = await resp.json(content_type=None) if resp.status == 200 else None
+        except (TimeoutError, ClientError, ValueError):
+            return None
+        return body if isinstance(body, dict) else None
+
+    async def _fetch_heaters(data: dict) -> None:
+        """Every heater's own state (relay 0.7+): /state is the primary's. One
+        failing heater only makes its own entities unavailable."""
+        # The DSN this entry was migrated to stands in while the relay can't
+        # name one (its data reset, reinstalled, downgraded): falling back to
+        # single-heater keys then would register every entity a second time.
+        stored, reported = valid_dsn(entry.data.get(CONF_DSN)), primary_dsn(data)
+        listed = data.get("heaters") if multi_capable(data) else []
+        if (reported and stored and reported != stored and stored not in listed
+                and reported not in coordinator.numbers):     # new, not a promoted secondary
+            # The heater was replaced: the old one is gone from the relay
+            # entirely. Its entities and device become the new one's, by a
+            # (re)load that re-keys them before anything is added under the
+            # new DSN -- never as a second device beside the dead one.
+            coordinator.replaced = (stored, reported)
+            if coordinator.ready:
+                return                    # the reload does it; keep things as they are
+            coordinator.numbers[reported] = coordinator.numbers.pop(stored, 1)
+        primary = reported or stored
+        others = [d for d in listed if valid_dsn(d) and d != primary]
+        states = dict(zip(others, await asyncio.gather(*(_fetch_one(d) for d in others)),
+                          strict=True))
+        coordinator.primary = primary
+        # No primary DSN yet but other heaters listed: the primary's /state
+        # still has its (single-heater-keyed) entities, first.
+        coordinator.order = ([primary] if primary else [None] if others else []) + others
+        coordinator.heaters = {d: s for d, s in states.items() if s}
+        _remember(primary, coordinator.order)
+
+    def _remember(primary: str | None, order: list[str]) -> None:
+        """Keep the primary's DSN and each heater's number in the entry."""
+        numbers = dict(coordinator.numbers)
+        for dsn in order:
+            if dsn is None or dsn in numbers:
+                continue
+            taken = set(numbers.values())
+            if dsn == primary and 1 not in taken:
+                numbers[dsn] = 1
+            else:
+                numbers[dsn] = min(n for n in range(2, len(taken) + 3) if n not in taken)
+        coordinator.numbers = numbers
+        wanted = {CONF_DSN: primary or entry.data.get(CONF_DSN), CONF_NUMBERS: numbers}
+        if any(entry.data.get(k) != v for k, v in wanted.items()):
+            hass.config_entries.async_update_entry(entry, data={**entry.data, **wanted})
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -208,23 +266,83 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # The services need to know where the relay is; keeping this on the coordinator
     # avoids a second lookup path that could disagree with this one.
     coordinator.relay_url = url
+    coordinator.options = dict(entry.options)
+    coordinator.ready, coordinator.replaced = False, None
+
+    def reload_once() -> None:
+        """One reload, which migrates or re-keys before any entity is added."""
+        reload_once.done = True
+        schedule = getattr(hass.config_entries, "async_schedule_reload", None)
+        if schedule is not None:
+            schedule(entry.entry_id)
+        else:                                      # HA before 2024.2
+            hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+
+    reload_once.done = False
+    coordinator.primary, coordinator.order, coordinator.heaters = None, [], {}
+    coordinator.numbers = {k: v for k, v in (entry.data.get(CONF_NUMBERS) or {}).items()
+                           if valid_dsn(k) and isinstance(v, int)}
     await coordinator.async_config_entry_first_refresh()
-    issue_id = f"stale_telemetry_{entry.entry_id}"
+    # Before the platforms: the tank renames (keyed by the old unique IDs), then
+    # the move to per-heater keys, so entities come up under their new IDs with
+    # their old entity IDs and history.
+    _migrate_entity_ids(hass)
+    if coordinator.replaced:
+        rekey(hass, entry, *coordinator.replaced)
+        coordinator.replaced = None
+    if coordinator.primary:
+        migrate_to_dsn(hass, entry, coordinator.primary)
+
+        def _replaced() -> None:
+            if coordinator.replaced and not reload_once.done:
+                reload_once()
+
+        entry.async_on_unload(coordinator.async_add_listener(_replaced))
+    else:
+        # An older relay, or one that hasn't met the heater yet: single-heater
+        # keys for now, and a reload to move them once the DSN is known.
+        def _dsn_arrived() -> None:
+            if (coordinator.last_update_success and coordinator.primary
+                    and not reload_once.done):
+                reload_once()
+
+        entry.async_on_unload(coordinator.async_add_listener(_dsn_arrived))
+    coordinator.ready = True
+    heater_issues: set[str] = set()
+
+    def _each_heater():
+        for dsn in list(coordinator.order) or [None]:
+            data = (coordinator.data if dsn in (None, coordinator.primary)
+                    else coordinator.heaters.get(dsn)) or {}
+            yield dsn, data, heater_name(coordinator, dsn)
 
     def _update_stale_issue() -> None:
-        data = coordinator.data or {}
-        if coordinator.last_update_success and is_stale(data):
-            lan = data.get("lan") or {}
-            ir.async_create_issue(
-                hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
-                severity=ir.IssueSeverity.WARNING, translation_key="stale_telemetry",
-                translation_placeholders={
-                    "age": str(round((data.get("last_telemetry_age") or 0) / 60)),
-                    "lan": "up" if lan.get("session") else "down",
-                    "health": str((data.get("health") or {}).get("state")),
-                })
-        else:
+        current: set[str] = set()
+        for dsn, data, name in _each_heater():
+            issue_id = _heater_issue_id("stale_telemetry", entry.entry_id, dsn,
+                                        coordinator.primary)
+            if coordinator.last_update_success and is_stale(data):
+                lan = data.get("lan") or {}
+                current.add(issue_id)
+                ir.async_create_issue(
+                    hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+                    severity=ir.IssueSeverity.WARNING, translation_key="stale_telemetry",
+                    translation_placeholders={
+                        "heater": name,
+                        "age": str(round((data.get("last_telemetry_age") or 0) / 60)),
+                        "lan": "up" if lan.get("session") else "down",
+                        "health": str((data.get("health") or {}).get("state")),
+                    })
+            else:
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
+        _forget(current, "stale_telemetry")
+
+    def _forget(current: set[str], kind: str) -> None:
+        """A heater that left: its issues go too."""
+        for issue_id in {i for i in heater_issues if i.startswith(kind)} - current:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
+            heater_issues.discard(issue_id)
+        heater_issues.update(current)
 
     entry.async_on_unload(coordinator.async_add_listener(_update_stale_issue))
     _update_stale_issue()
@@ -244,8 +362,15 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     _update_tls_issue()
 
     def _update_frozen_issue() -> None:
-        if coordinator.last_update_success:
-            _frozen_issue(hass, entry, coordinator.data or {})
+        if not coordinator.last_update_success:
+            return
+        current: set[str] = set()
+        for dsn, data, name in _each_heater():
+            issue_id = _heater_issue_id("telemetry_frozen", entry.entry_id, dsn,
+                                        coordinator.primary)
+            current.add(issue_id)
+            _frozen_issue(hass, entry, data, issue_id, name)
+        _forget(current, "telemetry_frozen")
 
     entry.async_on_unload(coordinator.async_add_listener(_update_frozen_issue))
     _update_frozen_issue()
@@ -258,16 +383,21 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     _update_dns_issue()
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     entry.async_on_unload(lambda: _firmware_issues(hass, entry.entry_id, {}, firmware_issues))
+
+    def _drop_heater_issues() -> None:
+        for issue_id in heater_issues:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+    entry.async_on_unload(_drop_heater_issues)
     _update_firmware_issues()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     if not hass.services.has_service(DOMAIN, "set_setpoint"):
         await async_setup_services(hass)
-    _migrate_entity_ids(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     def _update_device_registry() -> None:
         if coordinator.last_update_success:
-            _device_registry(hass, entry.entry_id, coordinator.data or {})
+            update_device_pages(hass, coordinator, entry.entry_id)
 
     entry.async_on_unload(coordinator.async_add_listener(_update_device_registry))
     _update_device_registry()
@@ -275,6 +405,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
 
 async def _options_updated(hass: HomeAssistant, entry) -> None:
+    """Reload for the owner's options only. The entry's data also changes as
+    heaters are numbered (#18), and that must not reload everything."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and coordinator.options == dict(entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

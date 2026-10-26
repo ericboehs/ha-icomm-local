@@ -1,5 +1,9 @@
 set_setpoint:
   name: Set setpoint
+  target:
+    entity:
+      integration: icomm_local
+      domain: water_heater
   description: >-
     Queue a tank setpoint. The write is delivered on the appliance's next command
     poll and is only reported as applied once its own telemetry agrees, so allow
@@ -19,6 +23,10 @@ set_setpoint:
 
 set_mode:
   name: Set mode
+  target:
+    entity:
+      integration: icomm_local
+      domain: water_heater
   description: >-
     Queue a heating mode. Electric and heat pump draw very differently, and a mode
     change is visible in the next telemetry as the mode register plus the power draw.
@@ -50,5 +58,9 @@ set_mode:
 
 cancel_writes:
   name: Cancel queued writes
+  target:
+    entity:
+      integration: icomm_local
+      domain: water_heater
   description: >-
     Drop everything waiting to be delivered. Nothing already applied is undone.

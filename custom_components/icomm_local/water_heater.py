@@ -20,10 +20,9 @@ from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, VACATION_DEFAULT_DAYS, has_telemetry, is_stale
-from .sensor import DEVICE_INFO
+from .heaters import HeaterEntity, add_heaters, relay_path, unique_id
 from .services import _post
 
 # Same mapping HA's own aosmith integration uses, so cards and automations that
@@ -38,13 +37,13 @@ AWAY_FALLBACK_MODE = "heat_pump"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback):
-    async_add_entities([IcommWaterHeater(hass.data[DOMAIN][entry.entry_id])])
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    add_heaters(coordinator, entry, async_add_entities,
+                lambda dsn: [IcommWaterHeater(coordinator, dsn)])
 
 
-class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
-    _attr_unique_id = "icomm_local_water_heater"
-    # The device's own name: water_heater.icomm_water_heater.
-    _attr_has_entity_name = True
+class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
+    # The device's own name: water_heater.icomm_water_heater (..._2 for a second).
     _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_supported_features = (
@@ -56,8 +55,9 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
     _attr_precision = 1.0
     _attr_target_temperature_step = 1.0
 
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator)
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, dsn)
+        self._attr_unique_id = unique_id(dsn, "water_heater")
         self._mode_before_vacation: str | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -81,12 +81,13 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
             self._mode_before_vacation = mode
 
     @property
-    def device_info(self):
-        return DEVICE_INFO
-
-    @property
     def _data(self) -> dict:
-        return self.coordinator.data or {}
+        return self._state
+
+    async def _write(self, payload: dict) -> None:
+        await _post(self.hass, relay_path(self.coordinator, self._dsn, "/write"), payload,
+                    self.coordinator)
+        await self.coordinator.async_request_refresh()
 
     def _pending(self, kind: str):
         return ((self._data.get("pending") or {}).get(kind) or {}).get("value")
@@ -158,20 +159,15 @@ class IcommWaterHeater(CoordinatorEntity, WaterHeaterEntity, RestoreEntity):
     async def async_set_temperature(self, **kwargs) -> None:
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
-        await _post(self.hass, "/write", {"setpoint": float(temperature)}, self.coordinator)
-        await self.coordinator.async_request_refresh()
+        await self._write({"setpoint": float(temperature)})
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         mode = FROM_HA.get(operation_mode, operation_mode)
-        await _post(self.hass, "/write", {"mode": mode}, self.coordinator)
-        await self.coordinator.async_request_refresh()
+        await self._write({"mode": mode})
 
     async def async_turn_away_mode_on(self) -> None:
-        await _post(self.hass, "/write", {"mode": "vacation", "days": VACATION_DEFAULT_DAYS},
-                    self.coordinator)
-        await self.coordinator.async_request_refresh()
+        await self._write({"mode": "vacation", "days": VACATION_DEFAULT_DAYS})
 
     async def async_turn_away_mode_off(self) -> None:
         mode = self._mode_before_vacation or AWAY_FALLBACK_MODE
-        await _post(self.hass, "/write", {"mode": mode}, self.coordinator)
-        await self.coordinator.async_request_refresh()
+        await self._write({"mode": mode})

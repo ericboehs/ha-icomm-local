@@ -18,9 +18,9 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MODES, has_telemetry, is_stale
+from .heaters import HeaterEntity, add_heaters, unique_id
 
 F = UnitOfTemperature.FAHRENHEIT
 
@@ -50,30 +50,32 @@ SPECS = [
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback):
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SensorEntity] = [
-        IcommSensor(coordinator, field, name, unit, device_class, state_class)
-        for field, name, unit, device_class, state_class in SPECS
-    ]
-    entities += [TankAverageSensor(coordinator),
-                 ModeSensor(coordinator), HeatingElementSensor(coordinator),
-                 RelayHealthSensor(coordinator),
-                 PendingWriteSensor(coordinator), LastAppWriteSensor(coordinator),
-                 FirmwareSensor(coordinator, "controller_firmware", "Controller firmware",
-                                ("controller_firmware_standby", "model_number",
-                                 "serial_number")),
-                 FirmwareSensor(coordinator, "module_firmware", "Wi-Fi module firmware",
-                                ("module_hardware", "model", "dsn", "mac"))]
-    async_add_entities(entities)
+
+    def build(dsn: str | None) -> list[SensorEntity]:
+        entities: list[SensorEntity] = [
+            IcommSensor(coordinator, field, name, unit, device_class, state_class, dsn=dsn)
+            for field, name, unit, device_class, state_class in SPECS
+        ]
+        return entities + [
+            TankAverageSensor(coordinator, dsn), ModeSensor(coordinator, dsn),
+            HeatingElementSensor(coordinator, dsn), RelayHealthSensor(coordinator, dsn),
+            PendingWriteSensor(coordinator, dsn), LastAppWriteSensor(coordinator, dsn),
+            FirmwareSensor(coordinator, "controller_firmware", "Controller firmware",
+                           ("controller_firmware_standby", "model_number", "serial_number"),
+                           dsn),
+            FirmwareSensor(coordinator, "module_firmware", "Wi-Fi module firmware",
+                           ("module_hardware", "model", "dsn", "mac"), dsn)]
+
+    add_heaters(coordinator, entry, async_add_entities, build)
 
 
-class IcommSensor(CoordinatorEntity, SensorEntity):
+class IcommSensor(HeaterEntity, SensorEntity):
     # Entity names are relative to the device: sensor.icomm_water_heater_power.
-    _attr_has_entity_name = True
     def __init__(self, coordinator, field, name, unit=None, device_class=None,
-                 state_class=None):
-        super().__init__(coordinator)
+                 state_class=None, dsn: str | None = None):
+        super().__init__(coordinator, dsn)
         self._field = field
-        self._attr_unique_id = f"icomm_local_{field}"
+        self._attr_unique_id = unique_id(dsn, field)
         self._attr_name = name
         if unit is not None:
             self._attr_native_unit_of_measurement = unit
@@ -84,7 +86,7 @@ class IcommSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        data = self.coordinator.data or {}
+        data = self._state
         if not has_telemetry(data):
             return None
         return data.get(self._field)
@@ -94,38 +96,25 @@ class IcommSensor(CoordinatorEntity, SensorEntity):
         # Last-known values while stale (with `stale` set), not unavailable: an
         # idle tank goes quiet for long stretches, and unavailable entities make
         # Home Assistant drop writes. See const.has_telemetry.
-        return super().available and has_telemetry(self.coordinator.data)
+        return super().available and has_telemetry(self._state)
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data or {}
+        data = self._state
         return {"stale": is_stale(data),
                 "last_telemetry_age_s": data.get("last_telemetry_age")}
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {("icomm_local", "water_heater")},
-            "name": "iCOMM Water Heater",
-            "manufacturer": "A. O. Smith",
-        }
 
 
-DEVICE_INFO = {
-    "identifiers": {("icomm_local", "water_heater")},
-    "name": "iCOMM Water Heater",
-    "manufacturer": "A. O. Smith",
-}
+class _RelaySensor(HeaterEntity, SensorEntity):
+    """About the relay's view of a heater rather than the tank: available
+    whenever the relay answers for it."""
 
+    _key = ""
 
-class _RelaySensor(CoordinatorEntity, SensorEntity):
-    """About the relay rather than the tank: available whenever the relay answers."""
-
-    _attr_has_entity_name = True
-
-    @property
-    def device_info(self):
-        return DEVICE_INFO
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, dsn)
+        self._attr_unique_id = unique_id(dsn, self._key)
 
 
 class FirmwareSensor(_RelaySensor):
@@ -135,36 +124,36 @@ class FirmwareSensor(_RelaySensor):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:chip"
 
-    def __init__(self, coordinator, key: str, name: str, extras: tuple[str, ...]) -> None:
-        super().__init__(coordinator)
+    def __init__(self, coordinator, key: str, name: str, extras: tuple[str, ...],
+                 dsn: str | None = None) -> None:
         self._key, self._extras = key, extras
-        self._attr_unique_id = f"icomm_local_{key}"
+        super().__init__(coordinator, dsn)
         self._attr_name = name
 
     @property
     def native_value(self):
-        return ((self.coordinator.data or {}).get("device") or {}).get(self._key)
+        return (self._state.get("device") or {}).get(self._key)
 
     @property
     def extra_state_attributes(self):
-        device = (self.coordinator.data or {}).get("device") or {}
+        device = self._state.get("device") or {}
         return {key: device.get(key) for key in self._extras if device.get(key)}
 
 
 class RelayHealthSensor(_RelaySensor):
     """healthy / idle / degraded / unknown -- with what the relay cannot see."""
 
-    _attr_unique_id = "icomm_local_health"
+    _key = "health"
     _attr_name = "Relay health"
     _attr_icon = "mdi:heart-pulse"
 
     @property
     def native_value(self):
-        return ((self.coordinator.data or {}).get("health") or {}).get("state")
+        return (self._state.get("health") or {}).get("state")
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data or {}
+        data = self._state
         health = data.get("health") or {}
         return {
             "reasons": health.get("reasons"),
@@ -179,13 +168,13 @@ class RelayHealthSensor(_RelaySensor):
 class PendingWriteSensor(_RelaySensor):
     """What is queued and not yet confirmed by the tank's own telemetry."""
 
-    _attr_unique_id = "icomm_local_pending"
+    _key = "pending"
     _attr_name = "Pending write"
     _attr_icon = "mdi:timer-sand"
 
     @property
     def native_value(self):
-        pending = (self.coordinator.data or {}).get("pending") or {}
+        pending = self._state.get("pending") or {}
         if not pending:
             return "none"
         # e.g. "setpoint 140.0: acknowledged". Only telemetry ever says confirmed.
@@ -194,7 +183,7 @@ class PendingWriteSensor(_RelaySensor):
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data or {}
+        data = self._state
         pending = data.get("pending") or {}
         return {"status": {kind: w.get("status") for kind, w in pending.items()} or None,
                 "pending": pending or None, "last_write": data.get("last_write"),
@@ -208,13 +197,13 @@ class LastAppWriteSensor(_RelaySensor):
     Home Assistant writes can be told apart. Since the relay started.
     """
 
-    _attr_unique_id = "icomm_local_last_app_write"
+    _key = "last_app_write"
     _attr_name = "Last app write"
     _attr_icon = "mdi:cellphone-arrow-down"
 
     @property
     def native_value(self):
-        last = (self.coordinator.data or {}).get("last_cloud_write")
+        last = self._state.get("last_cloud_write")
         if not last:
             return "none"
         return f"{last.get('kind')} {last.get('value')}"
@@ -223,7 +212,7 @@ class LastAppWriteSensor(_RelaySensor):
     def extra_state_attributes(self):
         from datetime import UTC, datetime
 
-        data = self.coordinator.data or {}
+        data = self._state
         last = data.get("last_cloud_write") or {}
         at = last.get("at")
         return {"at": datetime.fromtimestamp(at, UTC).isoformat() if at else None,
@@ -241,13 +230,13 @@ class TankAverageSensor(IcommSensor):
     modes.
     """
 
-    def __init__(self, coordinator) -> None:
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
         super().__init__(coordinator, "water_bottom", "Water, tank average", F,
-                         SensorDeviceClass.TEMPERATURE)
+                         SensorDeviceClass.TEMPERATURE, dsn=dsn)
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data or {}
+        data = self._state
         top, bottom, blend = (data.get(k) for k in ("water_top", "water_mid", "water_bottom"))
         weight = None
         if all(isinstance(v, (int, float)) for v in (top, bottom, blend)) and top - bottom >= 5:
@@ -272,9 +261,9 @@ class HeatingElementSensor(IcommSensor):
 
     _attr_translation_key = "heating_element"
 
-    def __init__(self, coordinator) -> None:
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
         super().__init__(coordinator, "heating_element", None,
-                         device_class=SensorDeviceClass.ENUM)
+                         device_class=SensorDeviceClass.ENUM, dsn=dsn)
         del self._attr_name
         self._attr_options = ELEMENTS
 
@@ -285,7 +274,7 @@ class HeatingElementSensor(IcommSensor):
 
     @property
     def extra_state_attributes(self):
-        flags = (self.coordinator.data or {}).get("heat_flags")
+        flags = self._state.get("heat_flags")
         return {"flags": f"0x{flags:02x}" if isinstance(flags, int) else None}
 
 
@@ -300,8 +289,9 @@ class ModeSensor(IcommSensor):
 
     _attr_translation_key = "mode"
 
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator, "mode", None, device_class=SensorDeviceClass.ENUM)
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, "mode", None, device_class=SensorDeviceClass.ENUM,
+                         dsn=dsn)
         # The name comes from translations; unique_id unchanged, so the entity_id
         # (sensor.icomm_water_heater_mode) and its history survive the upgrade.
         del self._attr_name
@@ -314,5 +304,5 @@ class ModeSensor(IcommSensor):
 
     @property
     def extra_state_attributes(self):
-        data = self.coordinator.data or {}
+        data = self._state
         return {"vacation_days": data.get("vacation_days"), "raw": data.get("mode_raw")}

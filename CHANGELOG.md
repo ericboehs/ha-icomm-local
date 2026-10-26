@@ -33,6 +33,26 @@ dialog reads it from the add-on folder. CI fails if the two differ.
     them are refused with 409 and the list of heaters.
   - `/state` gains `heaters`.
   - Single-heater installs see no change.
+- **One Home Assistant device per heater** (#18, phase 3).
+  - Each heater gets its own device and entities: "iCOMM Water Heater",
+    "iCOMM Water Heater 2", and so on.
+  - A heater that appears later gets its entities without a reload.
+  - Writes from each card go to that heater's `/heaters/<dsn>/write`.
+  - The stale and frozen-data repairs are per heater.
+  - The services `set_setpoint`, `set_mode` and `cancel_writes` take a target
+    (entity, device or area). It's required once there are several heaters,
+    and the reply then has a section per heater.
+  - **Upgrading keeps entity IDs and history.** Once the relay names the
+    heater's DSN, the unique IDs move from `icomm_local_<key>` to
+    `icomm_local_<DSN>_<key>`, and the device from
+    `(icomm_local, water_heater)` to `(icomm_local, <DSN>)`. It's the same
+    device, so device-based automations still match.
+  - With an older relay that names no DSN, the old keys stay until it does.
+  - **A replaced heater** (its old DSN gone from the relay) takes over the old
+    one's entities, device and number. Dashboards keep working, and there's no
+    dead device beside it.
+  - Heater numbers are kept in the config entry, so they don't shift when a
+    heater leaves.
 
 ## [0.6.0] - 2026-10-25
 
