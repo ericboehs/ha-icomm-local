@@ -11,7 +11,7 @@ title: Water Heater
 path: water-heater
 icon: mdi:water-boiler
 type: sections
-max_columns: 3
+max_columns: 4
 sections:
 - type: grid
   cards:
@@ -22,6 +22,14 @@ sections:
     badges:
     - type: entity
       entity: sensor.icomm_water_heater_relay_health
+      show_state: true
+      show_icon: true
+    - type: entity
+      entity: sensor.icomm_water_heater_mode
+      show_state: true
+      show_icon: true
+    - type: entity
+      entity: sensor.icomm_water_heater_heating_element
       show_state: true
       show_icon: true
   - type: thermostat
@@ -42,6 +50,11 @@ sections:
   - type: tile
     entity: sensor.icomm_water_heater_heating_element
     name: Element
+    icon: mdi:heating-coil
+  - type: tile
+    entity: sensor.icomm_water_heater_pending_write
+    name: Pending write
+    icon: mdi:timer-sand
 - type: grid
   cards:
   - type: heading
@@ -51,35 +64,117 @@ sections:
   - type: tile
     entity: sensor.icomm_water_heater_water_tank_top
     name: Top
-  - type: tile
-    entity: sensor.icomm_water_heater_water_tank_bottom
-    name: Bottom
+    icon: mdi:thermometer-chevron-up
   - type: tile
     entity: sensor.icomm_water_heater_water_tank_average
     name: Average
+    icon: mdi:thermometer
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_bottom
+    name: Bottom
+    icon: mdi:thermometer-chevron-down
   - type: tile
     entity: sensor.icomm_water_heater_heat_deficit
     name: Heat deficit
     icon: mdi:fire-alert
   - type: heading
-    heading: Status
+    heading: Setpoints
     heading_style: subtitle
-    icon: mdi:information-outline
+    icon: mdi:target
+  - type: tile
+    entity: sensor.icomm_water_heater_setpoint
+    name: Setpoint
+  - type: tile
+    entity: sensor.icomm_water_heater_active_setpoint
+    name: Active target
+  - type: tile
+    entity: sensor.icomm_water_heater_max_setpoint
+    name: Maximum
+  - type: tile
+    entity: sensor.icomm_water_heater_air_at_unit
+    name: Air at unit
+    icon: mdi:fan
+  - type: entities
+    entities:
+    - type: attribute
+      entity: sensor.icomm_water_heater_water_tank_average
+      attribute: weight_on_top
+      name: Average's weight on top
+      icon: mdi:scale-balance
+    - type: attribute
+      entity: water_heater.icomm_water_heater
+      attribute: vacation_days
+      name: Vacation days left
+      icon: mdi:palm-tree
+    - type: attribute
+      entity: water_heater.icomm_water_heater
+      attribute: write_status
+      name: Last write status
+      icon: mdi:check-decagram
+- type: grid
+  cards:
+  - type: heading
+    heading: Connection
+    heading_style: title
+    icon: mdi:wifi
+  - type: tile
+    entity: sensor.icomm_water_heater_wi_fi_rssi
+    name: Wi-Fi
+    icon: mdi:wifi
+  - type: tile
+    entity: sensor.icomm_water_heater_line_voltage
+    name: Line voltage
+    icon: mdi:sine-wave
+  - type: entities
+    entities:
+    - type: attribute
+      entity: sensor.icomm_water_heater_relay_health
+      attribute: reasons
+      name: Relay health, why
+      icon: mdi:heart-pulse
+    - type: attribute
+      entity: water_heater.icomm_water_heater
+      attribute: lan_registered
+      name: Local Connect registered
+      icon: mdi:lan
   - type: tile
     entity: sensor.icomm_water_heater_last_app_write
     name: Last app write
     icon: mdi:cellphone-arrow-down
-    grid_options:
+    grid_options: &id001
       columns: 12
+  - type: heading
+    heading: Device
+    heading_style: subtitle
+    icon: mdi:information-outline
   - type: entities
     entities:
-    - entity: sensor.icomm_water_heater_wi_fi_rssi
-      name: Wi-Fi RSSI
-    - entity: sensor.icomm_water_heater_line_voltage
-      name: Line voltage
-    - entity: sensor.icomm_water_heater_air_at_unit
-      name: Air at unit
+    - type: attribute
+      entity: sensor.icomm_water_heater_controller_firmware
+      attribute: model_number
+      name: Model
+      icon: mdi:water-boiler
+    - type: attribute
+      entity: sensor.icomm_water_heater_controller_firmware
+      attribute: serial_number
+      name: Serial number
+      icon: mdi:barcode
+    - entity: sensor.icomm_water_heater_controller_firmware
+      name: Controller firmware
+    - entity: sensor.icomm_water_heater_wi_fi_module_firmware
+      name: Wi-Fi module firmware
+    - type: attribute
+      entity: sensor.icomm_water_heater_wi_fi_module_firmware
+      attribute: module_hardware
+      name: Wi-Fi module hardware
+      icon: mdi:chip
+    - type: attribute
+      entity: sensor.icomm_water_heater_wi_fi_module_firmware
+      attribute: dsn
+      name: DSN
+      icon: mdi:identifier
 - type: grid
+  column_span: 4
   cards:
   - type: heading
     heading: Last 24 hours
@@ -91,21 +186,50 @@ sections:
     entities:
     - entity: sensor.icomm_water_heater_water_tank_top
       name: Top
-    - entity: sensor.icomm_water_heater_water_tank_bottom
-      name: Bottom
     - entity: sensor.icomm_water_heater_water_tank_average
       name: Average
+    - entity: sensor.icomm_water_heater_water_tank_bottom
+      name: Bottom
     - entity: sensor.icomm_water_heater_active_setpoint
       name: Target
-  - type: history-graph
-    title: Hot water available
-    hours_to_show: 24
-    entities:
-    - entity: sensor.icomm_water_heater_hot_water_available
-      name: Hot water
+    - entity: sensor.icomm_water_heater_air_at_unit
+      name: Air
+    grid_options:
+      columns: 12
+      rows: 5
   - type: history-graph
     title: Power
     hours_to_show: 24
     entities:
     - entity: sensor.icomm_water_heater_power
       name: Power
+    grid_options:
+      columns: 6
+      rows: 4
+  - type: history-graph
+    title: Heat deficit
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_heat_deficit
+      name: Deficit
+    grid_options:
+      columns: 6
+      rows: 4
+  - type: history-graph
+    title: Mode and element
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_mode
+      name: Mode
+    - entity: sensor.icomm_water_heater_heating_element
+      name: Element
+    grid_options:
+      columns: 12
+      rows: 3
+  - type: history-graph
+    title: Hot water available
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_hot_water_available
+      name: Hot water
+    grid_options: *id001
