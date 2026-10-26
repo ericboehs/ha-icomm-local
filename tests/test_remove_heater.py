@@ -25,14 +25,15 @@ def _delete(dsn: str, query: str = ""):
 
 
 async def _remove(hub, dsn: str, query: str | None = None):
+    hub.primary.started = min(hub.primary.started, time.time() - 3600)   # not just restarted
     response = await hub.remove_handler(_delete(dsn, f"?confirm={dsn}" if query is None else query))
     return response.status, json.loads(response.body)
 
 
-def _legacy(tmp_path) -> None:
+def _legacy(tmp_path, dsn=DSN_A) -> None:
     """What a pre-0.6 install left at the top of /data (kept for downgrades)."""
     for name in LEGACY:
-        (tmp_path / name).write_text(json.dumps({"module_dsn": DSN_A}))
+        (tmp_path / name).write_text(json.dumps({"module_dsn": dsn}))
 
 
 async def test_removing_the_second_heater(tmp_path, monkeypatch):
@@ -180,3 +181,46 @@ async def test_nothing_is_served_between_the_removal_and_the_restart(tmp_path, m
     response = await hub._restarting(request, handler)
     assert response.status == 503 and response.headers["Retry-After"] == "5"
     assert calls == ["/state"]
+
+
+async def test_legacy_files_go_only_with_their_own_heater(tmp_path, monkeypatch):
+    """The single-heater files belong to the DSN in them, primary or not."""
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    _legacy(tmp_path, DSN_B)                       # B was the original heater
+    status, body = await _remove(hub, DSN_A)       # the primary, not their owner
+    assert status == 200 and set(body["files"]) == {f"heaters/{DSN_A}/", "heaters/PRIMARY"}
+    assert all((tmp_path / name).exists() for name in LEGACY)
+    assert set(forget(tmp_path, DSN_B, primary=False)) == {f"heaters/{DSN_B}/", *LEGACY}
+    assert known_dsn(tmp_path) is None
+
+
+async def test_the_marker_goes_only_if_it_names_the_heater(tmp_path, monkeypatch):
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    status, body = await _remove(hub, DSN_B)
+    assert "heaters/PRIMARY" not in body["files"]
+    assert (tmp_path / "heaters" / "PRIMARY").read_text().strip() == DSN_A
+
+
+def test_relay_wide_files_are_never_a_queue(tmp_path):
+    (tmp_path / "firmware.json").write_text("{}")
+    assert forget(tmp_path, DSN_A, primary=True, queue_name="/data/firmware.json") == []
+    assert (tmp_path / "firmware.json").exists()
+
+
+async def test_a_heater_not_heard_from_since_a_restart_is_kept(tmp_path, monkeypatch):
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    response = await hub.remove_handler(_delete(DSN_B, f"?confirm={DSN_B}"))   # just started
+    assert response.status == 409 and b"wait ten minutes" in response.body
+    hub.secondaries[DSN_B].lan.registered = True                     # its LAN session is up
+    status, body = await _remove(hub, DSN_B)
+    assert status == 409 and "still reporting" in body["error"]
+
+
+async def test_a_stop_during_a_removal_exits(tmp_path, monkeypatch):
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    hub._stop = asyncio.Event()
+    assert (await _remove(hub, DSN_B))[0] == 200
+    hub._on_signal()
+    assert hub._signalled and hub._stop.is_set()
+    hub._stop = None
+    hub._on_signal()                               # before run(): just noted

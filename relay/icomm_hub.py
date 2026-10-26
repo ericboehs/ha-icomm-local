@@ -73,6 +73,7 @@ class Hub:
         self._tasks: set[asyncio.Task] = set()
         self._marked: str | None = None
         self._stop: asyncio.Event | None = None
+        self._signalled = False
         self.removing: list[tuple[str, bool]] = []   # (dsn, was primary): delete, restart
         self.peers = self.primary.peers
         # Every heater's address is a trusted module address.
@@ -325,10 +326,16 @@ class Hub:
             return web.json_response({"error": "add ?confirm=<dsn> to remove a heater"},
                                      status=400)
         primary = engine is self.primary
-        fresh = bool(engine.last_telemetry) and time.time() - engine.last_telemetry < 600
-        if fresh and request.query.get("force") != "1":
+        now = time.time()
+        fresh = bool(engine.last_telemetry) and now - engine.last_telemetry < 600
+        # Just restarted, nothing heard yet: it may well be alive (telemetry
+        # is minutes apart). Its LAN session says so sooner.
+        unsure = not engine.last_telemetry and now - self.primary.started < 600
+        if (fresh or unsure or engine.lan.registered) and request.query.get("force") != "1":
+            why = ("is still reporting" if fresh or engine.lan.registered else
+                   "hasn't been heard from since the relay started; wait ten minutes")
             return web.json_response(
-                {"error": "the heater is still reporting; power it off or stop steering it "
+                {"error": f"the heater {why}. Power it off or stop steering it to the relay "
                           "first (or add force=1)"}, status=409)
         if primary and (engine.lan.module_ip_configured or engine.device_dsn == dsn):
             return web.json_response(
@@ -455,7 +462,7 @@ class Hub:
             # 137, seen live on the 0.4.7 update).
             for sig in (signal.SIGTERM, signal.SIGINT):
                 with contextlib.suppress(NotImplementedError, RuntimeError):
-                    loop.add_signal_handler(sig, stop.set)
+                    loop.add_signal_handler(sig, self._on_signal)
                     handled.append(sig)
             await stop.wait()
             _LOGGER.info("restarting after a heater was removed" if self.removing
@@ -478,7 +485,12 @@ class Hub:
             # (facts, queue, key) between the delete and the stop.
             for dsn, was_primary in self.removing:
                 forget(primary.data_dir, dsn, was_primary, self._queue_name())
-        return bool(self.removing)
+        return bool(self.removing) and not self._signalled
+
+    def _on_signal(self) -> None:
+        self._signalled = True             # a stop wins over a pending restart
+        if self._stop is not None:
+            self._stop.set()
 
 
 def main() -> None:

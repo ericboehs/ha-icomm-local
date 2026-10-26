@@ -21,8 +21,13 @@ dialog reads it from the add-on folder. CI fails if the two differ.
     `PRIMARY` marker and the single-heater files kept for downgrades, which
     used to rebuild it. The relay then restarts in-process from what's left
     on disk.
-    - 409 while the heater is reporting (unless `force=1`), or if `module_ip`
-      or `device_dsn` names the primary.
+    - 409 (unless `force=1`) while the heater is reporting or has a LAN
+      session, or within ten minutes of a relay restart if it hasn't reported
+      yet.
+    - 409 if `module_ip` or `device_dsn` names the primary.
+    - The single-heater files and the marker are deleted only if they're the
+      removed heater's own.
+    - A stop signal during the restart still stops the relay.
     - The state API answers 503 until the restart finishes.
   - **To replace the primary heater and keep its entities**, forget it on the
     relay only, without deleting the HA device. The new heater then takes

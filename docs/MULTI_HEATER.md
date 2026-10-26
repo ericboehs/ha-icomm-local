@@ -143,8 +143,10 @@ the `/heaters/<dsn>/...` endpoints. The integration already does. Reads
 ## Removing or replacing a heater
 
 First power the old heater off, or stop steering it to the relay. A heater
-that's still reporting can't be removed: it would only come back, as a new
-heater, on its next boot.
+that's still reporting, or has a LAN session up, can't be removed: it would
+only come back, as a new heater, on its next boot.
+- **Within ten minutes of a relay restart,** a heater that hasn't reported
+  yet can't be removed either, since the relay can't yet tell it's gone.
 
 ### Gone for good: delete its device
 
@@ -162,8 +164,10 @@ In Home Assistant, open the heater's device page, then **⋮ → Delete**.
 
 To keep the old heater's entities, including customised entity IDs, history,
 dashboards and automations, for the heater that replaces it, **don't** delete
-the device. Forget the heater on the relay only, from the HA host (for example,
-the SSH add-on's terminal):
+the device. Forget the heater on the relay only. The command has to run
+somewhere that can reach the relay's state API on the HA host: the
+*Advanced SSH & Web Terminal* add-on can, and so can anything else using
+the host's network.
 
 ```sh
 curl -X DELETE "http://127.0.0.1:8124/heaters/<old DSN>?confirm=<old DSN>"
@@ -174,6 +178,9 @@ takes over the old one's entities and device. This works for the primary
 heater, the only one on a single-heater setup.
 - **Another heater replaced:** the new one gets the next number and its own
   entities, so delete the old heater's device as above.
+- **After removing the primary on a multi-heater relay,** the heater whose
+  DSN sorts first becomes the primary. The original `/state` and `/write`
+  endpoints act on the primary.
 - **Finding the old DSN:** `curl -s http://127.0.0.1:8124/heaters | jq` lists
   each heater with its serial number.
 

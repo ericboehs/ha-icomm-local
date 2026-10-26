@@ -126,11 +126,22 @@ def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json",
     return target
 
 
+RELAY_WIDE = {"firmware.json", "options.json", "certs"}
+
+
+def _legacy_owner(data_dir: Path) -> str | None:
+    """Whose the single-heater files at the top of the data dir are."""
+    return (clean_dsn(_json(data_dir / "lanip.json").get("module_dsn"))
+            or clean_dsn((_json(data_dir / "device.json").get("facts") or {}).get("dsn")))
+
+
 def forget(data_dir: Path, dsn: str, primary: bool, queue_name: str = "pending.json") -> list[str]:
     """Delete a heater's files (DELETE /heaters/<dsn>), so no restart brings it
-    back. For the primary that includes the PRIMARY marker and the
-    single-heater files at the top of the data dir: known_dsn() and migrate()
-    would rebuild it from them. Returns what was removed (relative names)."""
+    back: its directory; the PRIMARY marker if it names it; and the
+    single-heater files at the top of the data dir if they're its own (by the
+    DSN they hold, or with no DSN, if it's the primary) -- known_dsn() and
+    migrate() would rebuild it from them. Never another heater's, never the
+    relay's own (firmware gate, options, certificates). Returns what went."""
     clean = clean_dsn(dsn)
     if not clean:
         return []
@@ -142,13 +153,20 @@ def forget(data_dir: Path, dsn: str, primary: bool, queue_name: str = "pending.j
     if os.path.isdir(full):
         shutil.rmtree(full, ignore_errors=True)
         removed.append(f"heaters/{clean}/")
-    if primary:
-        marker = data_dir / "heaters" / PRIMARY_MARKER
-        names = [*COPIED, *MOVED, queue_name]
-        for path in [marker, *(data_dir / n for n in dict.fromkeys(names))]:
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
-                removed.append(str(path.relative_to(data_dir)))
+    marker = data_dir / "heaters" / PRIMARY_MARKER
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        if clean_dsn(marker.read_text().strip()) == clean:
+            marker.unlink()
+            removed.append(f"heaters/{PRIMARY_MARKER}")
+    owner = _legacy_owner(data_dir)
+    if owner == clean or (owner is None and primary):
+        names = dict.fromkeys([*COPIED, *MOVED, os.path.basename(queue_name)])
+        for name in names:
+            if name in RELAY_WIDE:
+                continue
+            with contextlib.suppress(FileNotFoundError, IsADirectoryError):
+                (data_dir / name).unlink()
+                removed.append(name)
     return removed
 
 
