@@ -10,6 +10,12 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-25
+
+**Upgrade both the add-on and the integration.** The integration migrates its
+entities' unique IDs on first start, with no action needed. Entity IDs,
+customised names, history, dashboards and automations are unchanged.
+
 ### Added
 - **Several water heaters behind one relay** (#18, phase 2, relay only).
   - Each heater gets its own engine: write queue, telemetry, LAN session and
@@ -53,6 +59,10 @@ dialog reads it from the add-on folder. CI fails if the two differ.
     dead device beside it.
   - Heater numbers are kept in the config entry, so they don't shift when a
     heater leaves.
+
+### Fixed
+- The integration no longer reloads itself when its stored data changes; it
+  reloads only when an option changes.
 
 ## [0.6.0] - 2026-10-25
 
