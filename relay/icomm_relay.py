@@ -46,14 +46,12 @@ Env:
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import ipaddress
 import json
 import logging
 import os
 import re
-import signal
 import ssl
 import time
 from collections import deque
@@ -61,7 +59,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import icomm_frames as frames
-from aiohttp import ClientSession, ClientSSLError, ClientTimeout, web
+from aiohttp import ClientSession, ClientSSLError, web
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
 from icomm_heater import Heater, known_dsn
@@ -237,8 +235,19 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
         return None
 
 
+DEVICE_ID_RE = re.compile(r"<key>(\d{1,20})</key>")
+DEVICE_PATH_RE = re.compile(r"^/devices/(\d{1,20})/")
+
+
 class Relay:
-    def __init__(self) -> None:
+    """One heater's engine: queue, telemetry, LAN session, cloud conversation.
+
+    Run on its own it is the whole relay (one heater). The hub (icomm_hub, #18)
+    runs one per heater, shares the listeners, client, DNS and peer policy, and
+    routes each request to the right one.
+    """
+
+    def __init__(self, heater: Heater | None = None, secondary: bool = False) -> None:
         self.upstream = os.environ.get("UPSTREAM", "proxy-ingress-usfield.aylanetworks.com")
         self.last_raw: dict | None = None      # the last superBlockDyn1, hex
         self.listen_port = int(os.environ.get("LISTEN_PORT", "8444"))
@@ -247,7 +256,8 @@ class Relay:
         # relay on another machine sets 0.0.0.0 -- the API is unauthenticated, so
         # only on a trusted LAN.
         self.state_host = os.environ.get("STATE_HOST", "127.0.0.1")
-        self.device_dsn = os.environ.get("DEVICE_DSN", "")
+        self.secondary = secondary
+        self.device_dsn = heater.dsn if secondary and heater else os.environ.get("DEVICE_DSN", "")
         self.state: dict = {"online": False}
         self.last_telemetry = 0.0
         # Reports can keep arriving with byte-identical contents: the module
@@ -281,13 +291,21 @@ class Relay:
         # facts, saved config) in heaters/<DSN>/ under it (icomm_heater, #18).
         queue_env = Path(os.environ.get("QUEUE_FILE", "state/pending.json"))
         self.data_dir = Path(os.environ.get("DATA_DIR") or queue_env.parent)
-        self.heater = Heater(self.data_dir, known_dsn(self.data_dir, self.device_dsn),
-                             os.environ.get("OFFLINE_FALLBACK", "1") != "0", queue_env.name)
+        self.heater = heater or Heater(self.data_dir, known_dsn(self.data_dir, self.device_dsn),
+                                       os.environ.get("OFFLINE_FALLBACK", "1") != "0",
+                                       queue_env.name)
+        # Ayla's ID for this heater (the config reply's <key>): the /devices/<id>/
+        # in every cloud request, so the hub can route them under NAT steering.
+        self.device_id: str | None = self.device.facts.get("ayla_id")
+        # Set by the hub: every heater's DSN, for /state.
+        self.heaters_list = lambda: [d for d in [self.heater.dsn] if d]
         self._device_read_asked = False
         # Identity from the last real config reply this relay saved (the DSN
         # rewrite evidence), so it shows before the heater's next boot.
-        with contextlib.suppress(OSError):
-            self.device.note_dsn((self.heater.dir / "dsn-original.xml").read_text())
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            saved = (self.heater.dir / "dsn-original.xml").read_text()
+            self.device.note_dsn(saved)
+            self._learn_device_id(saved)
         # Firmware updates wait for the owner (icomm_firmware explains why).
         self.firmware = FirmwareGate(os.environ.get("FIRMWARE_UPDATES", "hold"),
                                      self.data_dir / "firmware.json")
@@ -298,7 +316,7 @@ class Relay:
         # The local doorbell: Ayla Local Connect, with a key we mint ourselves
         # (phase 28). LAN delivery and LAN telemetry; the cloud poll stays as
         # the fallback. No A.O. Smith account anywhere.
-        self.lan = LanServer(self)
+        self.lan = LanServer(self, secondary)
         if self.device_dsn or self.lan.module_dsn:
             self.heater.adopt(self.device_dsn or self.lan.module_dsn)
             self.device.note_dsn_id(self.device_dsn or self.lan.module_dsn)
@@ -443,8 +461,15 @@ class Relay:
         found = DSN_PATH_RE.search(request.path)
         if not found or not request.get(TRUSTED, True):
             return None
-        known = self.device_dsn or self.lan.module_dsn or self.device.facts.get("dsn")
+        known = (self.device_dsn or self.lan.module_dsn or self.heater.dsn
+                 or self.device.facts.get("dsn"))
         return self.offline.answer(request, found.group(1), known, transform)
+
+    def _learn_device_id(self, text: str) -> None:
+        found = DEVICE_ID_RE.search(text)
+        if found:
+            self.device_id = found.group(1)
+            self.device.note_ayla_id(self.device_id)
 
     def _note_tls_failure(self, err: Exception) -> None:
         cause = getattr(err, "certificate_error", None) or err
@@ -924,6 +949,19 @@ class Relay:
                         self.lanip_cmd_id)
         return text.encode()
 
+    def _note_config(self, payload: bytes) -> str:
+        """What a config reply says about the heater, LAN mode or not: its
+        firmware, identity and Ayla ID (which the hub routes by)."""
+        text = payload.decode(errors="replace")
+        self.firmware.note_dsn(text)
+        self.device.note_dsn(text)
+        self._learn_device_id(text)
+        return text
+
+    def note_config(self, payload: bytes) -> None:
+        """A transform that only reads: the reply goes on unchanged."""
+        self._note_config(payload)
+
     def _rewrite_dsn(self, payload: bytes) -> bytes | None:
         """Flip Ayla's factory LAN-mode switches in a DSN config reply.
 
@@ -933,9 +971,7 @@ class Relay:
         local writes and telemetry. Only 200s are rewritten; a reply without a
         switch present passes through untouched.
         """
-        text = payload.decode(errors="replace")
-        self.firmware.note_dsn(text)
-        self.device.note_dsn(text)
+        text = self._note_config(payload)
         switched = []
         for element in ("lan-enabled", "local-access-enabled"):
             off = f"<{element}>false</{element}>"
@@ -1043,6 +1079,7 @@ class Relay:
         out["device"] = self.device.status()
         out["offline"] = self.offline.status()
         out["heater"] = self.heater.status()
+        out["heaters"] = self.heaters_list()
         out["reporting_mask"] = {"renew": self.mask_renew,
                                  "after_s": self.mask_renew_after,
                                  "sent": self.lan.masks_sent}
@@ -1078,77 +1115,6 @@ class Relay:
         if Path(dhparams).exists():
             ctx.load_dh_params(dhparams)
         return ctx
-
-    async def run(self) -> None:
-        # Only the module (via the gateway's SNAT, or directly) may talk to the
-        # impersonated cloud: lan.json alone hands out the LAN key.
-        module_app = web.Application(middlewares=[
-            self.peers.middleware(self.peers.cloud_allowed, f":{self.listen_port}",
-                                  refuse=False)])
-        # Everything the module dials goes upstream verbatim; /dsns/ (fetched
-        # during re-registration) is the one path outside /devices and must not
-        # fall to a default 404 -- the module is mid-boot when it asks.
-        module_app.router.add_route("*", "/{tail:.*}", self._route)
-        state_app = web.Application()
-        state_app.router.add_get("/state", self.state_handler)
-        state_app.router.add_get("/health", self.health_handler)
-        state_app.router.add_get("/raw", self.raw_handler)
-        state_app.router.add_post("/nudge", self.nudge_handler)
-        state_app.router.add_post("/write", self.write_handler)
-        state_app.router.add_post("/write/cancel", self.write_cancel_handler)
-        state_app.router.add_post("/firmware/allow", self.firmware_allow_handler)
-        state_app.router.add_post("/lan/reporting-mask", self.reporting_mask_handler)
-
-        runner_state = web.AppRunner(state_app)
-        await runner_state.setup()
-        await web.TCPSite(runner_state, self.state_host, self.state_port).start()
-
-        runner_module = web.AppRunner(module_app)
-        await runner_module.setup()
-        # No keep-alive timeout tuning: the module holds connections for ~26 s
-        # per dial and re-dials on its own; nothing here needs to outlive it.
-        await web.TCPSite(runner_module, "0.0.0.0", self.listen_port,
-                         ssl_context=self.tls_context()).start()
-        if self.dns.enabled and self.listen_port != 443:
-            try:
-                await web.TCPSite(runner_module, "0.0.0.0", 443,
-                                 ssl_context=self.tls_context()).start()
-            except OSError as err:
-                self.dns_https_error = f"port 443 is in use: {err.strerror or err}"
-                _LOGGER.error("DNS steering: %s. Another add-on (an SSL proxy?) owns it; "
-                              "the module can't reach the relay until it's free.",
-                              self.dns_https_error)
-        await self.dns.start()
-
-        self._load_queue()
-        await self.lan.start()
-        timeout = ClientTimeout(total=30)  # Ayla answers in ~100 ms when healthy
-        self.client = ClientSession(timeout=timeout, raise_for_status=False)
-        print(f"icomm_local relay: module on :{self.listen_port} (TLS), "
-              f"state on {self.state_host}:{self.state_port}, upstream {self.upstream}, "
-              f"LAN {'on :' + str(self.lan.port) if self.lan.enabled else 'off'}")
-        # The relay runs as PID 1 (run.sh execs it), and the kernel ignores
-        # SIGTERM for PID 1 unless a handler is installed. Without one, every
-        # add-on stop waited out Docker's timeout and ended in SIGKILL (exit
-        # 137, seen live on the 0.4.7 update).
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        handled = []
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            with contextlib.suppress(NotImplementedError, RuntimeError):
-                loop.add_signal_handler(sig, stop.set)
-                handled.append(sig)
-        try:
-            await stop.wait()
-            _LOGGER.info("stopping on signal")
-        finally:
-            for sig in handled:
-                loop.remove_signal_handler(sig)
-            await self.lan.stop()
-            await self.dns.stop()
-            await self.client.close()
-            await runner_module.cleanup()
-            await runner_state.cleanup()
 
     # -- degraded-state detection --------------------------------------
     def _note_request(self, path: str) -> None:
@@ -1406,8 +1372,10 @@ class Relay:
             # Our command, our ack: Ayla never issued it, and answered the
             # forwarded ack with a 404 in the live repair. Keep it local.
             return web.Response(status=200, text="")
-        if (self.dsn_lan_rewrite or self.lan.enabled) and "/dsns/" in request.path:
-            return await self.proxy(request, transform=self._rewrite_dsn)
+        if "/dsns/" in request.path:
+            if self.dsn_lan_rewrite or self.lan.enabled:
+                return await self.proxy(request, transform=self._rewrite_dsn)
+            return await self.proxy(request, transform=self.note_config)
         if self.nudges_left and request.method == "GET":
             self.nudges_left -= 1
             # No body, and nothing forwarded: this is the module's cue to
@@ -1417,7 +1385,7 @@ class Relay:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(Relay().run())
+    # The entry point is icomm_hub.py (#18); this keeps `python icomm_relay.py`
+    # working for setups that still start it by this name.
+    import runpy
+    runpy.run_module("icomm_hub", run_name="__main__")

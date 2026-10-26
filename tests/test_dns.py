@@ -11,6 +11,7 @@ import icomm_dns
 import pytest
 from aiohttp import web
 from icomm_dns import DnsServer, answer, parse_question, servfail
+from icomm_hub import Hub
 from test_proxy import FakeSite, _relay
 
 HEATER_NAME = "iCOMMNextGenHP-71538015-device.aylanetworks.com"
@@ -236,10 +237,10 @@ async def test_the_relay_adds_443_and_runs_dns(tmp_path, monkeypatch, site, erro
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", site)
     relay.tls_context = lambda: object()
-    task = asyncio.create_task(relay.run())
-    for _ in range(200):
+    task = asyncio.create_task(Hub(relay).run())
+    for _ in range(400):
         await asyncio.sleep(0)
-        if relay.client is not None:
+        if relay.dns.status()["running"]:     # started after the listeners
             break
     ports = {s.port for s in FakeSite.started}
     assert (443 in ports) is (error is None)

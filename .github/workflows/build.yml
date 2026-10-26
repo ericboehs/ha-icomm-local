@@ -41,7 +41,7 @@ jobs:
       - name: The image starts and imports the relay
         run: |
           docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 icomm-relay:ci \
-            -c "import sys, icomm_relay, icomm_lan, icomm_peers, icomm_frames, icomm_firmware, icomm_dns, icomm_device, icomm_offline, icomm_heater; print('imports ok', sys.version)"
+            -c "import sys, icomm_relay, icomm_lan, icomm_peers, icomm_frames, icomm_firmware, icomm_dns, icomm_device, icomm_offline, icomm_heater, icomm_hub; print('imports ok', sys.version)"
       # The relay's test suite inside the image users actually run: its Python,
       # its musl wheels from the hash-checked lock, on each architecture (arm64
       # as on a Raspberry Pi or HA Green).

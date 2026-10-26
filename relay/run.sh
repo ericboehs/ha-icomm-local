@@ -51,7 +51,7 @@ for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),
                  ("relay_ip", "RELAY_IP"), ("trusted_peers", "TRUSTED_PEERS"),
                  ("firmware_updates", "FIRMWARE_UPDATES"),
-                 ("dns_upstream", "DNS_UPSTREAM")):
+                 ("dns_upstream", "DNS_UPSTREAM"), ("max_heaters", "MAX_HEATERS")):
     if opts.get(key) not in (None, ""):
         print(f"export {env}={shlex.quote(str(opts[key]))}")
 PY
@@ -59,4 +59,4 @@ PY
 fi
 
 echo "icomm_local relay: listen=${LISTEN_PORT:-8444} state=${STATE_PORT:-8124} upstream=${UPSTREAM:-default}"
-exec python3 icomm_relay.py
+exec python3 icomm_hub.py

@@ -19,6 +19,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from icomm_hub import Hub
 from icomm_peers import TRUSTED
 from test_dsn import DSN
 from test_lan import SECRET
@@ -410,10 +411,10 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     tls = object()
     relay.tls_context = lambda: tls
 
-    task = asyncio.create_task(relay.run())
-    for _ in range(200):
+    task = asyncio.create_task(Hub(relay).run())
+    for _ in range(400):
         await asyncio.sleep(0)
-        if relay.client is not None:
+        if len(FakeSite.started) == 3:          # state, module and LAN listeners
             break
     assert relay.client is not None and not task.done()
 
@@ -422,8 +423,9 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     assert by_port[18124].host == "127.0.0.1" and by_port[18124].ssl_context is None
     assert by_port[18444].host == "0.0.0.0" and by_port[18444].ssl_context is tls
     state_routes = {r.resource.canonical for r in by_port[18124].runner.app.router.routes()}
-    assert state_routes == {"/state", "/health", "/raw", "/nudge", "/write", "/write/cancel",
-                            "/firmware/allow", "/lan/reporting-mask"}
+    single = {"/state", "/raw", "/nudge", "/write", "/write/cancel", "/lan/reporting-mask"}
+    assert state_routes == single | {"/health", "/firmware/allow", "/heaters"} | {
+        f"/heaters/{{dsn}}{path}" for path in single}
     assert relay.pending["setpoint"].restored is True
     out = capsys.readouterr().out
     assert "module on :18444 (TLS)" in out and "LAN on :18888" in out
@@ -441,7 +443,7 @@ async def test_run_says_lan_off(tmp_path, monkeypatch, capsys):
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", FakeSite)
     relay.tls_context = lambda: None
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:
@@ -469,7 +471,7 @@ async def test_sigterm_stops_the_relay_cleanly(tmp_path, monkeypatch):
     removed = []
     monkeypatch.setattr(loop, "remove_signal_handler", removed.append)
 
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:
@@ -494,7 +496,7 @@ async def test_run_without_signal_support_still_runs(tmp_path, monkeypatch):
         raise NotImplementedError
 
     monkeypatch.setattr(loop, "add_signal_handler", unsupported)
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:

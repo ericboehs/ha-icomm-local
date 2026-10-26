@@ -34,7 +34,9 @@ async def test_the_config_reply_and_a_lan_report(tmp_path, monkeypatch):
     assert (device["module_hardware"], device["model"]) == ("LBEE5PA1LD-222", "iCOMMNextGenHP")
     assert device["dsn"] == "AC000W019949045" and device["mac"] == "d01769f8f31c"
     saved = (relay.heater.dir / "device.json").read_text()
-    assert "SECRET" not in saved and "12345" not in saved       # never the keys
+    assert "SECRET" not in saved                                 # never the ANS cipher key
+    # <key> is Ayla's numeric device ID (in every request path), kept for routing.
+    assert json.loads(saved)["facts"]["ayla_id"] == "12345"
 
 
 async def test_a_cloud_upload_and_static_blocks(tmp_path, monkeypatch):
