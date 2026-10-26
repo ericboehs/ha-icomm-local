@@ -189,6 +189,8 @@ The full guide, including a two-heater dashboard, is
   target is optional; with several it's required.
 - **Upgrading from a single-heater install:** your entities keep their entity
   IDs and history. Only their internal unique IDs move to the heater's DSN.
+- **Removing a heater:** delete its device in HA (the relay forgets it too).
+  To replace one and keep its entities for the new heater, see the guide.
 
 ## When Ayla is down
 
@@ -255,7 +257,7 @@ Add-on options, or environment variables when running the relay directly:
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
-| `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters` and `/heaters/<dsn>/...`. Each heater is its own device in HA |
+| `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters`, `/heaters/<dsn>/...`, and `DELETE /heaters/<dsn>?confirm=<dsn>` to forget one. Each heater is its own device in HA |
 | `offline_fallback` / `OFFLINE_FALLBACK` | on | if Ayla is unreachable (or answers 5xx) when the heater boots, answer its config fetch from the last real reply, so local control survives a power cut during an outage. See `docs/LAN_MODE.md`, *When Ayla is down* |
 | `reporting_mask_renew` / `REPORTING_MASK_RENEW` | on | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, at most once per that interval |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |

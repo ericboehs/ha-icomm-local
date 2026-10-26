@@ -41,7 +41,7 @@ import signal
 import time
 
 from aiohttp import ClientSession, ClientTimeout, web
-from icomm_heater import Heater, clean_dsn
+from icomm_heater import Heater, clean_dsn, forget
 from icomm_peers import TRUSTED, normalize
 from icomm_relay import DEVICE_PATH_RE, DSN_PATH_RE, Relay
 
@@ -72,6 +72,8 @@ class Hub:
         self.refused: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._marked: str | None = None
+        self._stop: asyncio.Event | None = None
+        self.removing: list[tuple[str, bool]] = []   # (dsn, was primary): delete, restart
         self.peers = self.primary.peers
         # Every heater's address is a trusted module address.
         self.peers._module_ip = self._module_ips
@@ -309,8 +311,53 @@ class Hub:
         return web.json_response({"heaters": rows, "max_heaters": self.max_heaters,
                                   "refused": sorted(self.refused)})
 
+    async def remove_handler(self, request: web.Request) -> web.Response:
+        """DELETE /heaters/<dsn>?confirm=<dsn>: forget a heater (one that's gone
+        or replaced). Its directory goes, its key with it; then the relay
+        restarts in-process and comes back from what's left on disk. A heater
+        still steered here is added again, as new, on its next boot."""
+        dsn = clean_dsn(request.match_info["dsn"])
+        engine = self.by_dsn(dsn)
+        if engine is None:
+            return web.json_response({"error": "no such heater", "heaters": self.dsns()},
+                                     status=404)
+        if request.query.get("confirm", "").upper() != dsn:
+            return web.json_response({"error": "add ?confirm=<dsn> to remove a heater"},
+                                     status=400)
+        primary = engine is self.primary
+        fresh = bool(engine.last_telemetry) and time.time() - engine.last_telemetry < 600
+        if fresh and request.query.get("force") != "1":
+            return web.json_response(
+                {"error": "the heater is still reporting; power it off or stop steering it "
+                          "first (or add force=1)"}, status=409)
+        if primary and (engine.lan.module_ip_configured or engine.device_dsn == dsn):
+            return web.json_response(
+                {"error": "the module_ip or device_dsn option names this heater; clear it "
+                          "first, or the next primary would inherit it"}, status=409)
+        removed = forget(engine.data_dir, dsn, primary, self._queue_name())
+        self.removing.append((dsn, primary))
+        _LOGGER.warning("heater %s: removed (%s); restarting the relay", _shown(dsn),
+                        ", ".join(removed) or "nothing on disk")
+        if self._stop is not None:
+            asyncio.get_running_loop().call_soon(self._stop.set)
+        return web.json_response({"removed": dsn, "primary": primary, "files": removed,
+                                  "restarting": True})
+
+    def _queue_name(self) -> str:
+        return os.path.basename(os.environ.get("QUEUE_FILE", "pending.json"))
+
+    @web.middleware
+    async def _restarting(self, request: web.Request, handler):
+        """After a removal, until the restart: nothing about the heaters, which
+        still include the removed one in memory. A client reading /state then
+        would bring it back (the integration re-creates what it sees)."""
+        if self.removing:
+            return web.json_response({"error": "restarting after a heater was removed"},
+                                     status=503, headers={"Retry-After": "5"})
+        return await handler(request)
+
     def state_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[self._restarting])
         for path, name in HEATER_GETS.items():
             app.router.add_get(path, self._primary(name))
             app.router.add_get(f"/heaters/{{dsn}}{path}", self._heater(name))
@@ -320,6 +367,7 @@ class Hub:
         app.router.add_get("/health", self.primary.health_handler)
         app.router.add_post("/firmware/allow", self.primary.firmware_allow_handler)
         app.router.add_get("/heaters", self.heaters_handler)
+        app.router.add_delete("/heaters/{dsn}", self.remove_handler)
         return app
 
     def lan_app(self) -> web.Application:
@@ -334,7 +382,9 @@ class Hub:
         return app
 
     # -- lifecycle ----------------------------------------------------------
-    async def run(self) -> None:
+    async def run(self) -> bool:
+        """Serve until stopped. True: a heater was removed and the caller should
+        start a new Hub, which reads the heaters back from disk."""
         primary = self.primary
         # Only the module (via the gateway's SNAT, or directly) may talk to the
         # impersonated cloud: lan.json alone hands out the LAN key.
@@ -360,7 +410,7 @@ class Hub:
         # Everything from here is torn down on the way out, however far it got:
         # a stop (or a cancel) can arrive in the middle of starting up.
         runners: list[web.AppRunner] = []
-        stop = asyncio.Event()
+        stop = self._stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         handled = []
         try:
@@ -408,7 +458,8 @@ class Hub:
                     loop.add_signal_handler(sig, stop.set)
                     handled.append(sig)
             await stop.wait()
-            _LOGGER.info("stopping on signal")
+            _LOGGER.info("restarting after a heater was removed" if self.removing
+                         else "stopping on signal")
         finally:
             self.running = False
             tasks = list(self._tasks)
@@ -423,10 +474,20 @@ class Hub:
             await self.client.close()
             for runner in reversed(runners):
                 await runner.cleanup()
+            # Again, now nothing is running: an engine may have saved a file
+            # (facts, queue, key) between the delete and the stop.
+            for dsn, was_primary in self.removing:
+                forget(primary.data_dir, dsn, was_primary, self._queue_name())
+        return bool(self.removing)
 
 
-if __name__ == "__main__":
+def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(Hub().run())
+        while asyncio.run(Hub().run()):
+            pass                       # a heater was removed: start over from disk
+
+
+if __name__ == "__main__":  # pragma: no cover - main() is tested
+    main()

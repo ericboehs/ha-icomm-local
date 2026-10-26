@@ -126,6 +126,32 @@ def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json",
     return target
 
 
+def forget(data_dir: Path, dsn: str, primary: bool, queue_name: str = "pending.json") -> list[str]:
+    """Delete a heater's files (DELETE /heaters/<dsn>), so no restart brings it
+    back. For the primary that includes the PRIMARY marker and the
+    single-heater files at the top of the data dir: known_dsn() and migrate()
+    would rebuild it from them. Returns what was removed (relative names)."""
+    clean = clean_dsn(dsn)
+    if not clean:
+        return []
+    heaters = os.path.realpath(data_dir / "heaters")
+    full = os.path.normpath(os.path.join(heaters, clean))
+    if not full.startswith(heaters + os.sep):         # CodeQL path-injection pattern
+        return []
+    removed = []
+    if os.path.isdir(full):
+        shutil.rmtree(full, ignore_errors=True)
+        removed.append(f"heaters/{clean}/")
+    if primary:
+        marker = data_dir / "heaters" / PRIMARY_MARKER
+        names = [*COPIED, *MOVED, queue_name]
+        for path in [marker, *(data_dir / n for n in dict.fromkeys(names))]:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+                removed.append(str(path.relative_to(data_dir)))
+    return removed
+
+
 class Heater:
     """A heater's DSN and directory, and the components that persist there."""
 
