@@ -10,6 +10,13 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Changed
+- **The water heater's current temperature is now the tank average**, not the
+  top thermistor. The average is the controller's own tank temperature, the
+  one it heats against, so the card now agrees with when the heater runs.
+  The top temperature is still its own sensor. The card falls back to the top
+  temperature if a report has no average.
+
 ## [0.7.0] - 2026-10-25
 
 **Upgrade both the add-on and the integration.** The integration migrates its

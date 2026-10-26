@@ -22,7 +22,7 @@ STATE_A = {**STATE, "heater": {"dsn": A, "dir": f"/data/heaters/{A}"}, "heaters"
            "device": {"dsn": A, "model_number": "HPS10-50H45DV", "serial_number": "134274434",
                       "controller_firmware": "2.14"}}
 STATE_B = {**STATE, "heater": {"dsn": B, "dir": f"/data/heaters/{B}"}, "heaters": [A, B],
-           "mode": "electric", "water_top": 120.0, "watts": 4500,
+           "mode": "electric", "water_top": 120.0, "water_bottom": 119.0, "watts": 4500,
            "device": {"dsn": B, "model_number": "HPS10-66H45DV", "serial_number": "222",
                       "controller_firmware": "2.15"}}
 WRITE_OK = {"queued": {"kind": "setpoint"}, "pending": 1, "lan_registered": True}
@@ -62,8 +62,8 @@ async def test_two_heaters_two_devices(hass: HomeAssistant, aioclient_mock):
     entry = await _setup(hass, aioclient_mock)
     a = hass.states.get("water_heater.icomm_water_heater")
     b = hass.states.get("water_heater.icomm_water_heater_2")
-    assert (a.state, a.attributes["current_temperature"]) == ("heat_pump", 129.0)
-    assert (b.state, b.attributes["current_temperature"]) == ("electric", 120.0)
+    assert (a.state, a.attributes["current_temperature"]) == ("heat_pump", 128.0)
+    assert (b.state, b.attributes["current_temperature"]) == ("electric", 119.0)
     assert hass.states.get("sensor.icomm_water_heater_2_power").state == "4500"
     device_a, device_b = _device(hass, entry, A), _device(hass, entry, B)
     assert (device_a.name, device_a.serial_number, device_a.sw_version) == (
@@ -300,7 +300,8 @@ async def test_a_replaced_heater_takes_over_the_old_ones_entities(hass, aioclien
     entry = await _setup(hass, aioclient_mock, a={**STATE_A, "heaters": [A]})
     device = _device(hass, entry, A)
     replaced = {**STATE_A, "heater": {"dsn": x2}, "heaters": [x2],
-                "device": {"dsn": x2, "serial_number": "999"}, "water_top": 101.0}
+                "device": {"dsn": x2, "serial_number": "999"},
+                "water_top": 101.0, "water_bottom": 100.0}
     _relay(aioclient_mock, a=replaced)                      # at runtime: one reload
     await hass.data["icomm_local"][entry.entry_id].async_refresh()
     await hass.async_block_till_done()
@@ -308,7 +309,7 @@ async def test_a_replaced_heater_takes_over_the_old_ones_entities(hass, aioclien
     assert registry.async_get("sensor.icomm_water_heater_power").unique_id == (
         f"icomm_local_{x2}_watts")
     assert hass.states.get("water_heater.icomm_water_heater").attributes[
-        "current_temperature"] == 101.0
+        "current_temperature"] == 100.0
     assert _device(hass, entry, x2).id == device.id and _device(hass, entry, A) is None
     assert not [e for e in hass.states.async_entity_ids() if e.endswith("_2")]
     assert entry.data["dsn"] == x2 and entry.data["heater_numbers"] == {x2: 1}

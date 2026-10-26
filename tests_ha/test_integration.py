@@ -64,7 +64,7 @@ async def test_entities_appear(hass: HomeAssistant, aioclient_mock) -> None:
     assert wh is not None, sorted(hass.states.async_entity_ids())
     assert wh.state == "heat_pump"
     assert wh.attributes["temperature"] == 150.0
-    assert wh.attributes["current_temperature"] == 129.0
+    assert wh.attributes["current_temperature"] == 128.0          # the controller's tank temp
     assert wh.attributes["max_temp"] == 150.0
     assert set(wh.attributes["operation_list"]) == {"electric", "heat_pump", "eco"}
     assert hass.states.get("sensor.icomm_water_heater_relay_health").state == "healthy"
@@ -231,3 +231,11 @@ async def test_heating_element_without_flags(hass: HomeAssistant, aioclient_mock
     await _setup(hass, aioclient_mock)            # an older relay: no heat_flags
     assert hass.states.get(
         "sensor.icomm_water_heater_heating_element").attributes["flags"] is None
+
+
+async def test_current_temperature_falls_back_to_the_top(hass, aioclient_mock):
+    """No tank average in the report (a partial one): the top thermistor."""
+    state = {k: v for k, v in STATE.items() if k != "water_bottom"}
+    await _setup(hass, aioclient_mock, state=state)
+    assert hass.states.get("water_heater.icomm_water_heater").attributes[
+        "current_temperature"] == 129.0
