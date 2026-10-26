@@ -175,9 +175,12 @@ Check the add-on log first, then the relay's state from the HA host:
 ## More than one water heater
 
 One add-on and one integration entry serve up to `max_heaters` (default 4).
+The full guide, including a two-heater dashboard, is
+[docs/MULTI_HEATER.md](docs/MULTI_HEATER.md).
 - **Adding one:** steer it like the first one. With DNS steering that already
-  happens; with NAT it needs its own rules. Power-cycle it. The relay adds it
-  once Ayla confirms its config fetch.
+  happens; with NAT, add its IP to the rules. Leave `module_ip` and
+  `device_dsn` empty, then power-cycle it. The relay adds it once Ayla
+  confirms its config fetch.
 - **In HA:** each heater is its own device, "iCOMM Water Heater",
   "iCOMM Water Heater 2" and so on, with its own entities, such as
   `water_heater.icomm_water_heater_2`.
@@ -245,10 +248,10 @@ Add-on options, or environment variables when running the relay directly:
 | `upstream` / `UPSTREAM` | `proxy-ingress-usfield.aylanetworks.com` | the real Ayla endpoint every module request is forwarded to (US field) |
 | `lan_mode` / `LAN_MODE` | on | Local Connect; off means writes wait for a cloud poll |
 | `lan_port` / `LAN_PORT` | 8888 | Local Connect callback port |
-| `module_ip` / `MODULE_IP` | learned | heater IP. Normally learned: from its registration with NAT steering, or pinned when Ayla accepts its config fetch with DNS steering |
+| `module_ip` / `MODULE_IP` | learned | heater IP. Normally learned: from its registration with NAT steering, or pinned when Ayla accepts its config fetch with DNS steering. Primary heater only; leave empty with several |
 | `relay_ip` / `RELAY_IP` | detected | the address the module should call back on |
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
-| `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen) |
+| `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen). Primary heater only |
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
