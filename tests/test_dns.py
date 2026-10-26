@@ -7,10 +7,9 @@ import json
 import socket
 import struct
 
-import icomm_dns
 import pytest
 from aiohttp import web
-from icomm_dns import DnsServer, answer, parse_question, servfail
+from icomm_dns import DnsServer, answer, local_address_for, parse_question, servfail
 from icomm_hub import Hub
 from test_proxy import FakeSite, _relay
 
@@ -133,7 +132,7 @@ async def test_malformed_queries_are_forwarded_too(monkeypatch):
     transport, proto, port = await upstream(silent=True)
     try:
         dns = server(monkeypatch, DNS_UPSTREAM=f"127.0.0.1:{port}")
-        monkeypatch.setattr(icomm_dns, "FORWARD_TIMEOUT", 0.05)
+        monkeypatch.setattr("icomm_dns.FORWARD_TIMEOUT", 0.05)
         reply = await dns.resolve(b"\x12\x34" + b"\0" * 10, "10.0.1.50")
         assert reply[3] & 0x0F == 2 and dns.failures == 1        # upstream silent: SERVFAIL
         assert "TimeoutError" in dns.last_error
@@ -143,14 +142,14 @@ async def test_malformed_queries_are_forwarded_too(monkeypatch):
 
 async def test_no_upstream_at_all_is_servfail(monkeypatch):
     dns = server(monkeypatch)
-    monkeypatch.setattr(icomm_dns, "default_gateways", lambda: set())
+    monkeypatch.setattr("icomm_dns.default_gateways", set)
     reply = await dns.resolve(query("example.com"), "10.0.1.50")
     assert reply[3] & 0x0F == 2 and "no upstream" in dns.last_error
     assert dns.status()["upstream"] is None
 
 
 def test_upstream_defaults_to_the_gateway_and_accepts_a_port(monkeypatch):
-    monkeypatch.setattr(icomm_dns, "default_gateways", lambda: {"10.0.1.1"})
+    monkeypatch.setattr("icomm_dns.default_gateways", lambda: {"10.0.1.1"})
     assert server(monkeypatch)._upstream_endpoint() == ("10.0.1.1", 53)
     assert server(monkeypatch, DNS_UPSTREAM="9.9.9.9")._upstream_endpoint() == ("9.9.9.9", 53)
     assert server(monkeypatch, DNS_UPSTREAM="9.9.9.9:5353")._upstream_endpoint() == (
@@ -160,14 +159,14 @@ def test_upstream_defaults_to_the_gateway_and_accepts_a_port(monkeypatch):
 
 
 def test_an_unreachable_client_gets_no_answer_address(monkeypatch):
-    assert icomm_dns.local_address_for("not-an-ip") is None
+    assert local_address_for("not-an-ip") is None
 
 
 async def test_rewrite_needs_an_address(monkeypatch):
     transport, proto, port = await upstream()
     try:
         dns = server(monkeypatch, DNS_UPSTREAM=f"127.0.0.1:{port}")
-        monkeypatch.setattr(icomm_dns, "local_address_for", lambda peer: None)
+        monkeypatch.setattr("icomm_dns.local_address_for", lambda peer: None)
         reply = await dns.resolve(query(HEATER_NAME), "10.0.20.187")
         assert answers(reply)[2] == "203.0.113.9"                # fell through to forwarding
     finally:
@@ -208,7 +207,7 @@ async def test_serves_udp_and_tcp_then_stops(monkeypatch):
 
 async def test_a_taken_port_is_reported_not_fatal(monkeypatch, caplog):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
-        busy.bind(("0.0.0.0", 0))
+        busy.bind(("127.0.0.1", 0))
         dns = server(monkeypatch, DNS_SERVER="1", DNS_PORT=str(busy.getsockname()[1]))
         await dns.start()
     assert dns.status()["running"] is False and "could not listen" in dns.error
@@ -236,7 +235,7 @@ async def test_the_relay_adds_443_and_runs_dns(tmp_path, monkeypatch, site, erro
                    LAN_PORT="18889", DNS_SERVER="1", DNS_PORT=str(port))
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", site)
-    relay.tls_context = lambda: object()
+    relay.tls_context = object
     task = asyncio.create_task(Hub(relay).run())
     for _ in range(400):
         await asyncio.sleep(0)
@@ -249,13 +248,13 @@ async def test_the_relay_adds_443_and_runs_dns(tmp_path, monkeypatch, site, erro
     assert (state["https_error"] or None) == (error and state["https_error"])
     assert (error is None) or error in state["https_error"]
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    results = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
     assert relay.dns.status()["running"] is False
 
 
 async def test_a_refusing_upstream_is_servfail(monkeypatch):
     dns = server(monkeypatch, DNS_UPSTREAM=f"127.0.0.1:{free_port()}")   # nothing listening
-    monkeypatch.setattr(icomm_dns, "FORWARD_TIMEOUT", 0.5)
+    monkeypatch.setattr("icomm_dns.FORWARD_TIMEOUT", 0.5)
     reply = await dns.resolve(query("example.com"), "10.0.1.50")
     assert reply[3] & 0x0F == 2 and dns.failures == 1

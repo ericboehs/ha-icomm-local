@@ -269,3 +269,13 @@ async def test_the_dsn_reply_tells_the_agent_version(tmp_path, monkeypatch):
     relay._rewrite_dsn(b"<dsn><sw-version>bc 2.11.4</sw-version></dsn>")
     assert relay.firmware.agent_version == "bc 2.11.4"
 
+
+
+def test_the_allow_log_counts_rather_than_echoes_the_key(tmp_path, caplog):
+    """CodeQL py/log-injection: the key arrives in the owner's request."""
+    gate = _gate(tmp_path)
+    gate.filter(_reply(_ota_cmd()))
+    caplog.clear()                     # the offer itself is logged; not this test
+    with caplog.at_level("WARNING"):
+        assert gate.allow("module:bc 2.12.0")
+    assert "(1 allowed)" in caplog.text and "bc 2.12.0" not in caplog.text

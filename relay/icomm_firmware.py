@@ -166,7 +166,9 @@ class FirmwareGate:
             return False
         self.allowed.add(key)
         self.save()
-        _LOGGER.warning("firmware update allowed by the owner: %s", key)
+        # A count, not the key: it arrives in the owner's request.
+        _LOGGER.warning("firmware update allowed by the owner (%d allowed)",
+                        len(self.allowed))
         return True
 
     def download_target(self, host: str | None, path: str) -> str | None:

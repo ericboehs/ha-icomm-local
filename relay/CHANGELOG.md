@@ -10,6 +10,22 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Fixed
+- **Code-scanning cleanup:** all 11 open CodeQL alerts on `main`, none of
+  them from 0.7.5.
+  - **A telemetry report that fails to decode is no longer swallowed
+    silently.** The relay keeps going, as before. It now counts the failure
+    (`decode_errors` on `/state`) and logs the exception type.
+  - **Log lines no longer echo outside text** (py/log-injection):
+    - allowing a firmware update logs the number allowed, not the key from
+      the request;
+    - the heater-directory rename doesn't log the DSN-derived name.
+  - **Tests:**
+    - a DNS test binds 127.0.0.1 instead of every interface;
+    - the clock patches use string targets instead of re-importing modules;
+    - unnecessary lambdas are gone;
+    - a cancelled task is checked with `gather`.
+
 ## [0.7.5] - 2026-10-26
 
 ### Changed

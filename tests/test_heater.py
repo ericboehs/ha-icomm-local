@@ -152,3 +152,13 @@ def test_adopt_stays_inside_heaters(tmp_path, monkeypatch):
     monkeypatch.setattr("icomm_heater.clean_dsn", lambda value: "..")    # if validation slipped
     heater.adopt("anything")
     assert heater.dsn is None and heater.dir.name == "default"
+
+
+def test_the_rename_log_names_no_dsn(tmp_path, caplog):
+    """CodeQL py/log-injection: the new name comes from the module."""
+    heater = Heater(tmp_path)
+    heater.dir.mkdir(parents=True, exist_ok=True)
+    with caplog.at_level("WARNING"):
+        heater.adopt("ac000w019949045")
+    assert heater.dir.name == DSN
+    assert "now carries its DSN" in caplog.text and DSN not in caplog.text

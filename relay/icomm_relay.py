@@ -324,6 +324,7 @@ class Relay:
         self.contents_changed = 0.0
         self._last_blocks: tuple[bytes, ...] | None = None
         self._last_active_fault: int | None = None
+        self.decode_errors = 0
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Heating changes tank temperatures within minutes: the longest healthy
         # gap between controller pushes while heating was 10 min (n=115); idle
@@ -603,8 +604,13 @@ class Relay:
                 self.last_telemetry = time.time()
                 self.last_raw["mode"] = self.state.get("mode_raw")
                 self._note_active_fault(self.state.get("active_fault"))
-            except (IndexError, ValueError):
-                pass
+            except (IndexError, ValueError) as err:
+                # Kept going: a report we can't decode must not break the
+                # proxy. Counted on /state, and logged by type only (the
+                # bytes came off the network).
+                self.decode_errors += 1
+                _LOGGER.warning("telemetry report didn't decode (%s); %d so far",
+                                type(err).__name__, self.decode_errors)
             self._confirm_pending()
 
     def _note_active_fault(self, code: int | None) -> None:
@@ -1217,6 +1223,7 @@ class Relay:
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
         unchanged = (round(time.time() - self.contents_changed)
                      if self.contents_changed else None)
+        out["decode_errors"] = self.decode_errors
         out["contents_unchanged_s"] = unchanged
         out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None
