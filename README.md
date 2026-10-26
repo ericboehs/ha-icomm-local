@@ -131,16 +131,28 @@ something is wrong (see Troubleshooting).
 ### A ready-made dashboard
 
 [docs/dashboard.yaml](docs/dashboard.yaml) is a complete **Water Heater**
-view with three sections:
+view, showing every entity the integration creates:
 
-- **Water heater:** the thermostat with mode buttons, hot water available, power
-  and the heating element.
-- **Device:** controller and Wi-Fi module firmware (diagnostic sensors), and the
-  model, serial number and firmware on the HA device page.
-- **Tank:** top, bottom and average temperatures, heat deficit, the last app
-  write, Wi-Fi and line voltage.
-- **Last 24 hours:** tank temperatures against the active target (vacation
-  shows as a drop to 50 °F), hot water available, and power.
+- **Water heater:**
+  - badges for relay health, mode and heating element;
+  - the thermostat with mode buttons;
+  - hot water available, power, the element and any pending write.
+- **Tank:**
+  - top, average and bottom temperatures, and the heat deficit;
+  - the setpoint, active target and maximum, and the air at the unit;
+  - how much the average weighs the top sensor, vacation days left, and the
+    last write's status.
+- **Connection:**
+  - Wi-Fi, line voltage and the last app write;
+  - why relay health says what it does, and whether Local Connect is
+    registered.
+- **Device:** model, serial number, DSN, controller and Wi-Fi module firmware,
+  and the module hardware.
+- **Last 24 hours:**
+  - tank temperatures against the active target and the air (vacation shows
+    as a drop to 50 °F);
+  - power, the heat deficit and hot water available;
+  - a timeline of mode and heating element.
 
 To add it:
 

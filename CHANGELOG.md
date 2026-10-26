@@ -10,6 +10,19 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Changed
+- **`docs/dashboard.yaml` shows everything the integration has.** New:
+  - the heating element, mode, setpoints and pending write;
+  - model, serial number, DSN and both firmware versions;
+  - why relay health says what it does, and Local Connect status;
+  - the tank average's weight on top, vacation days and write status;
+  - a 24-hour timeline of mode and heating element.
+
+  A new test checks that every attribute row names an attribute the entity
+  has.
+  Vacation days only show in vacation mode, and the last write's status only
+  while a write is pending.
+
 ## [0.7.2] - 2026-10-25
 
 ### Added
