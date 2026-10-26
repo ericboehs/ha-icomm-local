@@ -422,8 +422,9 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     assert by_port[18124].host == "127.0.0.1" and by_port[18124].ssl_context is None
     assert by_port[18444].host == "0.0.0.0" and by_port[18444].ssl_context is tls
     state_routes = {r.resource.canonical for r in by_port[18124].runner.app.router.routes()}
-    assert state_routes == {"/state", "/health", "/raw", "/nudge", "/write", "/write/cancel",
-                            "/firmware/allow", "/lan/reporting-mask"}
+    single = {"/state", "/raw", "/nudge", "/write", "/write/cancel", "/lan/reporting-mask"}
+    assert state_routes == single | {"/health", "/firmware/allow", "/heaters"} | {
+        f"/heaters/{{dsn}}{path}" for path in single}
     assert relay.pending["setpoint"].restored is True
     out = capsys.readouterr().out
     assert "module on :18444 (TLS)" in out and "LAN on :18888" in out

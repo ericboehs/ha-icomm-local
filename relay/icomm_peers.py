@@ -106,7 +106,9 @@ class PeerPolicy:
 
     def _base(self) -> set[str]:
         module = self._module_ip()
-        return LOOPBACK | self.extra | ({module} if module else set())
+        # One address (a single relay) or several (the hub's heaters, #18).
+        modules = {module} if isinstance(module, str) else set(module or ())
+        return LOOPBACK | self.extra | {m for m in modules if m}
 
     def cloud_allowed(self, remote: str | None) -> bool:
         """:8444, the impersonated Ayla cloud."""

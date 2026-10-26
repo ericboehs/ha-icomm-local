@@ -131,11 +131,13 @@ MASK_RE = re.compile(r"^[01]{73},[01]{105},[01]{26},[01]{26}$")
 class LanServer:
     """The relay's local doorbell: registration, command polls, telemetry."""
 
-    def __init__(self, relay) -> None:
+    def __init__(self, relay, secondary: bool = False) -> None:
         self.relay = relay
         self.enabled = os.environ.get("LAN_MODE", "1") != "0"
         self.port = int(os.environ.get("LAN_PORT", "8888"))
-        self.module_ip = os.environ.get("MODULE_IP", "") or None
+        # MODULE_IP and LANIP_FILE describe the primary heater only (#18): a
+        # second heater is always pinned through Ayla and keeps its own key.
+        self.module_ip = None if secondary else (os.environ.get("MODULE_IP", "") or None)
         # A configured address is the owner's word. Ayla's DSN reply carries
         # the address Ayla last saw, which lags a network move (0.5.1: a heater
         # moved to its own VLAN was "learned" back at its old address).
@@ -150,7 +152,7 @@ class LanServer:
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         # LANIP_FILE pins the key somewhere fixed (development); otherwise it
         # follows the heater's directory, which may be renamed once its DSN is known.
-        self._key_file_override = os.environ.get("LANIP_FILE", "")
+        self._key_file_override = "" if secondary else os.environ.get("LANIP_FILE", "")
         self.key = self._load_or_create_key()
         self.key_served_at = 0.0          # when we last answered lan.json
         self.registered = False
@@ -319,20 +321,24 @@ class LanServer:
         return True
 
     # -- lifecycle -------------------------------------------------------
-    async def start(self) -> None:
+    async def start(self, listen: bool = True) -> None:
+        """Register with the module; listen on the LAN port unless the hub does
+        (one listener for every heater, dispatched by the caller's address)."""
         if not self.enabled:
             return
-        # Only the module itself may call back: anyone else could reset the
-        # session with a key exchange or drain queued writes by polling.
-        peers = self.relay.peers
-        app = web.Application(middlewares=[peers.middleware(peers.lan_allowed, f":{self.port}")])
-        app.router.add_post("/local_lan/key_exchange.json", self._key_exchange)
-        app.router.add_route("*", "/local_lan/commands.json", self._commands)
-        app.router.add_route("*", "/local_lan/property/datapoint.json", self._datapoint)
-        app.router.add_route("*", "/local_lan/property/datapoint/ack.json", self._datapoint)
-        self._runner = web.AppRunner(app)
-        await self._runner.setup()
-        await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
+        if listen:
+            # Only the module itself may call back: anyone else could reset the
+            # session with a key exchange or drain queued writes by polling.
+            peers = self.relay.peers
+            app = web.Application(
+                middlewares=[peers.middleware(peers.lan_allowed, f":{self.port}")])
+            app.router.add_post("/local_lan/key_exchange.json", self._key_exchange)
+            app.router.add_route("*", "/local_lan/commands.json", self._commands)
+            app.router.add_route("*", "/local_lan/property/datapoint.json", self._datapoint)
+            app.router.add_route("*", "/local_lan/property/datapoint/ack.json", self._datapoint)
+            self._runner = web.AppRunner(app)
+            await self._runner.setup()
+            await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
         self._client = ClientSession(timeout=ClientTimeout(total=5))
         self._wake_event = asyncio.Event()
         self._task = asyncio.create_task(self._registration_loop())

@@ -109,15 +109,19 @@ def test_adopting_when_the_dsn_dir_already_exists(tmp_path):
     assert (tmp_path / "heaters" / "default").exists() is False
 
 
-def test_where_the_dsn_comes_from(tmp_path):
+def test_where_the_primary_dsn_comes_from(tmp_path):
+    """Configured, then the PRIMARY marker, then the original single-heater
+    files, then the first heater directory (#18 phase 2)."""
     assert known_dsn(tmp_path) is None
+    (tmp_path / "heaters" / "default").mkdir(parents=True)
+    (tmp_path / "heaters" / "AC000W000000004").mkdir()
+    assert known_dsn(tmp_path) == "AC000W000000004"
     (tmp_path / "device.json").write_text(json.dumps({"facts": {"dsn": "ac000w000000002"}}))
     assert known_dsn(tmp_path) == "AC000W000000002"
     (tmp_path / "lanip.json").write_text(json.dumps({"module_dsn": "AC000W000000003"}))
     assert known_dsn(tmp_path) == "AC000W000000003"
-    (tmp_path / "heaters" / "default").mkdir(parents=True)
-    (tmp_path / "heaters" / "AC000W000000004").mkdir()
-    assert known_dsn(tmp_path) == "AC000W000000004"
+    (tmp_path / "heaters" / "PRIMARY").write_text("AC000W000000006\n")
+    assert known_dsn(tmp_path) == "AC000W000000006"
     assert known_dsn(tmp_path, "AC000W000000005") == "AC000W000000005"
     (tmp_path / "lanip.json").write_text("[1, 2]")                 # not an object
     assert known_dsn(tmp_path / "nowhere") is None
@@ -134,7 +138,8 @@ def test_a_custom_queue_name_and_an_existing_default(tmp_path):
 def test_a_dsn_is_only_ever_a_plain_name(tmp_path):
     from icomm_heater import clean_dsn
     assert clean_dsn("ac000w019949045") == DSN
-    for bad in ("AC000W019949045\n", "../../etc", "AC000W/0199", "", None, 42, "x" * 33):
+    for bad in ("AC000W019949045\n", "../../etc", "AC000W/0199", "", None, 42, "x" * 33,
+                "default", "DEFAULT", "primary"):
         assert clean_dsn(bad) is None
     heater = Heater(tmp_path, "AC000W019949045\n")                # rejected: default slot
     assert heater.dsn is None and heater.dir.name == "default"

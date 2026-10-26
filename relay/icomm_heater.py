@@ -27,6 +27,7 @@ fetch) lives in `heaters/default/` and is renamed when the DSN turns up.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -41,6 +42,8 @@ _LOGGER = logging.getLogger("icomm_heater")
 
 DSN_RE = re.compile(r"[A-Za-z0-9]{6,32}")
 DEFAULT_SLOT = "default"
+PRIMARY_MARKER = "PRIMARY"
+RESERVED = {DEFAULT_SLOT.upper(), PRIMARY_MARKER.upper()}
 COPIED = ("lanip.json", "device.json", "dsn-original.xml", "dsn-rewritten.xml")
 MOVED = ("pending.json",)
 
@@ -52,7 +55,10 @@ def clean_dsn(value) -> str | None:
     The result is rebuilt from the match, so nothing else of the input survives.
     """
     found = DSN_RE.fullmatch(value) if isinstance(value, str) else None
-    return found.group(0).upper() if found else None
+    dsn = found.group(0).upper() if found else None
+    # The storage's own names under heaters/ are never a heater's (case-blind:
+    # macOS and some NAS filesystems would fold them together).
+    return None if dsn in RESERVED else dsn
 
 
 def _json(path: Path) -> dict:
@@ -64,14 +70,22 @@ def _json(path: Path) -> dict:
 
 
 def known_dsn(data_dir: Path, configured: str = "") -> str | None:
-    """The heater's DSN: configured, else remembered (new layout, then old)."""
-    candidates = [configured]
+    """The primary heater's DSN.
+
+    Configured, else the PRIMARY marker the hub keeps (#18 phase 2), else the
+    single-heater files at the top of the data dir (the original heater), else
+    the first heater directory.
+    """
     heaters = data_dir / "heaters"
+    marker = ""
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        marker = (heaters / PRIMARY_MARKER).read_text().strip()
+    candidates = [configured, marker,
+                  _json(data_dir / "lanip.json").get("module_dsn"),
+                  (_json(data_dir / "device.json").get("facts") or {}).get("dsn")]
     if heaters.is_dir():
         candidates += sorted(p.name for p in heaters.iterdir()
                              if p.is_dir() and p.name != DEFAULT_SLOT)
-    candidates += [_json(data_dir / "lanip.json").get("module_dsn"),
-                   (_json(data_dir / "device.json").get("facts") or {}).get("dsn")]
     for candidate in candidates:
         dsn = clean_dsn(candidate)
         if dsn:
@@ -79,11 +93,18 @@ def known_dsn(data_dir: Path, configured: str = "") -> str | None:
     return None
 
 
-def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json") -> Path:
-    """Give the heater its directory, bringing the single-heater files along."""
+def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json",
+            legacy: bool = True) -> Path:
+    """Give the heater its directory, bringing the single-heater files along.
+
+    Only the primary heater inherits the legacy files (`legacy`): a second
+    heater copying them would take the first one's LAN key and pin.
+    """
     heaters = data_dir / "heaters"
     dsn = clean_dsn(dsn)
     target = heaters / (dsn or DEFAULT_SLOT)
+    if not legacy:
+        return target
     default = heaters / DEFAULT_SLOT
     if dsn and default.is_dir() and not target.exists():
         default.rename(target)
@@ -109,11 +130,12 @@ class Heater:
     """A heater's DSN and directory, and the components that persist there."""
 
     def __init__(self, data_dir: Path, dsn: str | None = None,
-                 offline_enabled: bool = True, queue_name: str = "pending.json") -> None:
+                 offline_enabled: bool = True, queue_name: str = "pending.json",
+                 legacy: bool = True) -> None:
         self.data_dir = data_dir
         dsn = clean_dsn(dsn)
         self.dsn = dsn
-        self.dir = migrate(data_dir, dsn, queue_name)
+        self.dir = migrate(data_dir, dsn, queue_name, legacy)
         self.device = DeviceFacts(self.dir / "device.json")
         self.offline = OfflineConfig(self.dir / "dsn-original.xml", offline_enabled)
         if dsn:
@@ -146,6 +168,22 @@ class Heater:
         self.dsn, self.dir = clean, target
         self.device.path = target / "device.json"
         self.offline.cached = target / "dsn-original.xml"
+
+    def mark_primary(self) -> None:
+        """Remember which heater the old single-heater endpoints act on."""
+        if not self.dsn:
+            return
+        marker = self.data_dir / "heaters" / PRIMARY_MARKER
+        try:
+            if marker.read_text().strip() == self.dsn:
+                return
+        except (OSError, UnicodeDecodeError):
+            pass
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(self.dsn + "\n")
+        except OSError as err:
+            _LOGGER.warning("storage: could not record the primary heater: %s", err)
 
     def status(self) -> dict:
         return {"dsn": self.dsn, "dir": str(self.dir)}

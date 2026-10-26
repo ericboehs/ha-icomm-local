@@ -25,6 +25,7 @@ options:
   dns_server: false
   dns_upstream: ""
   offline_fallback: true
+  max_heaters: 4
 schema:
   listen_port: port
   state_port: port
@@ -64,5 +65,8 @@ schema:
   # outage), answer its config fetch from the last real reply, so local control
   # comes back without Ayla. Does nothing while Ayla answers.
   offline_fallback: bool?
+  # How many water heaters this relay serves. Each new heater is added when
+  # Ayla accepts its config fetch; past the limit it works through Ayla only.
+  max_heaters: int(1,8)?
 map:
   - share:ro
