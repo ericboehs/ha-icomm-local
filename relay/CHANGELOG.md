@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-26
+
 ### Fixed
 - **Code-scanning cleanup:** all 11 open CodeQL alerts on `main`, none of
   them from 0.7.5.
