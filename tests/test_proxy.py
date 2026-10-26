@@ -19,6 +19,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from icomm_hub import Hub
 from icomm_peers import TRUSTED
 from test_dsn import DSN
 from test_lan import SECRET
@@ -410,7 +411,7 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     tls = object()
     relay.tls_context = lambda: tls
 
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(400):
         await asyncio.sleep(0)
         if len(FakeSite.started) == 3:          # state, module and LAN listeners
@@ -442,7 +443,7 @@ async def test_run_says_lan_off(tmp_path, monkeypatch, capsys):
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", FakeSite)
     relay.tls_context = lambda: None
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:
@@ -470,7 +471,7 @@ async def test_sigterm_stops_the_relay_cleanly(tmp_path, monkeypatch):
     removed = []
     monkeypatch.setattr(loop, "remove_signal_handler", removed.append)
 
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:
@@ -495,7 +496,7 @@ async def test_run_without_signal_support_still_runs(tmp_path, monkeypatch):
         raise NotImplementedError
 
     monkeypatch.setattr(loop, "add_signal_handler", unsupported)
-    task = asyncio.create_task(relay.run())
+    task = asyncio.create_task(Hub(relay).run())
     for _ in range(200):
         await asyncio.sleep(0)
         if relay.client is not None:

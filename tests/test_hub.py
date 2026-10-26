@@ -429,7 +429,7 @@ async def test_a_cancel_during_startup_still_cleans_up(tmp_path, monkeypatch):
                LAN_PORT="18890")
     FakeSite.started = []
     monkeypatch.setattr(web, "TCPSite", FakeSite)
-    hub.primary.tls_context = lambda: object()
+    hub.primary.tls_context = object
     gate = asyncio.Event()
 
     async def slow_start(listen=True):
@@ -444,9 +444,7 @@ async def test_a_cancel_during_startup_still_cleans_up(tmp_path, monkeypatch):
     pending = asyncio.create_task(gate.wait())              # a heater's LAN start in flight
     hub._tasks.add(pending)
     task.cancel()
-    import contextlib
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
+    await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)
     assert hub.client.closed and hub.running is False and pending.cancelled()
 

@@ -47,6 +47,12 @@ from icomm_relay import DEVICE_PATH_RE, DSN_PATH_RE, Relay
 
 _LOGGER = logging.getLogger("icomm_hub")
 
+
+def _shown(value) -> str:
+    """For logs: DSNs and addresses are validated already; this keeps CR/LF out
+    regardless, so no log line can be forged."""
+    return str(value).replace("\r", "").replace("\n", "")
+
 # State-API routes that act on one heater: aliased to the primary, and under
 # /heaters/<dsn>/ for each.
 PERSISTED = ("lanip.json", "dsn-original.xml")
@@ -111,8 +117,8 @@ class Hub:
         engine.firmware, engine.client = self.primary.firmware, self.client
         engine.heaters_list = self.dsns
         self.secondaries[dsn] = engine
-        _LOGGER.warning("heater %s: added (%d of at most %d)", dsn, len(self.engines()),
-                        self.max_heaters)
+        _LOGGER.warning("heater %s: added (%d of at most %d)", _shown(dsn),
+                        len(self.engines()), self.max_heaters)
         if self.running:
             engine._load_queue()
             task = asyncio.get_running_loop().create_task(engine.lan.start(listen=False))
@@ -214,8 +220,8 @@ class Hub:
                 other.lan.module_ip, other.lan.module_ip_observed = None, False
                 other.lan._persist()
                 _LOGGER.warning("heater %s: address %s now belongs to heater %s; "
-                                "waiting for its next config fetch", other.heater.dsn, peer,
-                                keep.heater.dsn)
+                                "waiting for its next config fetch", _shown(other.heater.dsn),
+                                _shown(peer), _shown(keep.heater.dsn))
 
     async def _new_heater(self, request: web.Request) -> web.Response:
         """Another heater's config fetch: an engine on Ayla's 200, if there's room."""
@@ -232,7 +238,7 @@ class Hub:
             if len(self.engines()) >= self.max_heaters and dsn not in self.refused:
                 self.refused.add(dsn)
                 _LOGGER.warning("heater %s: not added, max_heaters (%d) reached; it keeps "
-                                "working through Ayla only", dsn, self.max_heaters)
+                                "working through Ayla only", _shown(dsn), self.max_heaters)
             return await self.primary.proxy(request)
 
         def adopt_then_rewrite(payload: bytes) -> bytes | None:
@@ -417,3 +423,10 @@ class Hub:
             await self.client.close()
             for runner in reversed(runners):
                 await runner.cleanup()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(Hub().run())

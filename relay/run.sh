@@ -59,4 +59,4 @@ PY
 fi
 
 echo "icomm_local relay: listen=${LISTEN_PORT:-8444} state=${STATE_PORT:-8124} upstream=${UPSTREAM:-default}"
-exec python3 icomm_relay.py
+exec python3 icomm_hub.py

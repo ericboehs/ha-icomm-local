@@ -174,11 +174,11 @@ class Heater:
         if not self.dsn:
             return
         marker = self.data_dir / "heaters" / PRIMARY_MARKER
-        try:
-            if marker.read_text().strip() == self.dsn:
-                return
-        except (OSError, UnicodeDecodeError):
-            pass
+        current = ""
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            current = marker.read_text().strip()
+        if current == self.dsn:
+            return
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(self.dsn + "\n")

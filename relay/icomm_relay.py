@@ -46,7 +46,6 @@ Env:
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import ipaddress
 import json
@@ -1117,11 +1116,6 @@ class Relay:
             ctx.load_dh_params(dhparams)
         return ctx
 
-    async def run(self) -> None:
-        """Serve this heater, and any others the relay meets (icomm_hub, #18)."""
-        from icomm_hub import Hub  # the hub builds on this module
-        await Hub(self).run()
-
     # -- degraded-state detection --------------------------------------
     def _note_request(self, path: str) -> None:
         """Track the shape of the conversation: dials, their requests, and polls.
@@ -1391,7 +1385,7 @@ class Relay:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(Relay().run())
+    # The entry point is icomm_hub.py (#18); this keeps `python icomm_relay.py`
+    # working for setups that still start it by this name.
+    import runpy
+    runpy.run_module("icomm_hub", run_name="__main__")

@@ -209,7 +209,7 @@ Do it in this order:
 cd relay
 ./gen-cert.sh                                   # self-signed leaf + DH params
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-QUEUE_FILE=$PWD/state/pending.json STATE_HOST=0.0.0.0 .venv/bin/python icomm_relay.py
+QUEUE_FILE=$PWD/state/pending.json STATE_HOST=0.0.0.0 .venv/bin/python icomm_hub.py
 ```
 
 Python 3.10+, on the same subnet as the heater. On a host without
