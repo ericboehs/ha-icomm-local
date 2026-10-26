@@ -10,6 +10,14 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Added
+- **Multi-heater guide**, [docs/MULTI_HEATER.md](docs/MULTI_HEATER.md) (#18,
+  phase 4): adding a heater, telling heaters apart, service targets, the
+  primary heater and the relay's per-heater API, and limits.
+- **[docs/dashboard-multi.yaml](docs/dashboard-multi.yaml)**: a two-heater
+  view with a column per heater and shared 24-hour graphs. A test checks it
+  against a two-heater install.
+
 ## [0.7.1] - 2026-10-25
 
 ### Changed

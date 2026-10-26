@@ -1,0 +1,143 @@
+# Water Heaters dashboard view for ha-icomm-local: two heaters side by side.
+#
+# Add it like docs/dashboard.yaml: open a dashboard, click the pencil (Edit
+# dashboard), then + to add a view. In the view dialog, open the three-dot
+# menu, choose Edit in YAML, replace everything with this file, and Save.
+#
+# Heater 1's entities are sensor.icomm_water_heater_*, heater 2's are
+# sensor.icomm_water_heater_2_*. For a third heater, copy a column and change
+# _2 to _3. If you renamed entities, change them here to match. See
+# docs/MULTI_HEATER.md.
+#
+# tests_ha/test_dashboard.py checks that every entity here exists on a fresh
+# two-heater install.
+title: Water Heaters
+path: water-heaters
+icon: mdi:water-boiler
+type: sections
+max_columns: 3
+sections:
+- type: grid
+  cards:
+  - type: heading
+    heading: Water heater 1
+    heading_style: title
+    icon: mdi:water-boiler
+    badges:
+    - type: entity
+      entity: sensor.icomm_water_heater_relay_health
+      show_state: true
+      show_icon: true
+  - type: thermostat
+    entity: water_heater.icomm_water_heater
+    features:
+    - type: water-heater-operation-modes
+      operation_modes:
+      - heat_pump
+      - eco
+      - electric
+  - type: tile
+    entity: sensor.icomm_water_heater_hot_water_available
+    name: Hot water available
+    icon: mdi:water-percent
+  - type: tile
+    entity: sensor.icomm_water_heater_power
+    name: Power
+  - type: tile
+    entity: sensor.icomm_water_heater_heating_element
+    name: Element
+  - type: tile
+    entity: sensor.icomm_water_heater_pending_write
+    name: Pending write
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_top
+    name: Top
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_bottom
+    name: Bottom
+  - type: tile
+    entity: sensor.icomm_water_heater_water_tank_average
+    name: Average
+  - type: tile
+    entity: sensor.icomm_water_heater_heat_deficit
+    name: Heat deficit
+    icon: mdi:fire-alert
+- type: grid
+  cards:
+  - type: heading
+    heading: Water heater 2
+    heading_style: title
+    icon: mdi:water-boiler
+    badges:
+    - type: entity
+      entity: sensor.icomm_water_heater_2_relay_health
+      show_state: true
+      show_icon: true
+  - type: thermostat
+    entity: water_heater.icomm_water_heater_2
+    features:
+    - type: water-heater-operation-modes
+      operation_modes:
+      - heat_pump
+      - eco
+      - electric
+  - type: tile
+    entity: sensor.icomm_water_heater_2_hot_water_available
+    name: Hot water available
+    icon: mdi:water-percent
+  - type: tile
+    entity: sensor.icomm_water_heater_2_power
+    name: Power
+  - type: tile
+    entity: sensor.icomm_water_heater_2_heating_element
+    name: Element
+  - type: tile
+    entity: sensor.icomm_water_heater_2_pending_write
+    name: Pending write
+  - type: tile
+    entity: sensor.icomm_water_heater_2_water_tank_top
+    name: Top
+  - type: tile
+    entity: sensor.icomm_water_heater_2_water_tank_bottom
+    name: Bottom
+  - type: tile
+    entity: sensor.icomm_water_heater_2_water_tank_average
+    name: Average
+  - type: tile
+    entity: sensor.icomm_water_heater_2_heat_deficit
+    name: Heat deficit
+    icon: mdi:fire-alert
+- type: grid
+  cards:
+  - type: heading
+    heading: Last 24 hours
+    heading_style: title
+    icon: mdi:chart-line
+  - type: history-graph
+    title: Tank average
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_water_tank_average
+      name: Heater 1
+    - entity: sensor.icomm_water_heater_2_water_tank_average
+      name: Heater 2
+    - entity: sensor.icomm_water_heater_active_setpoint
+      name: Target 1
+    - entity: sensor.icomm_water_heater_2_active_setpoint
+      name: Target 2
+  - type: history-graph
+    title: Hot water available
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_hot_water_available
+      name: Heater 1
+    - entity: sensor.icomm_water_heater_2_hot_water_available
+      name: Heater 2
+  - type: history-graph
+    title: Power
+    hours_to_show: 24
+    entities:
+    - entity: sensor.icomm_water_heater_power
+      name: Heater 1
+    - entity: sensor.icomm_water_heater_2_power
+      name: Heater 2
