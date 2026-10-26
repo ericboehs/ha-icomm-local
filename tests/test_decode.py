@@ -280,3 +280,24 @@ def test_the_maintenance_display_matches_the_decode() -> None:
 def test_ambient_is_not_the_retired_air_key(blocks_heat_pump: list[bytes]) -> None:
     decoded = decode(blocks_heat_pump)
     assert "air" not in decoded and 30 < decoded["ambient"] < 120
+
+
+def test_the_electric_panel_read_settles_suction_and_the_elements() -> None:
+    """Second read (phase 51), compressor just stopped: P05 = 67 while
+    b1[16:18] read 66 and b1[22:24] 60, so suction is offset 16. P08 on with
+    the upper-element flag: P08 = upper, P09 = lower. Readings were 30-70 s
+    after this report, with refrigerant temperatures still moving."""
+    import json
+    from pathlib import Path
+
+    from icomm_relay import fahrenheit
+    blocks = [bytes.fromhex(b) for b in json.loads(
+        (Path(__file__).parent / "fixtures/telemetry_panel_check_electric.json").read_text())["blocks"]]
+    decoded, b1 = decode(blocks), blocks[1]
+    assert decoded["mode"] == "electric" and decoded["heating_element"] == "upper"   # P08 on
+    assert abs(fahrenheit(b1[16:18]) - 67) <= 2           # P05 suction
+    assert abs(fahrenheit(b1[22:24]) - 67) > 5            # not P05
+    assert abs(decoded["ambient"] - 63) <= 2              # P06
+    assert abs(fahrenheit(b1[20:22]) - 70) <= 4           # P03 coil, rising
+    assert abs(fahrenheit(b1[18:20]) - 121) <= 6          # P04 discharge, falling
+    assert decoded["eev_pulses"] == 480                   # P07
