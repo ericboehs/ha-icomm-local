@@ -44,6 +44,10 @@ SPECS = [
      SensorStateClass.MEASUREMENT),
     # Block 27 param 15 (research phase 49): what was shown as "Air at unit"
     # until 0.7.4. The relay reads it in Wh; it steps with the setpoint and mode.
+    # The maintenance display's P06 (research phase 51). Reads a few degrees
+    # low while the compressor draws air past it.
+    ("ambient", "Ambient temperature", F, SensorDeviceClass.TEMPERATURE,
+     SensorStateClass.MEASUREMENT),
     ("energy_capacity_wh", "Energy capacity", UnitOfEnergy.WATT_HOUR,
      SensorDeviceClass.ENERGY_STORAGE, SensorStateClass.MEASUREMENT),
     ("rssi", "Wi-Fi RSSI", SIGNAL_STRENGTH_DECIBELS_MILLIWATT,

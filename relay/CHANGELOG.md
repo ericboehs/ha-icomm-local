@@ -43,6 +43,16 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   reporting-mask renewal always brings data back: 5 renewals didn't on 10-26.
 
 ### Added
+- **Ambient temperature,** confirmed against the heater's maintenance display
+  (hold Up+Down for 3 s).
+  - **Source:** P06 read 61 → 62 °F while block 1 offset 14 read 58 → 63.
+    It's a new key, `ambient`; "Air at unit" stays retired, since it was the
+    energy capacity.
+  - **Behaviour:** it reads the room while the compressor is off (67 °F
+    overnight), and runs a few degrees low while the compressor draws air
+    past it.
+  - **The same read confirmed** the expansion valve (P07 = 480), the tank top
+    and bottom thermistors, and the element flags.
 - **`experimental_freeze_reconnect` add-on option** (off by default). When 2
   reporting-mask renewals haven't unfrozen the data, it reconnects the LAN
   session once per freeze (new registration and key exchange), then keeps

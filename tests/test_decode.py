@@ -257,3 +257,26 @@ def test_heating_element(flags: int, element: str | None) -> None:
 def test_heating_element_in_the_captures(fixture, element, flags, request) -> None:
     decoded = decode(request.getfixturevalue(fixture))
     assert decoded["heating_element"] == element and decoded["heat_flags"] == flags
+
+
+def test_the_maintenance_display_matches_the_decode() -> None:
+    """Research phase 51: the owner read P01-P07 while this report was taken.
+    The display shows whole degrees and was read over ~1 min while values
+    rose, so allow a degree or two."""
+    import json
+    from pathlib import Path
+
+    blocks = [bytes.fromhex(b) for b in json.loads(
+        (Path(__file__).parent / "fixtures/telemetry_panel_check.json").read_text())["blocks"]]
+    decoded = decode(blocks)
+    assert decoded["water_top"] == 131.0                  # P01
+    assert abs(decoded["water_mid"] - 136) <= 1           # P02, the bottom thermistor
+    assert 61 <= decoded["ambient"] <= 63                 # P06: 61 -> 62 on the display
+    assert decoded["eev_pulses"] == 480                   # P07
+    assert decoded["heating_element"] == "off"            # P08/P09 off
+    assert decoded["watts"] == 356
+
+
+def test_ambient_is_not_the_retired_air_key(blocks_heat_pump: list[bytes]) -> None:
+    decoded = decode(blocks_heat_pump)
+    assert "air" not in decoded and 30 < decoded["ambient"] < 120

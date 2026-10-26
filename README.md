@@ -35,6 +35,9 @@ cloud keep working.
   - **Setpoints and mode:** setpoint, active setpoint (what the tank is heating
     to: 50 °F in vacation), max setpoint, mode, and **operating state** (idle
     or heating).
+  - **Ambient temperature:** the heat pump's air thermistor (the service
+    menu's P06). It reads the room while the compressor is off, and a few
+    degrees under it while the compressor draws air past it.
   - **Power:** **live power draw** (4500 W element, ~350 W compressor, 0 W
     idle), and **which heating element is on** (upper or lower).
   - **Status:** the **fault** code with its title, expansion valve position,

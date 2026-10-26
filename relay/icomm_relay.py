@@ -242,16 +242,20 @@ def decode(blocks: list[bytes]) -> dict:
         "hot_water_level": HOT_WATER_LEVELS.get(word(b4, 46)),    # the heater's own
         # Block 27 params 2, 7-9 and 15 (research phase 49). "air" used to be
         # read from offset 30: it is this capacity, which stepped with the
-        # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature. The
-        # real ambient thermistor is one of the block 1 candidates, not yet
-        # confirmed, so no "air" until it is.
+        # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature.
         "operating_state": OPERATING_STATES.get(word(b4, 4)),
         "operating_state_raw": word(b4, 4),
         "energy_wh": lifetime_energy(b4),
         "energy_capacity_wh": word(b4, 30),
-        # Expansion valve opening (handbook maintenance display P7), block 1
-        # offset 100: 376-480 with the compressor running. Likely, not proven.
+        # Expansion valve opening, block 1 offset 100: the maintenance
+        # display's P07 (480 on both, 10-26 14:39; research phase 51).
         "eev_pulses": word(b1, 100),
+        # Ambient air thermistor, block 1 offset 14: the maintenance display's
+        # P06 (61 -> 62 F while this read 58 -> 63, 10-26 14:39; phase 51).
+        # It sits in the unit's air path: the garage temperature while the
+        # compressor is off (67 F overnight), a few degrees under it while it
+        # runs (54-58 F). A new key: "air" (until 0.7.4) was a capacity in Wh.
+        "ambient": round(fahrenheit(b1[14:16]), 1),
         "mode_raw": f"{pair[0]}/{pair[1]}",
         "mode": mode_name(pair),
         # Vacation's first byte: the day count the app set (captured as 1 for

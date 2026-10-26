@@ -114,6 +114,10 @@ sections:
     entity: sensor.icomm_water_heater_energy_capacity
     name: Energy capacity
     icon: mdi:battery-high
+  - type: tile
+    entity: sensor.icomm_water_heater_ambient_temperature
+    name: Ambient
+    icon: mdi:home-thermometer-outline
   - type: entities
     entities:
     - type: attribute

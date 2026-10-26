@@ -71,3 +71,11 @@ async def test_frozen_activity_shows_unknown(hass, aioclient_mock):
     assert hass.states.get("sensor.icomm_water_heater_water_tank_top").state not in (
         "unknown", "unavailable")
     assert hass.states.get("water_heater.icomm_water_heater").attributes["power_w"] is None
+
+
+async def test_ambient_temperature(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock, state={**STATE, "ambient": 62.0})
+    state = hass.states.get("sensor.icomm_water_heater_ambient_temperature")
+    assert state.state == "62.0"
+    assert state.attributes["unit_of_measurement"] == "°F"
+    assert hass.states.get("sensor.icomm_water_heater_air_at_unit") is None
