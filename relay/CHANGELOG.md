@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-25
+
 ### Added
 - **Removing a heater** (#18).
   - **In HA:** deleting a heater's device (device page, **⋮ → Delete**) has
