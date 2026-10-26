@@ -48,6 +48,11 @@ dialog reads it from the add-on folder. CI fails if the two differ.
     `(icomm_local, water_heater)` to `(icomm_local, <DSN>)`. It's the same
     device, so device-based automations still match.
   - With an older relay that names no DSN, the old keys stay until it does.
+  - **A replaced heater** (its old DSN gone from the relay) takes over the old
+    one's entities, device and number. Dashboards keep working, and there's no
+    dead device beside it.
+  - Heater numbers are kept in the config entry, so they don't shift when a
+    heater leaves.
 
 ## [0.6.0] - 2026-10-25
 

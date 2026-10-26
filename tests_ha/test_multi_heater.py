@@ -291,3 +291,48 @@ async def test_odd_dsns_from_the_relay_are_ignored(hass, aioclient_mock):
                                "water_heater.icomm_water_heater_2"]
     calls = [str(url) for method, url, *_ in aioclient_mock.mock_calls if method == "GET"]
     assert not [c for c in calls if "x/state" in c or "ac000w" in c]
+
+
+async def test_a_replaced_heater_takes_over_the_old_ones_entities(hass, aioclient_mock):
+    """Review pass 2: X1 is replaced by X2 (X1 gone from the relay). X2 keeps the
+    entity IDs, device and number; no second device beside a dead one."""
+    x2 = "AC000W044444444"
+    entry = await _setup(hass, aioclient_mock, a={**STATE_A, "heaters": [A]})
+    device = _device(hass, entry, A)
+    replaced = {**STATE_A, "heater": {"dsn": x2}, "heaters": [x2],
+                "device": {"dsn": x2, "serial_number": "999"}, "water_top": 101.0}
+    _relay(aioclient_mock, a=replaced)                      # at runtime: one reload
+    await hass.data["icomm_local"][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    assert registry.async_get("sensor.icomm_water_heater_power").unique_id == (
+        f"icomm_local_{x2}_watts")
+    assert hass.states.get("water_heater.icomm_water_heater").attributes[
+        "current_temperature"] == 101.0
+    assert _device(hass, entry, x2).id == device.id and _device(hass, entry, A) is None
+    assert not [e for e in hass.states.async_entity_ids() if e.endswith("_2")]
+    assert entry.data["dsn"] == x2 and entry.data["heater_numbers"] == {x2: 1}
+
+
+async def test_the_primary_unnamed_but_others_listed(hass, aioclient_mock):
+    """Review pass 2: right after a relay restart it may list B before naming
+    the primary; the primary's entities stay (single-heater keys) and B is not
+    added under them."""
+    entry = await _setup(hass, aioclient_mock, a={**STATE, "heaters": [B]})
+    assert hass.states.get("water_heater.icomm_water_heater").state == "heat_pump"
+    assert hass.data["icomm_local"][entry.entry_id].order == [None, B]
+    assert entry.data["heater_numbers"] == {B: 2}
+
+
+async def test_rekey_leaves_others_and_never_collides(hass):
+    from custom_components.icomm_local.heaters import rekey
+    entry = MockConfigEntry(domain="icomm_local", data={"url": URL})
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for unique in (f"icomm_local_{A}_watts", f"icomm_local_{A}_mode",
+                   f"icomm_local_{B}_watts", f"icomm_local_{B}_mode_x"):
+        registry.async_get_or_create("sensor", "icomm_local", unique, config_entry=entry)
+    registry.async_get_or_create("sensor", "icomm_local", f"icomm_local_{B}_mode",
+                                 config_entry=entry, suggested_object_id="already_there")
+    assert rekey(hass, entry, A, B) == 0                    # watts and mode both taken
+    assert registry.async_get_entity_id("sensor", "icomm_local", f"icomm_local_{A}_watts")

@@ -30,6 +30,7 @@ from .heaters import (
     migrate_to_dsn,
     multi_capable,
     primary_dsn,
+    rekey,
     update_device_pages,
     valid_dsn,
 )
@@ -216,13 +217,25 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         # The DSN this entry was migrated to stands in while the relay can't
         # name one (its data reset, reinstalled, downgraded): falling back to
         # single-heater keys then would register every entity a second time.
-        primary = primary_dsn(data) or valid_dsn(entry.data.get(CONF_DSN))
-        others = [d for d in (data.get("heaters") or [])
-                  if valid_dsn(d) and d != primary] if multi_capable(data) else []
+        stored, reported = valid_dsn(entry.data.get(CONF_DSN)), primary_dsn(data)
+        listed = data.get("heaters") if multi_capable(data) else []
+        if reported and stored and reported != stored and stored not in listed:
+            # The heater was replaced: the old one is gone from the relay
+            # entirely. Its entities and device become the new one's, by a
+            # (re)load that re-keys them before anything is added under the
+            # new DSN -- never as a second device beside the dead one.
+            coordinator.replaced = (stored, reported)
+            if coordinator.ready:
+                return                    # the reload does it; keep things as they are
+            coordinator.numbers[reported] = coordinator.numbers.pop(stored, 1)
+        primary = reported or stored
+        others = [d for d in listed if valid_dsn(d) and d != primary]
         states = dict(zip(others, await asyncio.gather(*(_fetch_one(d) for d in others)),
                           strict=True))
         coordinator.primary = primary
-        coordinator.order = ([primary] if primary else []) + others
+        # No primary DSN yet but other heaters listed: the primary's /state
+        # still has its (single-heater-keyed) entities, first.
+        coordinator.order = ([primary] if primary else [None] if others else []) + others
         coordinator.heaters = {d: s for d, s in states.items() if s}
         _remember(primary, coordinator.order)
 
@@ -230,7 +243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         """Keep the primary's DSN and each heater's number in the entry."""
         numbers = dict(coordinator.numbers)
         for dsn in order:
-            if dsn in numbers:
+            if dsn is None or dsn in numbers:
                 continue
             taken = set(numbers.values())
             if dsn == primary and 1 not in taken:
@@ -253,6 +266,18 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # avoids a second lookup path that could disagree with this one.
     coordinator.relay_url = url
     coordinator.options = dict(entry.options)
+    coordinator.ready, coordinator.replaced = False, None
+
+    def reload_once() -> None:
+        """One reload, which migrates or re-keys before any entity is added."""
+        reload_once.done = True
+        schedule = getattr(hass.config_entries, "async_schedule_reload", None)
+        if schedule is not None:
+            schedule(entry.entry_id)
+        else:                                      # HA before 2024.2
+            hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+
+    reload_once.done = False
     coordinator.primary, coordinator.order, coordinator.heaters = None, [], {}
     coordinator.numbers = {k: v for k, v in (entry.data.get(CONF_NUMBERS) or {}).items()
                            if valid_dsn(k) and isinstance(v, int)}
@@ -261,25 +286,27 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # the move to per-heater keys, so entities come up under their new IDs with
     # their old entity IDs and history.
     _migrate_entity_ids(hass)
+    if coordinator.replaced:
+        rekey(hass, entry, *coordinator.replaced)
+        coordinator.replaced = None
     if coordinator.primary:
         migrate_to_dsn(hass, entry, coordinator.primary)
+
+        def _replaced() -> None:
+            if coordinator.replaced and not reload_once.done:
+                reload_once()
+
+        entry.async_on_unload(coordinator.async_add_listener(_replaced))
     else:
         # An older relay, or one that hasn't met the heater yet: single-heater
         # keys for now, and a reload to move them once the DSN is known.
-        reloading = False
-
         def _dsn_arrived() -> None:
-            nonlocal reloading
-            if reloading or not (coordinator.last_update_success and coordinator.primary):
-                return
-            reloading = True                       # once: the reload migrates
-            schedule = getattr(hass.config_entries, "async_schedule_reload", None)
-            if schedule is not None:
-                schedule(entry.entry_id)
-            else:                                  # HA before 2024.2
-                hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+            if (coordinator.last_update_success and coordinator.primary
+                    and not reload_once.done):
+                reload_once()
 
         entry.async_on_unload(coordinator.async_add_listener(_dsn_arrived))
+    coordinator.ready = True
     heater_issues: set[str] = set()
 
     def _each_heater():

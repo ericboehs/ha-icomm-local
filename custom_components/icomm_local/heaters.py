@@ -161,6 +161,26 @@ def migrate_to_dsn(hass: HomeAssistant, entry, dsn: str) -> int:
 
 
 @callback
+def rekey(hass: HomeAssistant, entry, old: str, new: str) -> int:
+    """A replaced heater (#18): the old DSN's entities and device become the new
+    one's, so entity IDs, dashboards and history carry on as for any upgrade."""
+    registry = er.async_get(hass)
+    old_prefix, moved = f"{PREFIX}{old}_", 0
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if not entity.unique_id.startswith(old_prefix):
+            continue
+        new_id = unique_id(new, entity.unique_id[len(old_prefix):])
+        if registry.async_get_entity_id(entity.domain, DOMAIN, new_id):
+            continue
+        registry.async_update_entity(entity.entity_id, new_unique_id=new_id)
+        moved += 1
+    device = _device_by_identifier(hass, (DOMAIN, old), entry.entry_id)
+    if device is not None and _device_by_identifier(hass, (DOMAIN, new), entry.entry_id) is None:
+        dr.async_get(hass).async_update_device(device.id, new_identifiers={(DOMAIN, new)})
+    return moved
+
+
+@callback
 def update_device_pages(hass: HomeAssistant, coordinator, entry_id: str) -> None:
     """Show each heater's firmware, model and serial on its HA device page."""
     for dsn in list(coordinator.order) or [None]:
