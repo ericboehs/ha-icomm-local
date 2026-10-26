@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-25
+
 **Upgrade both the add-on and the integration.** Updating the add-on restarts
 the relay, and that is exactly what can leave the water heater's cloud side
 idle (below). If the A.O. Smith app matters to you, update when a breaker
