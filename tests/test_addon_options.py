@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 RELAY = Path(__file__).resolve().parent.parent / "relay"
 
@@ -27,9 +26,22 @@ def _exports(tmp_path, options: dict) -> str:
                           capture_output=True, text=True).stdout
 
 
+def _section(name: str) -> dict[str, str]:
+    """A flat top-level mapping of config.yaml (the add-on image has no
+    PyYAML, and these tests run there too)."""
+    out, inside = {}, False
+    for line in (RELAY / "config.yaml").read_text().splitlines():
+        if not line.startswith(" "):
+            inside = line.rstrip() == f"{name}:"
+            continue
+        match = re.match(r"  (\w+): ?(.*)", line)
+        if inside and match:
+            out[match.group(1)] = match.group(2).strip()
+    return out
+
+
 def test_every_option_has_a_schema_entry():
-    config = yaml.safe_load((RELAY / "config.yaml").read_text())
-    assert set(config["options"]) <= set(config["schema"])
+    assert _section("options") and set(_section("options")) <= set(_section("schema"))
 
 
 @pytest.mark.parametrize(("value", "exported"), [(True, True), (False, False), (None, False)])
@@ -39,6 +51,5 @@ def test_experimental_freeze_reconnect(tmp_path, value, exported):
 
 
 def test_it_ships_off():
-    config = yaml.safe_load((RELAY / "config.yaml").read_text())
-    assert config["options"]["experimental_freeze_reconnect"] is False
-    assert config["schema"]["experimental_freeze_reconnect"] == "bool?"
+    assert _section("options")["experimental_freeze_reconnect"] == "false"
+    assert _section("schema")["experimental_freeze_reconnect"] == "bool?"

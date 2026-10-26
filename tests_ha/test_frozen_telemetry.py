@@ -54,7 +54,8 @@ async def test_with_renewal_on_it_says_the_relay_is_on_it(hass: HomeAssistant, a
         **STATE, "contents_unchanged_s": 6000, "contents_stale": True,
         "reporting_mask": {"renew": True, "after_s": 1800, "sent": 2}})
     fix = _issue(hass, entry).translation_placeholders["fix"]
-    assert "tries to re-arm reporting itself: after 30 minutes" in fix and "not every time" in fix and "(2 sent" in fix
+    assert "tries to re-arm reporting itself: after 30 minutes" in fix
+    assert "not every time" in fix and "(2 sent" in fix
 
 
 async def test_power_sensor_flags_it_sooner(hass: HomeAssistant, aioclient_mock):
