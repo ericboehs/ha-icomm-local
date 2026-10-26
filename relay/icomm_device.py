@@ -98,6 +98,8 @@ class DeviceFacts:
     def note_property(self, name: str, value: str) -> None:
         if name in PROPERTIES and SAFE.fullmatch(value.strip()) and value.strip() != "None":
             if self._set(PROPERTIES[name], value.strip()):
+                if name == "faultCode":
+                    self.facts["fault_source"] = "property"
                 if name == "active_image_version":
                     _LOGGER.warning("controller firmware: %s", value.strip())
                 self._save()
@@ -106,6 +108,12 @@ class DeviceFacts:
             if name == "superBlockStatic1":
                 for key, found in nameplate(value).items():
                     self._set(key, found)
+            self._save()
+
+    def note_fault(self, code: int, source: str) -> None:
+        """A fault code from somewhere other than the faultCode property."""
+        if self._set("fault_code", str(code)):
+            self.facts["fault_source"] = source
             self._save()
 
     def note_upload(self, path: str, body: bytes) -> None:

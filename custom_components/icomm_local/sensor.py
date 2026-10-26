@@ -67,7 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
             TankAverageSensor(coordinator, dsn), ModeSensor(coordinator, dsn),
             EnergyToSetpointSensor(coordinator, dsn), RecoverySensor(coordinator, dsn),
             EnergySensor(coordinator, dsn), EnumSensor(coordinator, "operating_state",
-                                                       ("idle", "heating"), dsn),
+                                                       ("idle", "heating", "fault"), dsn),
             EnumSensor(coordinator, "hot_water_level", ("low", "medium", "high"), dsn),
             ValveSensor(coordinator, dsn), FaultSensor(coordinator, dsn),
             HeatingElementSensor(coordinator, dsn), RelayHealthSensor(coordinator, dsn),
@@ -415,7 +415,15 @@ class FaultSensor(_RelaySensor):
 
     @property
     def extra_state_attributes(self):
-        return {"code": self._code()}
+        device = self._state.get("device") or {}
+        history = self._state.get("fault_history")
+        attrs = {"code": self._code(), "source": device.get("fault_source")}
+        if isinstance(history, list):
+            # The maintenance display's H1-H4, newest first (0 = empty slot).
+            attrs["history"] = [FAULTS.get(c, f"Fault {c}") for c in history
+                                if isinstance(c, int) and c]
+            attrs["history_codes"] = history
+        return attrs
 
 
 class ModeSensor(IcommSensor):

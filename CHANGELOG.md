@@ -43,6 +43,23 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   reporting-mask renewal always brings data back: 5 renewals didn't on 10-26.
 
 ### Added
+- **Fault history and the active fault from telemetry,** found with a
+  deliberate leak-sensor test (research phase 52). Block 2 holds the fault
+  table: the active fault, and the service menu's H1–H4, newest first.
+  - ***Fault* now has a value after a relay restart.** Before, it was unknown
+    until the heater next posted `faultCode`. The relay feeds the telemetry's
+    active fault into the same fact, but only when it changes. `faultCode`
+    still leads: 1.5 s to HA in the test, while the next report came 23 s
+    later. A report taken just before a clear can't bring the fault back.
+  - ***Fault* attributes:** `history` (titles, newest first), `history_codes`,
+    and `source` (`property` or `telemetry`).
+  - ***Operating state* gains "fault":** raw value 5, seen only during the
+    leak. During it the heater also closed its shut-off valve, stopped
+    heating and dropped its active target to 120 °F, which *Active setpoint*
+    shows.
+- **`docs/REFERENCES.md`:** the A.O. Smith Service Handbook (2000620230, which
+  lists HPS10-50H45DV) and the Use & Care Guide, with what each page
+  confirmed. Links only.
 - **Ambient temperature,** confirmed against the heater's maintenance display
   (hold Up+Down for 3 s).
   - **Source:** P06 read 61 → 62 °F while block 1 offset 14 read 58 → 63.

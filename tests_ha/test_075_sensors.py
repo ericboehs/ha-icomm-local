@@ -79,3 +79,38 @@ async def test_ambient_temperature(hass, aioclient_mock):
     assert state.state == "62.0"
     assert state.attributes["unit_of_measurement"] == "°F"
     assert hass.states.get("sensor.icomm_water_heater_air_at_unit") is None
+
+
+async def test_fault_history_and_source(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock, state={
+        **STATE, "active_fault": 31, "fault_history": [31, 31, 31, 48],
+        "device": {**(STATE.get("device") or {}), "fault_code": "31",
+                   "fault_source": "property"}})
+    state = hass.states.get("sensor.icomm_water_heater_fault")
+    assert state.state == "Water leak"
+    assert state.attributes["history"] == ["Water leak", "Water leak", "Water leak",
+                                           "Battery low"]
+    assert state.attributes["history_codes"] == [31, 31, 31, 48]
+    assert state.attributes["source"] == "property"
+
+
+async def test_fault_history_skips_empty_slots_and_old_relays(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock, state={
+        **STATE, "fault_history": [48, 0, 0, 0],
+        "device": {**(STATE.get("device") or {}), "fault_code": "0"}})
+    attrs = hass.states.get("sensor.icomm_water_heater_fault").attributes
+    assert attrs["history"] == ["Battery low"] and attrs["source"] is None
+
+
+async def test_fault_without_history_from_an_older_relay(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock, state={
+        **STATE, "device": {**(STATE.get("device") or {}), "fault_code": "0"}})
+    attrs = hass.states.get("sensor.icomm_water_heater_fault").attributes
+    assert "history" not in attrs and attrs["code"] == 0
+
+
+async def test_operating_state_fault(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock, state={**STATE, "operating_state": "fault",
+                                              "operating_state_raw": 5})
+    state = hass.states.get("sensor.icomm_water_heater_operating_state")
+    assert state.state == "fault" and "fault" in state.attributes["options"]

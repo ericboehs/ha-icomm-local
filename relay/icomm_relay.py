@@ -175,7 +175,8 @@ def availability(deficit_wh: int) -> int:
 # 33 captures). Its meaning is open (research phase 49b).
 HOT_WATER_LEVELS = {0: "low", 5: "medium", 10: "high"}
 # Block 4 offset 4 (Block 27 param 2): what the controller is doing.
-OPERATING_STATES = {11: "idle", 12: "heating"}
+# 5 seen only during an active fault (the 10-26 leak test, phase 52).
+OPERATING_STATES = {11: "idle", 12: "heating", 5: "fault"}
 
 
 # What a frozen snapshot claims about activity is reported as unknown.
@@ -219,7 +220,8 @@ DSN_PATH_RE = re.compile(r"/dsns/([A-Za-z0-9]{6,32})\.xml$")
 
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
-    b1, b3, b4 = blocks[1], blocks[3], blocks[4]
+    b1, b2, b3, b4 = blocks[1], blocks[2], blocks[3], blocks[4]
+    has_faults = len(b2) >= 56
     pair = (b3[30], b3[31])
     return {
         "setpoint": round(fahrenheit(b3[0:2]), 1),
@@ -243,6 +245,13 @@ def decode(blocks: list[bytes]) -> dict:
         # Block 27 params 2, 7-9 and 15 (research phase 49). "air" used to be
         # read from offset 30: it is this capacity, which stepped with the
         # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature.
+        # Fault table, block 2 (phase 52; aosmith-ble's CURRENT_FAULT_ERROR_CODE
+        # is block 2 word 7): 8-byte records, the code in the last word.
+        # Record 1 is the active fault (0 = none); records 3-6 are the
+        # maintenance display's H1-H4, newest first.
+        "active_fault": word(b2, 14) if has_faults else None,
+        "fault_history": ([word(b2, offset) for offset in (30, 38, 46, 54)]
+                          if has_faults else None),
         "operating_state": OPERATING_STATES.get(word(b4, 4)),
         "operating_state_raw": word(b4, 4),
         "energy_wh": lifetime_energy(b4),
@@ -314,6 +323,7 @@ class Relay:
         # changes some bytes; the longest identical run seen was 35 minutes.
         self.contents_changed = 0.0
         self._last_blocks: tuple[bytes, ...] | None = None
+        self._last_active_fault: int | None = None
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Heating changes tank temperatures within minutes: the longest healthy
         # gap between controller pushes while heating was 10 min (n=115); idle
@@ -592,9 +602,22 @@ class Relay:
                     self.state["dsn"] = self.device_dsn
                 self.last_telemetry = time.time()
                 self.last_raw["mode"] = self.state.get("mode_raw")
+                self._note_active_fault(self.state.get("active_fault"))
             except (IndexError, ValueError):
                 pass
             self._confirm_pending()
+
+    def _note_active_fault(self, code: int | None) -> None:
+        """The telemetry's active fault feeds the same fact as the faultCode
+        property, but only when it changes: faultCode arrives first (1.5 s to
+        HA in the leak test, the next report 23 s later), and a report taken
+        just before a clear must not bring the fault back. On the first report
+        after a restart it settles a fault fact that was never posted or that
+        went stale while the relay was down."""
+        if code is None or code == self._last_active_fault:
+            return
+        self._last_active_fault = code
+        self.device.note_fault(code, "telemetry")
 
     def _heating(self) -> bool:
         watts = self.state.get("watts")

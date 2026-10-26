@@ -40,7 +40,8 @@ cloud keep working.
     degrees under it while the compressor draws air past it.
   - **Power:** **live power draw** (4500 W element, ~350 W compressor, 0 W
     idle), and **which heating element is on** (upper or lower).
-  - **Status:** the **fault** code with its title, expansion valve position,
+  - **Status:** the **fault** code with its title, and the heater's last four
+    faults (the service menu's H1–H4) as an attribute; expansion valve position,
     line voltage, Wi-Fi RSSI, relay health, and the pending write's status.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode` (including
   `vacation` with an optional `days`), `icomm_local.cancel_writes`.
@@ -58,7 +59,9 @@ keeps working, and decodes the telemetry as it passes. It also flips the
 module's built-in Ayla **Local Connect** feature on, with an encryption key the
 relay generates itself. After that, the module polls the relay on your LAN every
 ~10 seconds, and writes ride that poll. No A.O. Smith account or password is
-used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md).
+used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md). The manufacturer's service
+handbook and Use & Care guide, with what each page confirmed:
+[docs/REFERENCES.md](docs/REFERENCES.md).
 
 ## Requirements
 

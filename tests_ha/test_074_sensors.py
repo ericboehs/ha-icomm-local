@@ -25,7 +25,7 @@ async def test_the_new_sensors(hass, aioclient_mock):
     assert (cap.state, cap.attributes["unit_of_measurement"]) == ("1812", "Wh")
     state = s("sensor.icomm_water_heater_operating_state")
     assert state.state == "heating" and state.attributes["raw"] == 12
-    assert state.attributes["options"] == ["idle", "heating"]
+    assert state.attributes["options"] == ["idle", "heating", "fault"]
     assert s("sensor.icomm_water_heater_hot_water_level").state == "low"
     valve = s("sensor.icomm_water_heater_expansion_valve_position")
     assert (valve.state, valve.attributes["unit_of_measurement"]) == ("480", "steps")
