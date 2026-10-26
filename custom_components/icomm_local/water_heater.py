@@ -100,7 +100,12 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
 
     @property
     def current_temperature(self):
-        return self._data.get("water_top")
+        # The controller's own tank temperature (the relay's "water_bottom",
+        # shown as "Water, tank average"): what it heats against, so the card
+        # agrees with when it runs. The top thermistor is there as a sensor.
+        data = self._data
+        blend = data.get("water_bottom")
+        return blend if isinstance(blend, (int, float)) else data.get("water_top")
 
     @property
     def target_temperature(self):
