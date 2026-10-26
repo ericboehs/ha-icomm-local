@@ -207,8 +207,9 @@ class Heater:
         target = Path(full)
         if self.dir.is_dir() and not target.exists():
             self.dir.rename(target)
-            name = target.name.replace("\r", "").replace("\n", "")
-            _LOGGER.warning("storage: heaters/%s is now heaters/%s", self.dir.name, name)
+            # No names: the new one comes from the module's DSN (CodeQL
+            # py/log-injection). /state's heater.dir shows where it went.
+            _LOGGER.warning("storage: the heater's directory now carries its DSN")
         self.dsn, self.dir = clean, target
         self.device.path = target / "device.json"
         self.offline.cached = target / "dsn-original.xml"

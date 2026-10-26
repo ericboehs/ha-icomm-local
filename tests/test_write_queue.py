@@ -25,8 +25,7 @@ def relay(blocks_electric: list[bytes]) -> Relay:
 @pytest.fixture(autouse=True)
 def _frozen_time(monkeypatch: pytest.MonkeyPatch):
     """Pin the clock so freshness windows are decidable."""
-    import icomm_relay
-    monkeypatch.setattr(icomm_relay.time, "time", lambda: 1_000_060.0)
+    monkeypatch.setattr("icomm_relay.time.time", lambda: 1_000_060.0)
 
 
 def test_queue_setpoint(relay: Relay) -> None:
@@ -122,9 +121,8 @@ def test_stale_appliance_holds_writes(relay: Relay, monkeypatch) -> None:
     The module ignores queued commands when degraded (the cure is a breaker flip),
     so holding and saying so is the honest behaviour.
     """
-    import icomm_relay
     relay.queue_write("setpoint", 140)
-    monkeypatch.setattr(icomm_relay.time, "time", lambda: relay.last_telemetry + 601)
+    monkeypatch.setattr("icomm_relay.time.time", lambda: relay.last_telemetry + 601)
     assert relay._inject(b"<commands><properties/></commands>") is None
     assert relay.injections_held == 1
     assert "setpoint" in relay.pending

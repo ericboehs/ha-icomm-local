@@ -27,9 +27,8 @@ def relay(blocks_heat_pump: list[bytes]) -> Relay:
 @pytest.fixture(autouse=True)
 def _clock(monkeypatch: pytest.MonkeyPatch):
     """A movable clock, so dial spacing is exact."""
-    import icomm_relay
     state = {"now": 1_000_000.0}
-    monkeypatch.setattr(icomm_relay.time, "time", lambda: state["now"])
+    monkeypatch.setattr("icomm_relay.time.time", lambda: state["now"])
     return state
 
 

@@ -301,3 +301,18 @@ def test_the_electric_panel_read_settles_suction_and_the_elements() -> None:
     assert abs(fahrenheit(b1[20:22]) - 70) <= 4           # P03 coil, rising
     assert abs(fahrenheit(b1[18:20]) - 121) <= 6          # P04 discharge, falling
     assert decoded["eev_pulses"] == 480                   # P07
+
+
+async def test_an_undecodable_report_is_counted_and_logged_by_type(tmp_path, monkeypatch, caplog):
+    """It used to be swallowed silently (CodeQL py/empty-except). The proxy
+    carries on; /state counts it; the log names only the exception type."""
+    import json as _json
+
+    from test_proxy import _relay
+    relay = _relay(tmp_path, monkeypatch)
+    blocks = [bytes(8), bytes(4), bytes(230), bytes(64), bytes(10)]   # b1 far too short
+    with caplog.at_level("WARNING"):
+        relay._ingest_blocks(blocks)
+    assert relay.decode_errors == 1
+    assert "didn't decode (IndexError); 1 so far" in caplog.text
+    assert _json.loads((await relay.state_handler(None)).body)["decode_errors"] == 1
