@@ -214,12 +214,27 @@ from the last real reply, so a power cut during an outage doesn't take local
 control down with it. When Ayla comes back, the heater signs in to it again on
 its own. Details: `docs/LAN_MODE.md`, *When Ayla is down*.
 
-## Important: the NAT rules make the relay mandatory
+## Important: the relay is the water heater's route to the cloud
 
-While the rules are active, the relay is the water heater's **only** route to
-the cloud. Whenever the add-on is stopped, restarting or updating, the app shows
-the heater offline and cloud commands wait. The tank keeps heating to its last
-setpoint regardless.
+While the steering is active (NAT rules or DNS), the relay is the water heater's
+**only** route to the cloud. Whenever the add-on is stopped, restarting or
+updating, the app shows the heater offline and cloud commands wait. The tank
+keeps heating to its last setpoint regardless.
+
+**After an add-on update or restart, or a reboot of the Home Assistant host,**
+the heater's cloud side may not come back by itself.
+- **What happens:** its Wi-Fi module gives up on the cloud after a failed
+  connection and doesn't retry while Local Connect works (seen live: over 80
+  minutes, until a power cycle).
+- **What still works:** Home Assistant keeps live data and control.
+- **What doesn't:** the A.O. Smith app shows stale data, and app changes don't
+  arrive.
+- **How you'll know:** after 30 minutes the relay's health turns `degraded`
+  ("cloud side idle"), and Home Assistant raises the repair *Water heater isn't
+  reaching Ayla*.
+- **The fix:** flip the heater's breaker off for about 30 seconds, then on.
+- **To avoid it:** if you use the app, update the add-on when a power cycle is
+  convenient, and check the repair afterwards.
 
 ## Uninstall
 

@@ -43,10 +43,25 @@ That makes silence ambiguous, and the relay's health model refuses to guess:
 | quiet longer than its own reporting interval + 15 min | `degraded` — intervene |
 | a write queued and the appliance not asking for commands | `degraded` — wait or reconnect |
 | one request per dial, minutes apart, no polls | `degraded` — the researched signature |
+| Local Connect delivering changing reports, no cloud request for 30+ min | `degraded` (`code: cloud_idle`) — power-cycle; HA raises a repair |
 
 An earlier version of this file claimed a relay restart costs 20+ minutes of
-silence. That was wrong: the silence was the module being idle, and the claim was
-an inference from two samples that happened to be quiet for unrelated reasons. The
+silence. That was wrong as stated: the silence was the module being idle, and the
+claim was an inference from two samples that happened to be quiet for unrelated
+reasons.
+
+**A relay restart can, however, stop the cloud side entirely** (measured
+2026-10-25).
+- **What happened:** the relay was unreachable for a host reboot and then an
+  add-on restart. Afterwards the module sent changing telemetry over Local
+  Connect for 80+ minutes and not one packet to Ayla; the router captured no SYN
+  to :443 and conntrack had no entry.
+- **The fix:** a power cycle restored it within seconds.
+- **The mechanism, in libada's `client.c`:** a failed connect clears
+  `ads_listen` and drops the cloud from the destinations, and with the UDP
+  notification channel up the module doesn't poll.
+- **How the relay tells it from idleness:** the reports were *changing*, which a
+  healthy module would also post to the cloud. The
 symptom that actually distinguishes a wedged module — ops keepalives disappearing —
 is not visible to the relay at all, which is why it is listed as unobservable
 instead of being approximated from timing.

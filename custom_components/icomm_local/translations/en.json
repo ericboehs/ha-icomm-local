@@ -64,6 +64,10 @@
     "dns_server_failed": {
       "title": "The iCOMM relay's DNS steering isn't working",
       "description": "The relay add-on's `dns_server` option is on, but {problem}. Until that's fixed, the water heater can't reach the relay through DNS, and local control stops at its next reboot.\n\nUsually another add-on owns the port: a DNS server such as AdGuard or Pi-hole (port 53), or an SSL proxy such as NGINX (port 443). Either stop that add-on, or turn `dns_server` off and use that add-on instead (for AdGuard, add a DNS rewrite for the water heater's name)."
+    },
+    "cloud_idle": {
+      "title": "Water heater isn't reaching Ayla",
+      "description": "**{heater}**: Local Connect is working, so Home Assistant has live data and control, but the water heater hasn't contacted Ayla's cloud for {minutes} minutes. The A.O. Smith app won't show current data, and app changes won't reach the heater. This can follow a relay restart or a reboot of the Home Assistant host: the heater's Wi-Fi module gives up on the cloud after a failed connection and doesn't retry while Local Connect works.\n\nTo fix it, flip the water heater's breaker off for about 30 seconds, then on. It signs in to Ayla again within a minute; nothing is lost. This warning clears by itself once it does."
     }
   },
   "options": {

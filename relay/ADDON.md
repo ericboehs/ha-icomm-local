@@ -17,3 +17,11 @@ Two things need doing outside Home Assistant:
 2. Power-cycle the water heater once so it registers through the relay.
 
 Keys are generated into `/data/certs` on first start and never leave the box.
+
+**Updating or restarting this add-on** can leave the water heater's cloud side
+idle afterwards.
+- **Home Assistant is unaffected,** but the A.O. Smith app goes stale.
+- **After 30 minutes** Home Assistant raises *Water heater isn't reaching Ayla*.
+- **The fix:** flip the heater's breaker off for about 30 seconds, then on.
+
+See the README, *Important: the relay is the water heater's route to the cloud*.

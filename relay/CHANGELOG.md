@@ -10,6 +10,21 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Added
+- **Health: "cloud side idle"** (`degraded`, `code: cloud_idle`). Local
+  Connect has delivered *changing* reports with no request to Ayla for 30
+  minutes (`CLOUD_IDLE_AFTER`).
+  - Seen live after the relay was unreachable for a host reboot and an add-on
+    restart: the heater's Wi-Fi module stopped contacting Ayla entirely, with
+    no packets to :443, until a power cycle. HA was fine; the A.O. Smith app
+    went stale.
+  - It used to show as `unknown`, "too few dials observed yet".
+  - Frozen or idle contents don't count, so a satisfied tank doesn't trip it.
+- **A repair in HA, per heater:** *Water heater isn't reaching Ayla*, with
+  the breaker fix. It clears by itself.
+- **Docs:** README, add-on page and `docs/BEHAVIOR.md` note that an add-on
+  update or host reboot can leave the heater's cloud side idle.
+
 ### Changed
 - **`docs/dashboard.yaml` shows everything the integration has.** New:
   - the heating element, mode, setpoints and pending write;
