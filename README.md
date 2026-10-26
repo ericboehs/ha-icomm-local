@@ -21,18 +21,27 @@ cloud keep working.
 - Sensors:
   - **Tank:** water temperature at the top and bottom, plus the controller's
     blended tank average.
-  - **Hot water:** **hot water available %** (the same 0/50/100 figure the
-    A.O. Smith app shows, computed locally), and the heater's own **hot water
-    level** (low/medium/high, which is more cautious than the app).
-  - **Energy:** heat deficit and energy capacity (Wh), and **lifetime
-    energy**, which works in HA's Energy dashboard. It counts the heater's
-    nominal power, so it reads above a meter.
+  - **Hot water:** **hot water available %**, the same 0/50/100 figure the
+    A.O. Smith app shows, computed locally in every mode. Also the heater's
+    own **hot water level** (low/medium/high), whose meaning is still open:
+    it doesn't track the app.
+  - **Energy:**
+    - **energy to setpoint:** the controller's estimate of the electric
+      energy still needed, in Wh;
+    - **time to recover:** energy to setpoint ÷ power, in minutes;
+    - **energy capacity**, in Wh;
+    - **lifetime energy,** which works in HA's Energy dashboard. It counts the
+      heater's nominal power, so it reads above a meter.
   - **Setpoints and mode:** setpoint, active setpoint (what the tank is heating
     to: 50 °F in vacation), max setpoint, mode, and **operating state** (idle
     or heating).
+  - **Ambient temperature:** the heat pump's air thermistor (the service
+    menu's P06). It reads the room while the compressor is off, and a few
+    degrees under it while the compressor draws air past it.
   - **Power:** **live power draw** (4500 W element, ~350 W compressor, 0 W
     idle), and **which heating element is on** (upper or lower).
-  - **Status:** the **fault** code with its title, expansion valve position,
+  - **Status:** the **fault** code with its title, and the heater's last four
+    faults (the service menu's H1–H4) as an attribute; expansion valve position,
     line voltage, Wi-Fi RSSI, relay health, and the pending write's status.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode` (including
   `vacation` with an optional `days`), `icomm_local.cancel_writes`.
@@ -50,7 +59,9 @@ keeps working, and decodes the telemetry as it passes. It also flips the
 module's built-in Ayla **Local Connect** feature on, with an encryption key the
 relay generates itself. After that, the module polls the relay on your LAN every
 ~10 seconds, and writes ride that poll. No A.O. Smith account or password is
-used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md).
+used anywhere. Details: [docs/LAN_MODE.md](docs/LAN_MODE.md). The manufacturer's service
+handbook and Use & Care guide, with what each page confirmed:
+[docs/REFERENCES.md](docs/REFERENCES.md).
 
 ## Requirements
 
@@ -185,7 +196,7 @@ Check the add-on log first, then the relay's state from the HA host:
 | Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, set `module_ip` |
 | `lan.last_registration_result: PUT 404` / `POST 404` | Local Connect not armed yet | Power-cycle the heater (install step 3) |
 | `PUT 412` | armed, waiting for the key | Wait a minute; if it persists, power-cycle |
-| Repair: *Water heater data is frozen* | reports keep arriving but their contents haven't changed for 90 minutes (30 with a power sensor showing the heater running). The controller's live reporting lapses hours after the A.O. Smith app was last opened, and after a reboot | Heating isn't affected. The relay re-arms it by itself after 30 minutes (`reporting_mask_renew`, on by default), and live data returns within minutes. If the repair stays, **open the A.O. Smith app**, or `POST /lan/reporting-mask` on the state API once. Optional: set a power sensor for the heater's circuit under the integration's **Configure** to catch it sooner |
+| Repair: *Water heater data is frozen* | reports keep arriving but their contents haven't changed for 90 minutes, or 20 while the last report said it was heating (30 with a power sensor showing the heater running). Power, operating state and heating element then show as unknown, because the snapshot's claims about activity can be wrong (seen: "heating" for nearly 2 hours after the compressor stopped). The controller's live reporting lapses hours after the A.O. Smith app was last opened, and after a reboot | Heating isn't affected. The relay tries to re-arm it by itself (`reporting_mask_renew`, on by default). That has brought live data back within minutes, and has also failed to; `experimental_freeze_reconnect` adds a LAN reconnect after 2 failed tries. If the repair stays, **open the A.O. Smith app**, or `POST /lan/reporting-mask` on the state API once. Optional: set a power sensor for the heater's circuit under the integration's **Configure** to catch it sooner |
 | `lan.needs_key_push: true` | the module holds a key this relay did not issue | Automatic: the relay pushes its key on the next cloud poll. See [docs/LAN_MODE.md](docs/LAN_MODE.md) |
 | Integration setup: *Could not reach the relay* | add-on not running, or a different URL | Start the add-on; use `http://127.0.0.1:8124` |
 | App shows the heater offline | relay stopped while the NAT rules are active | Start the add-on, or disable the NAT rules |
@@ -294,7 +305,8 @@ Add-on options, or environment variables when running the relay directly:
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
 | `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters`, `/heaters/<dsn>/...`, and `DELETE /heaters/<dsn>?confirm=<dsn>` to forget one. Each heater is its own device in HA |
 | `offline_fallback` / `OFFLINE_FALLBACK` | on | if Ayla is unreachable (or answers 5xx) when the heater boots, answer its config fetch from the last real reply, so local control survives a power cut during an outage. See `docs/LAN_MODE.md`, *When Ayla is down* |
-| `reporting_mask_renew` / `REPORTING_MASK_RENEW` | on | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, at most once per that interval |
+| `reporting_mask_renew` / `REPORTING_MASK_RENEW` | on | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, or `CONTENTS_STALE_HEATING_AFTER` (1200) while the last report said heating, at most once per that interval |
+| `experimental_freeze_reconnect` / `FREEZE_RECONNECT` | off | experimental: when 2 renewals haven't unfrozen the data, reconnect the LAN session once per freeze (a new registration and key exchange), then keep renewing. Seen to help once; relay reconnects haven't been seen to cause freezes (0 of 17) |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |
 | `LAN_REFRESH_INTERVAL` | 300 | seconds between keep-alive telemetry reads; 0 disables |

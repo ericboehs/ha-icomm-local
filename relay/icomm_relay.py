@@ -167,12 +167,21 @@ def availability(deficit_wh: int) -> int:
 
 # The heater's own hot-water level, block 4 offset 46 (Block 27 param 23 in
 # stumpylog/aosmith-ble's BLE map, research phase 49): 0/5/10 for low, medium
-# and high. Exposed beside availability() above, not instead of it: it is more
-# pessimistic than the app. "High" only at a zero deficit, "medium" at 270-300
-# Wh where the app's 0/50/100 (fitted to 33 app-labelled captures) says 100 %.
+# and high per that report. Exposed beside availability() above, not instead of
+# it, and not as availability: against the 33 app-labelled captures it reads
+# "high" in electric with 2850-5100 Wh still to go (app: 50/0 %), "medium" at
+# 120-300 Wh in heat pump (app: 100 %), and both "low" and "high" for the same
+# 906 Wh state. availability() matches the app in heat pump mode too (18 of the
+# 33 captures). Its meaning is open (research phase 49b).
 HOT_WATER_LEVELS = {0: "low", 5: "medium", 10: "high"}
 # Block 4 offset 4 (Block 27 param 2): what the controller is doing.
-OPERATING_STATES = {11: "idle", 12: "heating"}
+# 5 seen only during an active fault (the 10-26 leak test, phase 52).
+OPERATING_STATES = {11: "idle", 12: "heating", 5: "fault"}
+
+
+# What a frozen snapshot claims about activity is reported as unknown.
+FROZEN_UNKNOWN = ("watts", "operating_state", "operating_state_raw",
+                  "heating_element", "heat_flags")
 
 
 def word(block: bytes, offset: int) -> int:
@@ -211,7 +220,8 @@ DSN_PATH_RE = re.compile(r"/dsns/([A-Za-z0-9]{6,32})\.xml$")
 
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
-    b1, b3, b4 = blocks[1], blocks[3], blocks[4]
+    b1, b2, b3, b4 = blocks[1], blocks[2], blocks[3], blocks[4]
+    has_faults = len(b2) >= 56
     pair = (b3[30], b3[31])
     return {
         "setpoint": round(fahrenheit(b3[0:2]), 1),
@@ -234,16 +244,27 @@ def decode(blocks: list[bytes]) -> dict:
         "hot_water_level": HOT_WATER_LEVELS.get(word(b4, 46)),    # the heater's own
         # Block 27 params 2, 7-9 and 15 (research phase 49). "air" used to be
         # read from offset 30: it is this capacity, which stepped with the
-        # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature. The
-        # real ambient thermistor is one of the block 1 candidates, not yet
-        # confirmed, so no "air" until it is.
+        # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature.
+        # Fault table, block 2 (phase 52; aosmith-ble's CURRENT_FAULT_ERROR_CODE
+        # is block 2 word 7): 8-byte records, the code in the last word.
+        # Record 1 is the active fault (0 = none); records 3-6 are the
+        # maintenance display's H1-H4, newest first.
+        "active_fault": word(b2, 14) if has_faults else None,
+        "fault_history": ([word(b2, offset) for offset in (30, 38, 46, 54)]
+                          if has_faults else None),
         "operating_state": OPERATING_STATES.get(word(b4, 4)),
         "operating_state_raw": word(b4, 4),
         "energy_wh": lifetime_energy(b4),
         "energy_capacity_wh": word(b4, 30),
-        # Expansion valve opening (handbook maintenance display P7), block 1
-        # offset 100: 376-480 with the compressor running. Likely, not proven.
+        # Expansion valve opening, block 1 offset 100: the maintenance
+        # display's P07 (480 on both, 10-26 14:39; research phase 51).
         "eev_pulses": word(b1, 100),
+        # Ambient air thermistor, block 1 offset 14: the maintenance display's
+        # P06 (61 -> 62 F while this read 58 -> 63, 10-26 14:39; phase 51).
+        # It sits in the unit's air path: the garage temperature while the
+        # compressor is off (67 F overnight), a few degrees under it while it
+        # runs (54-58 F). A new key: "air" (until 0.7.4) was a capacity in Wh.
+        "ambient": round(fahrenheit(b1[14:16]), 1),
         "mode_raw": f"{pair[0]}/{pair[1]}",
         "mode": mode_name(pair),
         # Vacation's first byte: the day count the app set (captured as 1 for
@@ -302,11 +323,28 @@ class Relay:
         # changes some bytes; the longest identical run seen was 35 minutes.
         self.contents_changed = 0.0
         self._last_blocks: tuple[bytes, ...] | None = None
+        self._last_active_fault: int | None = None
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
+        # Heating changes tank temperatures within minutes: the longest healthy
+        # gap between controller pushes while heating was 10 min (n=115); idle
+        # reached 52 (phase 50). So a "heating" report unchanged for 20 min is
+        # frozen -- 10-26 it said 356 W for 1 h 51 m after the compressor stopped.
+        self.contents_stale_heating_after = float(
+            os.environ.get("CONTENTS_STALE_HEATING_AFTER", "1200"))
         # Renew the controller's periodic reporting when the contents freeze
         # (phase 42). Off by default until confirmed on the tank.
         self.mask_renew = os.environ.get("REPORTING_MASK_RENEW", "1") != "0"
         self.mask_renew_after = float(os.environ.get("REPORTING_MASK_RENEW_AFTER", "1800"))
+        # Experimental, off by default: after 2 renewals haven't unfrozen the
+        # data, drop the LAN session so the module re-registers (new key
+        # exchange). 10-26 the only reconnect during a freeze was followed by
+        # live data within 11 min, while 5 renewals were not; 0 of 17 relay
+        # reconnects outside a freeze started one (phase 50). One trial.
+        self.freeze_reconnect = os.environ.get("FREEZE_RECONNECT", "0") == "1"
+        self.freeze_masks = 0            # renewals since the contents last changed
+        self.freeze_reconnected = False  # at most one reconnect per freeze
+        self.freeze_reconnects = 0
+        self.last_freeze_reconnect: float | None = None
         self.started = time.time()
         self.upstream_errors = 0
         # Ayla's certificate failing verification (an expired pin, a new CA)
@@ -551,6 +589,8 @@ class Relay:
             if tuple(blocks) != self._last_blocks:
                 self._last_blocks = tuple(blocks)
                 self.contents_changed = time.time()
+                self.freeze_masks = 0
+                self.freeze_reconnected = False
                 if lan:
                     self.lan_changes.append(self.contents_changed)
             self._maybe_renew_mask()
@@ -562,19 +602,58 @@ class Relay:
                     self.state["dsn"] = self.device_dsn
                 self.last_telemetry = time.time()
                 self.last_raw["mode"] = self.state.get("mode_raw")
+                self._note_active_fault(self.state.get("active_fault"))
             except (IndexError, ValueError):
                 pass
             self._confirm_pending()
 
+    def _note_active_fault(self, code: int | None) -> None:
+        """The telemetry's active fault feeds the same fact as the faultCode
+        property, but only when it changes: faultCode arrives first (1.5 s to
+        HA in the leak test, the next report 23 s later), and a report taken
+        just before a clear must not bring the fault back. On the first report
+        after a restart it settles a fault fact that was never posted or that
+        went stale while the relay was down."""
+        if code is None or code == self._last_active_fault:
+            return
+        self._last_active_fault = code
+        self.device.note_fault(code, "telemetry")
+
+    def _heating(self) -> bool:
+        watts = self.state.get("watts")
+        return isinstance(watts, (int, float)) and watts > 0
+
+    def stale_after(self) -> float:
+        """How long unchanged contents may last before they count as frozen."""
+        if self._heating():
+            return min(self.contents_stale_heating_after, self.contents_stale_after)
+        return self.contents_stale_after
+
+    def renew_after(self) -> float:
+        return min(self.mask_renew_after, self.stale_after())
+
     def _maybe_renew_mask(self) -> None:
         """Contents frozen this long: ask for periodic reporting again, at most
-        once per interval, so a mask that doesn't help can't become a loop."""
+        once per interval, so a mask that doesn't help can't become a loop.
+        With freeze_reconnect, the third attempt is a LAN reconnect instead."""
         if not self.mask_renew or not self.contents_changed:
             return
         now = time.time()
-        if (now - self.contents_changed >= self.mask_renew_after
-                and now - self.lan.last_mask_sent >= self.mask_renew_after
-                and self.lan.request_mask()):
+        after = self.renew_after()
+        if now - self.contents_changed < after or now - self.lan.last_mask_sent < after:
+            return
+        if (self.freeze_reconnect and not self.freeze_reconnected
+                and self.freeze_masks >= 2 and self.lan.reconnect()):
+            self.freeze_reconnected = True
+            self.freeze_reconnects += 1
+            self.last_freeze_reconnect = now
+            self.lan.last_mask_sent = now      # the next renewal waits a full interval
+            _LOGGER.warning("telemetry unchanged for %d min after %d reporting-mask renewals: "
+                            "reconnecting the LAN session (experimental_freeze_reconnect)",
+                            (now - self.contents_changed) // 60, self.freeze_masks)
+            return
+        if self.lan.request_mask():
+            self.freeze_masks += 1
             _LOGGER.warning("telemetry unchanged for %d min: renewing the reporting mask",
                             (now - self.contents_changed) // 60)
 
@@ -1128,16 +1207,28 @@ class Relay:
         out["heater"] = self.heater.status()
         out["heaters"] = self.heaters_list()
         out["reporting_mask"] = {"renew": self.mask_renew,
-                                 "after_s": self.mask_renew_after,
+                                 "after_s": self.renew_after(),
                                  "sent": self.lan.masks_sent}
+        out["freeze_reconnect"] = {"enabled": self.freeze_reconnect,
+                                   "reconnects": self.freeze_reconnects,
+                                   "last": self.last_freeze_reconnect}
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600
         unchanged = (round(time.time() - self.contents_changed)
                      if self.contents_changed else None)
         out["contents_unchanged_s"] = unchanged
+        out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None
-                                     and unchanged >= self.contents_stale_after)
+                                     and unchanged >= out["contents_stale_after_s"])
+        if out["contents_stale"]:
+            # The last report's activity can't be trusted: the module resends a
+            # cached snapshot while the heater may have stopped (or started).
+            # Tank temperatures stay, as the last known values.
+            for key in FROZEN_UNKNOWN:
+                if key in out:
+                    out[key] = None
+            out["frozen_unknown"] = list(FROZEN_UNKNOWN)
         return web.json_response(out)
 
     async def health_handler(self, request: web.Request) -> web.Response:

@@ -87,8 +87,12 @@ sections:
     icon: mdi:thermometer-chevron-down
   - type: tile
     entity: sensor.icomm_water_heater_heat_deficit
-    name: Heat deficit
+    name: Energy to setpoint
     icon: mdi:fire-alert
+  - type: tile
+    entity: sensor.icomm_water_heater_time_to_recover
+    name: Time to recover
+    icon: mdi:timer-sand
   - type: tile
     entity: sensor.icomm_water_heater_energy
     name: Energy (lifetime)
@@ -110,6 +114,10 @@ sections:
     entity: sensor.icomm_water_heater_energy_capacity
     name: Energy capacity
     icon: mdi:battery-high
+  - type: tile
+    entity: sensor.icomm_water_heater_ambient_temperature
+    name: Ambient
+    icon: mdi:home-thermometer-outline
   - type: entities
     entities:
     - type: attribute
@@ -233,11 +241,11 @@ sections:
       columns: 6
       rows: 4
   - type: history-graph
-    title: Heat deficit
+    title: Energy to setpoint
     hours_to_show: 24
     entities:
     - entity: sensor.icomm_water_heater_heat_deficit
-      name: Deficit
+      name: Energy to setpoint
     grid_options:
       columns: 6
       rows: 4

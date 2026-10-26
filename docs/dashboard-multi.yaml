@@ -60,8 +60,12 @@ sections:
     name: Average
   - type: tile
     entity: sensor.icomm_water_heater_heat_deficit
-    name: Heat deficit
+    name: Energy to setpoint
     icon: mdi:fire-alert
+  - type: tile
+    entity: sensor.icomm_water_heater_time_to_recover
+    name: Time to recover
+    icon: mdi:timer-sand
 - type: grid
   cards:
   - type: heading
@@ -105,8 +109,12 @@ sections:
     name: Average
   - type: tile
     entity: sensor.icomm_water_heater_2_heat_deficit
-    name: Heat deficit
+    name: Energy to setpoint
     icon: mdi:fire-alert
+  - type: tile
+    entity: sensor.icomm_water_heater_2_time_to_recover
+    name: Time to recover
+    icon: mdi:timer-sand
 - type: grid
   cards:
   - type: heading

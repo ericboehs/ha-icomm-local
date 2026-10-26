@@ -10,6 +10,78 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Changed
+- **"Heat deficit" is now "Energy to setpoint".**
+  - **The entity ID stays `…_heat_deficit`,** on fresh installs too, so
+    dashboards and automations keep working.
+  - **What it is:** the controller's estimate of the **electric** energy still
+    needed to reach the setpoint in the current mode. It counts down at the
+    heater's nominal power (356 W → 6 Wh/min, 4500 W → 75 Wh/min), so it isn't
+    heat in the water. Heating 50 gal by 19 °F takes ~2.3 kWh of heat; the
+    sensor read 420 Wh.
+- **Energy capacity has a simple shape:** 30 Wh per °F of setpoint above
+  ~70 °F in heat pump mode (1812 Wh at 130 °F, 2412 at 150), and about 3×
+  that in electric mode.
+- **Hot water level's docs no longer say it's "more cautious than the app".**
+  Against the 33 app-labelled captures it doesn't track availability at all:
+  - high in electric with 2,850–5,100 Wh to go;
+  - medium at 120–300 Wh in heat pump;
+  - both low and high for one 906 Wh state.
+
+  *Hot water available %* matches the app in heat pump mode too (18 of those
+  captures), so it stays as is.
+
+- **Frozen data is caught sooner while heating.** If the last report said
+  heating and nothing has changed for 20 minutes, the data is frozen. Idle
+  is still 90 minutes. The longest healthy gap seen while heating was
+  10 minutes; idle reached 52.
+- **While frozen, power, operating state and heating element show as
+  unknown.** The heater's module keeps resending a cached snapshot. On
+  10-26 it claimed "heating, 356 W" for 1 h 51 m after the compressor had
+  stopped. Tank temperatures stay, as the last known values.
+- **The frozen-data repair no longer promises** that the relay's
+  reporting-mask renewal always brings data back: 5 renewals didn't on 10-26.
+
+### Added
+- **Fault history and the active fault from telemetry,** found with a
+  deliberate leak-sensor test (research phase 52). Block 2 holds the fault
+  table: the active fault, and the service menu's H1–H4, newest first.
+  - ***Fault* now has a value after a relay restart.** Before, it was unknown
+    until the heater next posted `faultCode`. The relay feeds the telemetry's
+    active fault into the same fact, but only when it changes. `faultCode`
+    still leads: 1.5 s to HA in the test, while the next report came 23 s
+    later. A report taken just before a clear can't bring the fault back.
+  - ***Fault* attributes:** `history` (titles, newest first), `history_codes`,
+    and `source` (`property` or `telemetry`).
+  - ***Operating state* gains "fault":** raw value 5, seen only during the
+    leak. During it the heater also closed its shut-off valve, stopped
+    heating and dropped its active target to 120 °F, which *Active setpoint*
+    shows.
+- **`docs/REFERENCES.md`:** the A.O. Smith Service Handbook (2000620230, which
+  lists HPS10-50H45DV) and the Use & Care Guide, with what each page
+  confirmed. Links only.
+- **Ambient temperature,** confirmed against the heater's maintenance display
+  (hold Up+Down for 3 s).
+  - **Source:** P06 read 61 → 62 °F while block 1 offset 14 read 58 → 63.
+    It's a new key, `ambient`; "Air at unit" stays retired, since it was the
+    energy capacity.
+  - **Behaviour:** it reads the room while the compressor is off (67 °F
+    overnight), and runs a few degrees low while the compressor draws air
+    past it.
+  - **The same read confirmed** the expansion valve (P07 = 480), the tank top
+    and bottom thermistors, and the element flags.
+- **`experimental_freeze_reconnect` add-on option** (off by default). When 2
+  reporting-mask renewals haven't unfrozen the data, it reconnects the LAN
+  session once per freeze (new registration and key exchange), then keeps
+  renewing. The state API reports `freeze_reconnect`.
+  - **Why try it:** the one reconnect seen during a freeze was followed by
+    live data within 11 minutes.
+  - **Why it should be safe:** none of 17 relay reconnects outside a freeze
+    started one. The 10-26 freeze began after the heater restarted its own
+    session.
+- **Time to recover:** minutes of heating left, energy to setpoint ÷ power.
+  It's 0 once satisfied, and unknown between cycles, when there's no rate.
+
 ## [0.7.4] - 2026-10-25
 
 **"Air at unit" is removed: it was never the air temperature.** It showed the

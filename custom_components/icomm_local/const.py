@@ -31,6 +31,9 @@ def is_stale(data: dict | None) -> bool:
 # The controller's fault codes and the manufacturer's titles (via
 # stumpylog/aosmith-ble's docs/protocol/faults.md and the service handbook,
 # research phase 49). 25-27 are named per sensor as the handbook does.
+# The Service Handbook's diagnostic code chart (2000620230 pp. 15-17, which
+# lists HPS10-50H45DV; see docs/REFERENCES.md). 2, 101 and 102 come from
+# stumpylog/aosmith-ble's table and appear in no manual.
 FAULTS = {
     1: "Dry fire", 2: "High water temperature", 3: "Upper thermistor failure",
     4: "Lower thermistor failure", 6: "Internal processor error",

@@ -15,12 +15,14 @@ from homeassistant.const import (
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import slugify
 
 from .const import DOMAIN, FAULTS, MODES, has_telemetry, is_stale
-from .heaters import HeaterEntity, add_heaters, unique_id
+from .heaters import HeaterEntity, add_heaters, heater_name, unique_id
 
 F = UnitOfTemperature.FAHRENHEIT
 
@@ -32,8 +34,6 @@ SPECS = [
     ("water_mid", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
     ("hot_water_availability", "Hot water available", PERCENTAGE, None,
      SensorStateClass.MEASUREMENT),
-    ("heat_deficit_wh", "Heat deficit", UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY_STORAGE,
-     SensorStateClass.MEASUREMENT),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
     ("max_setpoint", "Max setpoint", F, SensorDeviceClass.TEMPERATURE, None),
     # What the tank heats to now: the setpoint, or 50 F in vacation.
@@ -44,6 +44,10 @@ SPECS = [
      SensorStateClass.MEASUREMENT),
     # Block 27 param 15 (research phase 49): what was shown as "Air at unit"
     # until 0.7.4. The relay reads it in Wh; it steps with the setpoint and mode.
+    # The maintenance display's P06 (research phase 51). Reads a few degrees
+    # low while the compressor draws air past it.
+    ("ambient", "Ambient temperature", F, SensorDeviceClass.TEMPERATURE,
+     SensorStateClass.MEASUREMENT),
     ("energy_capacity_wh", "Energy capacity", UnitOfEnergy.WATT_HOUR,
      SensorDeviceClass.ENERGY_STORAGE, SensorStateClass.MEASUREMENT),
     ("rssi", "Wi-Fi RSSI", SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
@@ -61,8 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         ]
         return entities + [
             TankAverageSensor(coordinator, dsn), ModeSensor(coordinator, dsn),
+            EnergyToSetpointSensor(coordinator, dsn), RecoverySensor(coordinator, dsn),
             EnergySensor(coordinator, dsn), EnumSensor(coordinator, "operating_state",
-                                                       ("idle", "heating"), dsn),
+                                                       ("idle", "heating", "fault"), dsn),
             EnumSensor(coordinator, "hot_water_level", ("low", "medium", "high"), dsn),
             ValveSensor(coordinator, dsn), FaultSensor(coordinator, dsn),
             HeatingElementSensor(coordinator, dsn), RelayHealthSensor(coordinator, dsn),
@@ -291,6 +296,53 @@ class HeatingElementSensor(IcommSensor):
         return {"flags": f"0x{flags:02x}" if isinstance(flags, int) else None}
 
 
+class EnergyToSetpointSensor(IcommSensor):
+    """What 0.7.4 and earlier called "Heat deficit" (block 4 offset 24, research
+    phase 49b): the controller's estimate of the electric energy still needed
+    to reach the setpoint in the current mode. It counts down at the heater's
+    nominal power (356 W -> 6 Wh/min), so it is electric Wh, not heat in the
+    water.
+
+    The entity ID stays ..._heat_deficit, on fresh installs too, so dashboards
+    and automations written for it keep working (an existing entity keeps its
+    ID anyway; this pins what a new one gets).
+    """
+
+    _attr_icon = "mdi:fire-alert"
+
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, "heat_deficit_wh", "Energy to setpoint",
+                         UnitOfEnergy.WATT_HOUR, SensorDeviceClass.ENERGY_STORAGE,
+                         SensorStateClass.MEASUREMENT, dsn=dsn)
+        self.entity_id = f"sensor.{slugify(heater_name(coordinator, dsn))}_heat_deficit"
+
+
+class RecoverySensor(IcommSensor):
+    """Minutes of heating left: energy to setpoint / the power the heater
+    reports. 0 once satisfied; unknown while it needs energy but isn't heating
+    (between cycles), since no rate is known then."""
+
+    _attr_icon = "mdi:timer-sand"
+
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, "recovery_minutes", "Time to recover",
+                         UnitOfTime.MINUTES, SensorDeviceClass.DURATION,
+                         SensorStateClass.MEASUREMENT, dsn=dsn)
+
+    @property
+    def native_value(self):
+        # Without telemetry the entity is unavailable (IcommSensor.available).
+        data = self._state
+        energy, watts = data.get("heat_deficit_wh"), data.get("watts")
+        if not isinstance(energy, (int, float)):
+            return None
+        if energy <= 0:
+            return 0
+        if not isinstance(watts, (int, float)) or watts <= 0:
+            return None
+        return round(energy / watts * 60)
+
+
 class EnergySensor(IcommSensor):
     """The heater's lifetime energy (Block 27 params 7-9, research phase 49): a
     running Wh total of the power it reports, so it can go in HA's Energy
@@ -363,7 +415,15 @@ class FaultSensor(_RelaySensor):
 
     @property
     def extra_state_attributes(self):
-        return {"code": self._code()}
+        device = self._state.get("device") or {}
+        history = self._state.get("fault_history")
+        attrs = {"code": self._code(), "source": device.get("fault_source")}
+        if isinstance(history, list):
+            # The maintenance display's H1-H4, newest first (0 = empty slot).
+            attrs["history"] = [FAULTS.get(c, f"Fault {c}") for c in history
+                                if isinstance(c, int) and c]
+            attrs["history_codes"] = history
+        return attrs
 
 
 class ModeSensor(IcommSensor):

@@ -113,12 +113,30 @@ def test_lifetime_energy_rises_and_has_a_no_value(blocks_heat_pump: list[bytes])
     assert lifetime_energy(bytes(block)) is None
 
 
-def test_the_heaters_level_and_the_apps_percentage(blocks_hybrid: list[bytes]) -> None:
-    """The heater's level is more pessimistic than the app: medium at a 270 Wh
-    deficit, where the app (and hot_water_availability) says 100 %."""
+def test_the_heaters_level_is_not_the_apps_percentage(blocks_hybrid: list[bytes]) -> None:
+    """hot_water_availability stays the app's figure; the level is separate."""
     decoded = decode(blocks_hybrid)
     assert decoded["heat_deficit_wh"] == 270
     assert (decoded["hot_water_level"], decoded["hot_water_availability"]) == ("medium", 100)
+
+
+def test_the_level_disagrees_with_the_app_in_every_mode() -> None:
+    """Why the level isn't used for availability (phase 49b): in the 33
+    app-labelled captures it reads high while the app says 50/0 (electric),
+    medium while the app says 100 (heat pump), and both low and high at 906 Wh."""
+    import json
+    from pathlib import Path
+
+    from icomm_relay import word
+    data = json.loads((Path(__file__).parent / "fixtures/availability_labelled.json").read_text())
+    seen = {}
+    for sample in data["samples"]:
+        b4 = bytes.fromhex(sample["blocks"][4])
+        mode = decode([bytes.fromhex(b) for b in sample["blocks"]])["mode"]
+        seen.setdefault((mode, sample["cloud"]), set()).add(word(b4, 46))
+    assert 10 in seen[("electric", 50)] and 10 in seen[("electric", 0)]
+    assert 5 in seen[("heat_pump", 100)]
+    assert {0, 10} <= seen[("heat_pump", 50)]
 
 
 def test_an_unknown_state_or_level_is_none(blocks_heat_pump: list[bytes]) -> None:
@@ -239,3 +257,47 @@ def test_heating_element(flags: int, element: str | None) -> None:
 def test_heating_element_in_the_captures(fixture, element, flags, request) -> None:
     decoded = decode(request.getfixturevalue(fixture))
     assert decoded["heating_element"] == element and decoded["heat_flags"] == flags
+
+
+def test_the_maintenance_display_matches_the_decode() -> None:
+    """Research phase 51: the owner read P01-P07 while this report was taken.
+    The display shows whole degrees and was read over ~1 min while values
+    rose, so allow a degree or two."""
+    import json
+    from pathlib import Path
+
+    blocks = [bytes.fromhex(b) for b in json.loads(
+        (Path(__file__).parent / "fixtures/telemetry_panel_check.json").read_text())["blocks"]]
+    decoded = decode(blocks)
+    assert decoded["water_top"] == 131.0                  # P01
+    assert abs(decoded["water_mid"] - 136) <= 1           # P02, the bottom thermistor
+    assert 61 <= decoded["ambient"] <= 63                 # P06: 61 -> 62 on the display
+    assert decoded["eev_pulses"] == 480                   # P07
+    assert decoded["heating_element"] == "off"            # P08/P09 off
+    assert decoded["watts"] == 356
+
+
+def test_ambient_is_not_the_retired_air_key(blocks_heat_pump: list[bytes]) -> None:
+    decoded = decode(blocks_heat_pump)
+    assert "air" not in decoded and 30 < decoded["ambient"] < 120
+
+
+def test_the_electric_panel_read_settles_suction_and_the_elements() -> None:
+    """Second read (phase 51), compressor just stopped: P05 = 67 while
+    b1[16:18] read 66 and b1[22:24] 60, so suction is offset 16. P08 on with
+    the upper-element flag: P08 = upper, P09 = lower. Readings were 30-70 s
+    after this report, with refrigerant temperatures still moving."""
+    import json
+    from pathlib import Path
+
+    from icomm_relay import fahrenheit
+    fixture = Path(__file__).parent / "fixtures/telemetry_panel_check_electric.json"
+    blocks = [bytes.fromhex(b) for b in json.loads(fixture.read_text())["blocks"]]
+    decoded, b1 = decode(blocks), blocks[1]
+    assert decoded["mode"] == "electric" and decoded["heating_element"] == "upper"   # P08 on
+    assert abs(fahrenheit(b1[16:18]) - 67) <= 2           # P05 suction
+    assert abs(fahrenheit(b1[22:24]) - 67) > 5            # not P05
+    assert abs(decoded["ambient"] - 63) <= 2              # P06
+    assert abs(fahrenheit(b1[20:22]) - 70) <= 4           # P03 coil, rising
+    assert abs(fahrenheit(b1[18:20]) - 121) <= 6          # P04 discharge, falling
+    assert decoded["eev_pulses"] == 480                   # P07
