@@ -56,9 +56,9 @@ either answer is fine: history follows the entity either way, but
 dashboards and automations use the entity IDs.
 
 Numbers stay with their heaters. The primary is 1, and each other heater
-gets the lowest number from 2 up that has never been used. A number is never
-handed to a different heater, so if heater 2 goes away, heater 3 stays heater
-3 and a new heater gets 4.
+gets the lowest free number from 2 up. If heater 2 stops reporting, heater 3
+stays heater 3 and a new heater gets 4. Heater 2's number is freed only when
+you delete its device (see *Removing or replacing a heater*).
 
 ## Services and automations
 
@@ -127,6 +127,11 @@ The relay's original endpoints (`/state`, `/write` and so on) act on the
 `/heaters/<dsn>/state`, `/heaters/<dsn>/raw`, and `POST`s to
 `/heaters/<dsn>/write`, `/heaters/<dsn>/write/cancel`,
 `/heaters/<dsn>/lan/reporting-mask` and `/heaters/<dsn>/nudge`.
+`DELETE /heaters/<dsn>?confirm=<dsn>` forgets a heater, then restarts the
+relay.
+- While the heater is still reporting, it answers 409 unless you add
+  `force=1`.
+- Until the restart finishes, the whole state API answers 503.
 
 **Once the relay holds two heaters, the original POST endpoints (`/write`,
 `/write/cancel`, `/lan/reporting-mask`, `/nudge`) are refused with 409**,
@@ -134,6 +139,54 @@ together with the list of heaters. That includes a heater that's offline but
 still saved on the relay. Scripts that call the relay directly must then use
 the `/heaters/<dsn>/...` endpoints. The integration already does. Reads
 (`/state`, `/raw`) keep answering for the primary.
+
+## Removing or replacing a heater
+
+First power the old heater off, or stop steering it to the relay. A heater
+that's still reporting, or has a LAN session up, can't be removed: it would
+only come back, as a new heater, on its next boot.
+- **Within ten minutes of a relay restart,** a heater that hasn't reported
+  yet can't be removed either, since the relay can't yet tell it's gone.
+
+### Gone for good: delete its device
+
+In Home Assistant, open the heater's device page, then **⋮ → Delete**.
+1. The integration asks the relay to forget the heater: its key, saved
+   configuration and queue. The relay then restarts by itself, which takes a
+   few seconds.
+2. HA removes the device and its entities, and the heater's number is free
+   again.
+- **Requires** add-on 0.7.2 or later. With an older add-on, HA refuses.
+- **Refused** if the heater is the primary and the `module_ip` or
+  `device_dsn` option names it. Clear the option first.
+
+### Replaced: keep its entities for the new heater
+
+To keep the old heater's entities, including customised entity IDs, history,
+dashboards and automations, for the heater that replaces it, **don't** delete
+the device. Forget the heater on the relay only. The command has to run
+somewhere that can reach the relay's state API on the HA host: the
+*Advanced SSH & Web Terminal* add-on can, and so can anything else using
+the host's network.
+
+```sh
+curl -X DELETE "http://127.0.0.1:8124/heaters/<old DSN>?confirm=<old DSN>"
+```
+
+Then power on the new heater. When the relay first names it, the new heater
+takes over the old one's entities and device. This works for the primary
+heater, the only one on a single-heater setup.
+- **Another heater replaced:** the new one gets the next number and its own
+  entities, so delete the old heater's device as above.
+- **After removing the primary on a multi-heater relay,** the heater whose
+  DSN sorts first becomes the primary. The original `/state` and `/write`
+  endpoints act on the primary.
+- **Finding the old DSN:** `curl -s http://127.0.0.1:8124/heaters | jq` lists
+  each heater with its serial number.
+
+Don't delete the heater's directory under `/data/heaters/` by hand: the relay
+rebuilds it from the files it keeps for downgrades. The endpoint removes those
+as well.
 
 ## Limits and gotchas
 
@@ -153,20 +206,6 @@ the `/heaters/<dsn>/...` endpoints. The integration already does. Reads
   - **NAT steering:** update the router rules to the new address. Better,
     give each heater a DHCP reservation.
   - **Either way:** a primary with `module_ip` set stays on that address.
-- **A heater replaced with a new one:** the new heater joins as an extra
-  heater (the next number), and the old one's entities stay, unavailable.
-  The relay keeps its first heater as the primary for good.
-  - **Single-heater setup:** to have the new heater take over the old one's
-    entities and device instead, so dashboards and automations keep working:
-    1. Uninstall the add-on and install it again. That clears its data.
-    2. Power-cycle the new heater.
-
-    Don't just delete the old heater's directory under `/data/heaters/`: the
-    relay rebuilds it from the files it keeps for downgrades.
-  - **With several heaters:** reinstalling would make every heater start over,
-    so leave the old one's entities until removal is supported.
-- **Removing a heater** isn't supported yet. Its entities stay unavailable in
-  HA, its directory stays in the relay's `/data/heaters/`, and it still
-  counts toward the service-target and 409 rules above.
+- **A heater's number** is freed only when you delete its device (below).
 - **Each heater must have booted once through the relay with Ayla
   reachable** before the offline fallback can cover it.

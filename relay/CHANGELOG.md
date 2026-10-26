@@ -11,6 +11,29 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 ## [Unreleased]
 
 ### Added
+- **Removing a heater** (#18).
+  - **In HA:** deleting a heater's device (device page, **⋮ → Delete**) has
+    the relay forget it too, then removes its entities and frees its number.
+    It's refused while the heater is still reporting, since it would come
+    back on its next boot.
+  - **Relay:** `DELETE /heaters/<dsn>?confirm=<dsn>` deletes the heater's
+    directory (key, saved config, queue). For the primary it also deletes the
+    `PRIMARY` marker and the single-heater files kept for downgrades, which
+    used to rebuild it. The relay then restarts in-process from what's left
+    on disk.
+    - 409 (unless `force=1`) while the heater is reporting or has a LAN
+      session, or within ten minutes of a relay restart if it hasn't reported
+      yet.
+    - 409 if `module_ip` or `device_dsn` names the primary.
+    - The single-heater files and the marker are deleted only if they're the
+      removed heater's own.
+    - A stop signal during the restart still stops the relay.
+    - The state API answers 503 until the restart finishes.
+  - **To replace the primary heater and keep its entities**, forget it on the
+    relay only, without deleting the HA device. The new heater then takes
+    over the old one's entities. See `docs/MULTI_HEATER.md`.
+
+### Added
 - **Multi-heater guide**, [docs/MULTI_HEATER.md](docs/MULTI_HEATER.md) (#18,
   phase 4): adding a heater, telling heaters apart, service targets, the
   primary heater and the relay's per-heater API, and limits.

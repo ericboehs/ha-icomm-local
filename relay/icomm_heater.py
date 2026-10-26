@@ -126,6 +126,50 @@ def migrate(data_dir: Path, dsn: str | None, queue_name: str = "pending.json",
     return target
 
 
+RELAY_WIDE = {"firmware.json", "options.json", "certs"}
+
+
+def _legacy_owner(data_dir: Path) -> str | None:
+    """Whose the single-heater files at the top of the data dir are."""
+    return (clean_dsn(_json(data_dir / "lanip.json").get("module_dsn"))
+            or clean_dsn((_json(data_dir / "device.json").get("facts") or {}).get("dsn")))
+
+
+def forget(data_dir: Path, dsn: str, primary: bool, queue_name: str = "pending.json") -> list[str]:
+    """Delete a heater's files (DELETE /heaters/<dsn>), so no restart brings it
+    back: its directory; the PRIMARY marker if it names it; and the
+    single-heater files at the top of the data dir if they're its own (by the
+    DSN they hold, or with no DSN, if it's the primary) -- known_dsn() and
+    migrate() would rebuild it from them. Never another heater's, never the
+    relay's own (firmware gate, options, certificates). Returns what went."""
+    clean = clean_dsn(dsn)
+    if not clean:
+        return []
+    heaters = os.path.realpath(data_dir / "heaters")
+    full = os.path.normpath(os.path.join(heaters, clean))
+    if not full.startswith(heaters + os.sep):         # CodeQL path-injection pattern
+        return []
+    removed = []
+    if os.path.isdir(full):
+        shutil.rmtree(full, ignore_errors=True)
+        removed.append(f"heaters/{clean}/")
+    marker = data_dir / "heaters" / PRIMARY_MARKER
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        if clean_dsn(marker.read_text().strip()) == clean:
+            marker.unlink()
+            removed.append(f"heaters/{PRIMARY_MARKER}")
+    owner = _legacy_owner(data_dir)
+    if owner == clean or (owner is None and primary):
+        names = dict.fromkeys([*COPIED, *MOVED, os.path.basename(queue_name)])
+        for name in names:
+            if name in RELAY_WIDE:
+                continue
+            with contextlib.suppress(FileNotFoundError, IsADirectoryError):
+                (data_dir / name).unlink()
+                removed.append(name)
+    return removed
+
+
 class Heater:
     """A heater's DSN and directory, and the components that persist there."""
 

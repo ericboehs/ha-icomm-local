@@ -6,12 +6,16 @@ import asyncio
 import time
 from datetime import timedelta
 
+import aiohttp
 from aiohttp import ClientError, ClientTimeout
 from homeassistant.const import CONF_URL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -27,6 +31,7 @@ from .const import (
 )
 from .heaters import (
     heater_name,
+    heater_state,
     migrate_to_dsn,
     multi_capable,
     primary_dsn,
@@ -272,11 +277,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     def reload_once() -> None:
         """One reload, which migrates or re-keys before any entity is added."""
         reload_once.done = True
-        schedule = getattr(hass.config_entries, "async_schedule_reload", None)
-        if schedule is not None:
-            schedule(entry.entry_id)
-        else:                                      # HA before 2024.2
-            hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+        _schedule_reload(hass, entry.entry_id)
 
     reload_once.done = False
     coordinator.primary, coordinator.order, coordinator.heaters = None, [], {}
@@ -402,6 +403,99 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_on_unload(coordinator.async_add_listener(_update_device_registry))
     _update_device_registry()
     return True
+
+
+def _schedule_reload(hass: HomeAssistant, entry_id: str) -> None:
+    schedule = getattr(hass.config_entries, "async_schedule_reload", None)
+    if schedule is not None:
+        schedule(entry_id)
+    else:                                          # HA before 2024.2
+        hass.async_create_task(hass.config_entries.async_reload(entry_id))
+
+
+async def async_remove_config_entry_device(hass: HomeAssistant, entry, device) -> bool:
+    """The device page's Delete (#18): a heater that's gone or was replaced.
+
+    The relay forgets it first (its key and files, DELETE /heaters/<dsn>), so
+    it can't come back on the next poll; then HA removes the device and its
+    entities. A heater that's still reporting is refused: deleting it would
+    only bring it back, under new entities, on its next boot.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    dsn = next((valid_dsn(value) for domain, value in device.identifiers
+                if domain == DOMAIN), None)
+    if coordinator is None or dsn is None:
+        raise HomeAssistantError(
+            "This device can't be deleted: it's the water heater of a relay that hasn't "
+            "named its DSN yet (or the integration isn't loaded). Update the add-on first.")
+    data = coordinator.data or {}
+    listed = (dsn in data["heaters"]) if multi_capable(data) else dsn == coordinator.primary
+    if listed:
+        if heater_state(coordinator, dsn).get("fresh"):
+            raise HomeAssistantError(
+                f"{device.name_by_user or device.name} is still reporting to the relay. "
+                "Power it off or stop steering it to the relay first; otherwise it comes "
+                "back on its next boot.")
+        await _relay_forget(hass, coordinator.relay_url, dsn)
+    # No fallback to a forgotten heater, and its number is free again (a
+    # replacement takes it: "iCOMM Water Heater", not "... 2").
+    coordinator.numbers = {k: v for k, v in coordinator.numbers.items() if k != dsn}
+    data = {**entry.data, CONF_NUMBERS: dict(coordinator.numbers)}
+    if entry.data.get(CONF_DSN) == dsn:
+        data[CONF_DSN] = None
+    hass.config_entries.async_update_entry(entry, data=data)
+    for kind in ("stale_telemetry", "telemetry_frozen"):
+        ir.async_delete_issue(hass, DOMAIN,
+                              _heater_issue_id(kind, entry.entry_id, dsn, coordinator.primary))
+    _reload_once_removed(hass, entry.entry_id, device.id)
+    return True
+
+
+def _reload_once_removed(hass: HomeAssistant, entry_id: str, device_id: str) -> None:
+    """Reload (to start clean after the relay's restart) once HA has removed
+    the device, which it does after the hook returns: earlier, the old
+    entities would still hold their entity IDs and the reload would add new
+    ones beside them as ..._2 (the single-heater replacement wants the
+    default IDs back)."""
+    @callback
+    def _reload(_now) -> None:
+        _schedule_reload(hass, entry_id)
+
+    @callback
+    def _give_up(_now) -> None:                    # HA never removed it
+        unsubscribe()
+
+    @callback
+    def _removed(event) -> None:
+        if event.data.get("action") == "remove" and event.data.get("device_id") == device_id:
+            unsubscribe()
+            cancel()
+            # A moment later: the entity registry drops the device's entities
+            # in its own listener for this same event.
+            async_call_later(hass, 1, _reload)
+
+    unsubscribe = hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, _removed)
+    cancel = async_call_later(hass, 60, _give_up)
+
+
+async def _relay_forget(hass: HomeAssistant, url: str, dsn: str) -> None:
+    session = async_get_clientsession(hass)
+    try:
+        async with session.delete(f"{url}/heaters/{dsn}", params={"confirm": dsn},
+                                  timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            status = resp.status
+            try:
+                body = await resp.json(content_type=None)
+            except ValueError:                     # an older relay's plain-text 404/405
+                body = None
+    except (TimeoutError, aiohttp.ClientError) as err:
+        raise HomeAssistantError(f"Couldn't reach the relay to remove the heater: {err}") from err
+    body = body if isinstance(body, dict) else {}
+    if status == 200 or (status == 404 and body.get("error") == "no such heater"):
+        return
+    if status in (404, 405):                       # no such endpoint: before 0.7.2
+        raise HomeAssistantError("The relay is too old to remove a heater; update the add-on.")
+    raise HomeAssistantError(f"The relay refused: {body.get('error') or f'HTTP {status}'}")
 
 
 async def _options_updated(hass: HomeAssistant, entry) -> None:
