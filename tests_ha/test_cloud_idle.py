@@ -46,3 +46,12 @@ async def test_a_failed_poll_leaves_it_alone(hass, aioclient_mock):
     await hass.data["icomm_local"][entry.entry_id].async_refresh()
     await hass.async_block_till_done()
     assert _issue(hass, f"cloud_idle_{entry.entry_id}") is not None
+
+
+async def test_the_health_sensor_shows_the_24h_cloud_history(hass, aioclient_mock):
+    health = {**HEALTHY, "evidence": {"cloud_dials_24h": 42, "cloud_quiet_s": 75,
+                                      "longest_cloud_gap_24h_s": 4870}}
+    await _setup(hass, aioclient_mock, a={**STATE_A, "health": health})
+    attrs = hass.states.get("sensor.icomm_water_heater_relay_health").attributes
+    assert (attrs["cloud_dials_24h"], attrs["cloud_quiet_s"],
+            attrs["longest_cloud_gap_24h_s"]) == (42, 75, 4870)

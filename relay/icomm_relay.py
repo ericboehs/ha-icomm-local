@@ -359,6 +359,12 @@ class Relay:
         # When telemetry delivered over Local Connect changed: with no cloud
         # request alongside, the module's cloud side has stopped (health).
         self.lan_changes: deque[float] = deque(maxlen=12)
+        # Start and end of every cloud dial in the last 24 h, for health's
+        # dial count and longest gap: a recurrence of the stopped cloud side
+        # shows in /state (and the telemetry log), not only in the repair.
+        # In memory: a relay restart -- the usual trigger -- starts it over, and
+        # the gap then counts from the start.
+        self.dial_log: deque[list[float]] = deque(maxlen=5000)
         self.dials: deque[dict] = deque(maxlen=6)
         self._dial: dict | None = None
         # The appliance advertises how often it reports; learned from the config
@@ -1142,7 +1148,9 @@ class Relay:
             if self._dial is not None:
                 self.dials.append(self._dial)
             self._dial = {"start": now, "last": now, "requests": 0, "polls": 0}
+            self.dial_log.append([now, now])
         self._dial["last"] = now
+        self.dial_log[-1][1] = now
         self._dial["requests"] += 1
         if "commands.xml" in path:
             self._dial["polls"] += 1
@@ -1200,6 +1208,7 @@ class Relay:
         silent = now - self.last_telemetry if self.last_telemetry else None
         interval = self.reporting_interval_s or IDLE_INTERVAL_DEFAULT
         evidence = {
+            **self._cloud_history(now),
             "dials": len(dials),
             "polls": polls,
             "median_telemetry_gap_s": None if median_gap is None else round(median_gap),
@@ -1297,6 +1306,20 @@ class Relay:
 
         return {"state": "healthy", "reasons": [], "evidence": evidence,
                 "unobservable": unobservable}
+
+    def _cloud_history(self, now: float) -> dict:
+        """Cloud dials over the last 24 h, the time since the last request, and
+        the longest stretch without one (from the relay's start, if later)."""
+        horizon = now - 86400
+        while self.dial_log and self.dial_log[0][1] < horizon:
+            self.dial_log.popleft()
+        start = max(self.started, horizon)
+        edges = [start] + [t for dial in self.dial_log for t in dial] + [now]
+        gaps = [max(0.0, b - a) for a, b in zip(edges[::2], edges[1::2], strict=True)]
+        last = self.dial_log[-1][1] if self.dial_log else None
+        return {"cloud_dials_24h": len(self.dial_log),
+                "cloud_quiet_s": round(now - (last if last is not None else self.started)),
+                "longest_cloud_gap_24h_s": round(max(gaps))}
 
     def _cloud_idle(self, now: float) -> tuple[float, int] | None:
         """(seconds without a cloud request, LAN content changes meanwhile), if

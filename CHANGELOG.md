@@ -27,6 +27,11 @@ is needed.
   - **Before:** health showed `unknown`, "too few dials observed yet".
   - **No false alarms when idle:** unchanged reports (a satisfied tank) don't
     count.
+- **Cloud history in every health report:** `cloud_dials_24h`,
+  `cloud_quiet_s` and `longest_cloud_gap_24h_s`. They're also attributes on
+  the *Relay health* sensor, so a recurrence shows in history and logs, not
+  only in the repair. They're kept in memory, so a relay restart starts them
+  over and the gap counts from the start.
 - **A Home Assistant repair, per heater:** *Water heater isn't reaching
   Ayla*. It explains that HA is unaffected, gives the breaker fix, and clears
   by itself once the heater signs in again.

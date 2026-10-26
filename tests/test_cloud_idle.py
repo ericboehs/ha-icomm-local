@@ -92,3 +92,28 @@ def test_quiet_counts_from_the_last_dial(relay, _clock, blocks_heat_pump, blocks
         _dial(relay, _clock, [TELEMETRY, POLL], gap=60)                # healthy earlier
     _lan_reports(relay, _clock, [blocks_heat_pump, blocks_electric] * 3)   # 30 min since
     assert relay.health().get("code") == "cloud_idle"
+
+
+def test_24h_cloud_history_in_every_health(relay, _clock):
+    """So a recurrence shows in /state, and the minute telemetry log."""
+    ev = relay.health()["evidence"]
+    assert ev["cloud_dials_24h"] == 0 and ev["cloud_quiet_s"] == 0
+    _clock["now"] += 600                                    # 10 min before the first dial
+    for gap in (60, 60, 3000, 60):                          # dials; a 50 min hole
+        _dial(relay, _clock, [TELEMETRY, POLL], gap=gap)
+    ev = relay.health()["evidence"]
+    assert ev["cloud_dials_24h"] == 4
+    assert ev["cloud_quiet_s"] == 60
+    assert ev["longest_cloud_gap_24h_s"] == 3000
+    _clock["now"] += 86400 - 3000                           # the early dials age out
+    ev = relay.health()["evidence"]
+    assert ev["cloud_dials_24h"] == 1                       # the last one, 23 h ago
+    assert ev["longest_cloud_gap_24h_s"] == ev["cloud_quiet_s"] == 86400 - 3000 + 60
+
+
+def test_a_long_dial_counts_once(relay, _clock):
+    for _ in range(5):                                      # requests 5 s apart: one dial
+        relay._note_request(TELEMETRY)
+        _clock["now"] += 5
+    ev = relay.health()["evidence"]
+    assert ev["cloud_dials_24h"] == 1 and ev["cloud_quiet_s"] == 5
