@@ -291,8 +291,8 @@ def test_the_electric_panel_read_settles_suction_and_the_elements() -> None:
     from pathlib import Path
 
     from icomm_relay import fahrenheit
-    blocks = [bytes.fromhex(b) for b in json.loads(
-        (Path(__file__).parent / "fixtures/telemetry_panel_check_electric.json").read_text())["blocks"]]
+    fixture = Path(__file__).parent / "fixtures/telemetry_panel_check_electric.json"
+    blocks = [bytes.fromhex(b) for b in json.loads(fixture.read_text())["blocks"]]
     decoded, b1 = decode(blocks), blocks[1]
     assert decoded["mode"] == "electric" and decoded["heating_element"] == "upper"   # P08 on
     assert abs(fahrenheit(b1[16:18]) - 67) <= 2           # P05 suction
