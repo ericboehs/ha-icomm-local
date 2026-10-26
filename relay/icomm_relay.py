@@ -140,6 +140,9 @@ def mode_name(pair: tuple[int, int]) -> str:
 # the appliance's own measured reporting interval; being generous is deliberate,
 # because a false alarm trains the user to ignore the real one.
 IDLE_INTERVAL_DEFAULT = 6 * 3600
+# No cloud request for this long while Local Connect delivers changing reports:
+# the module's cloud side has stopped (health: degraded, code cloud_idle).
+CLOUD_IDLE_AFTER = int(os.environ.get("CLOUD_IDLE_AFTER", "1800"))
 REPORTING_INTERVAL = re.compile(
     r"<name>\s*superBlockDynDataUpdateRate\s*</name>\s*<value>\s*(\d+)\s*</value>")
 
@@ -353,6 +356,15 @@ class Relay:
         # Conversation shape, for the degraded-state detector: the module talks in
         # dials, so requests are grouped into them and their shape remembered.
         self.telemetry_times: deque[float] = deque(maxlen=12)
+        # When telemetry delivered over Local Connect changed: with no cloud
+        # request alongside, the module's cloud side has stopped (health).
+        self.lan_changes: deque[float] = deque(maxlen=12)
+        # Start and end of every cloud dial in the last 24 h, for health's
+        # dial count and longest gap: a recurrence of the stopped cloud side
+        # shows in /state (and the telemetry log), not only in the repair.
+        # In memory: a relay restart -- the usual trigger -- starts it over, and
+        # the gap then counts from the start.
+        self.dial_log: deque[list[float]] = deque(maxlen=5000)
         self.dials: deque[dict] = deque(maxlen=6)
         self._dial: dict | None = None
         # The appliance advertises how often it reports; learned from the config
@@ -496,7 +508,7 @@ class Relay:
         self._ingest_blocks(telemetry_blocks(body))
         return await self.proxy(request)
 
-    def _ingest_blocks(self, blocks: list[bytes] | None) -> None:
+    def _ingest_blocks(self, blocks: list[bytes] | None, lan: bool = False) -> None:
         """Decode a superBlockDyn1 report, from the cloud POST or the LAN."""
         if blocks and len(blocks) >= 5:
             # Kept raw for register research (GET /raw): the decoder only knows
@@ -506,6 +518,8 @@ class Relay:
             if tuple(blocks) != self._last_blocks:
                 self._last_blocks = tuple(blocks)
                 self.contents_changed = time.time()
+                if lan:
+                    self.lan_changes.append(self.contents_changed)
             self._maybe_renew_mask()
             try:
                 self.state = decode(blocks)
@@ -570,7 +584,7 @@ class Relay:
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
                 self._ingest_blocks([bytes.fromhex(part)
-                                     for part in data["value"].split(",")])
+                                     for part in data["value"].split(",")], lan=True)
             except ValueError:
                 _LOGGER.warning("LAN telemetry undecodable")
         elif "ack_status" in data:
@@ -1134,7 +1148,9 @@ class Relay:
             if self._dial is not None:
                 self.dials.append(self._dial)
             self._dial = {"start": now, "last": now, "requests": 0, "polls": 0}
+            self.dial_log.append([now, now])
         self._dial["last"] = now
+        self.dial_log[-1][1] = now
         self._dial["requests"] += 1
         if "commands.xml" in path:
             self._dial["polls"] += 1
@@ -1192,6 +1208,7 @@ class Relay:
         silent = now - self.last_telemetry if self.last_telemetry else None
         interval = self.reporting_interval_s or IDLE_INTERVAL_DEFAULT
         evidence = {
+            **self._cloud_history(now),
             "dials": len(dials),
             "polls": polls,
             "median_telemetry_gap_s": None if median_gap is None else round(median_gap),
@@ -1200,9 +1217,13 @@ class Relay:
         }
         unobservable = ["ops keepalives (UDP, gateway-side)", "GraphQL write status (app API)"]
 
-        def degraded(reason: str, remediation: str, extra: dict | None = None) -> dict:
-            return {"state": "degraded", "reasons": [reason], "remediation": remediation,
-                    "evidence": {**evidence, **(extra or {})}, "unobservable": unobservable}
+        def degraded(reason: str, remediation: str, extra: dict | None = None,
+                     code: str | None = None) -> dict:
+            out = {"state": "degraded", "reasons": [reason], "remediation": remediation,
+                   "evidence": {**evidence, **(extra or {})}, "unobservable": unobservable}
+            if code:
+                out["code"] = code             # machine-readable: HA raises a repair on it
+            return out
 
         breaker = ("Flip the water heater's breaker off for ~30 seconds, then on. It "
                    "re-registers and fetches everything Ayla had queued, so nothing is "
@@ -1218,6 +1239,25 @@ class Relay:
                 f"({self.state.get('setpoint')} F setpoint, "
                 f"{self.state.get('water_top')} F water)",
                 breaker, {"calling_for_heat": True})
+
+        # The cloud side stopped while Local Connect carries on. Seen after the
+        # relay was unreachable (a host reboot, an add-on restart): libada drops
+        # the cloud as a destination after a failed connect and, with its UDP
+        # notification channel up, doesn't poll -- 25+ min without a single SYN
+        # on the wire, until a power cycle. Positive evidence only: telemetry
+        # contents changing over LAN, which a healthy module would also post to
+        # the cloud, against no cloud request at all for CLOUD_IDLE_AFTER.
+        cloud_idle = self._cloud_idle(now)
+        if cloud_idle is not None:
+            quiet, changes = cloud_idle
+            return degraded(
+                f"cloud side idle: no request to Ayla for {quiet / 60:.0f} min while "
+                f"Local Connect delivered {changes} changing reports",
+                "Home Assistant is unaffected (Local Connect), but Ayla and the "
+                "A.O. Smith app get no updates. Flip the water heater's breaker off "
+                "for ~30 seconds, then on: it signs in to Ayla again. This can "
+                "follow a relay restart or host reboot.",
+                {"cloud_quiet_s": round(quiet), "lan_changes": changes}, code="cloud_idle")
 
         # Silence well beyond the interval it advertised for itself. Gentler
         # remediation than a breaker: overrunning a six-hour cadence is suspicious but
@@ -1266,6 +1306,34 @@ class Relay:
 
         return {"state": "healthy", "reasons": [], "evidence": evidence,
                 "unobservable": unobservable}
+
+    def _cloud_history(self, now: float) -> dict:
+        """Cloud dials over the last 24 h, the time since the last request, and
+        the longest stretch without one (from the relay's start, if later)."""
+        horizon = now - 86400
+        while self.dial_log and self.dial_log[0][1] < horizon:
+            self.dial_log.popleft()
+        start = max(self.started, horizon)
+        edges = [start] + [t for dial in self.dial_log for t in dial] + [now]
+        gaps = [max(0.0, b - a) for a, b in zip(edges[::2], edges[1::2], strict=True)]
+        last = self.dial_log[-1][1] if self.dial_log else None
+        return {"cloud_dials_24h": len(self.dial_log),
+                "cloud_quiet_s": round(now - (last if last is not None else self.started)),
+                "longest_cloud_gap_24h_s": round(max(gaps))}
+
+    def _cloud_idle(self, now: float) -> tuple[float, int] | None:
+        """(seconds without a cloud request, LAN content changes meanwhile), if
+        that looks like a stopped cloud side; else None."""
+        if not (self.lan.enabled and self.lan.registered):
+            return None
+        last = max([d["last"] for d in self._dial_shape()], default=0.0)
+        since = max(last, self.started)
+        quiet = now - since
+        changes = [t for t in self.lan_changes if t > since]
+        if (quiet >= CLOUD_IDLE_AFTER and len(changes) >= 2
+                and now - changes[-1] < 900):              # and it's still happening
+            return quiet, len(changes)
+        return None
 
     async def nudge_handler(self, request: web.Request) -> web.Response:
         """POST /nudge -- ask the module to re-register, without the cloud.

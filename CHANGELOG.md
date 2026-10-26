@@ -10,18 +10,49 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+**Upgrade both the add-on and the integration.** Updating the add-on restarts
+the relay, and that is exactly what can leave the water heater's cloud side
+idle (below). If the A.O. Smith app matters to you, update when a breaker
+cycle is convenient. Thirty minutes later this version tells you whether one
+is needed.
+
+### Added
+- **Relay health: "cloud side idle"** (`degraded`, `code: cloud_idle`).
+  - **When:** Local Connect has delivered reports whose contents changed, and
+    the heater hasn't contacted Ayla for 30 minutes (`CLOUD_IDLE_AFTER`).
+  - **Why:** seen live after the relay was unreachable for a host reboot and
+    an add-on restart. The heater's Wi-Fi module stopped contacting Ayla
+    entirely (no packets to :443 at the router) for over 80 minutes, until a
+    breaker cycle. Home Assistant was fine; the app went stale.
+  - **Before:** health showed `unknown`, "too few dials observed yet".
+  - **No false alarms when idle:** unchanged reports (a satisfied tank) don't
+    count.
+- **Cloud history in every health report:** `cloud_dials_24h`,
+  `cloud_quiet_s` and `longest_cloud_gap_24h_s`. They're also attributes on
+  the *Relay health* sensor, so a recurrence shows in history and logs, not
+  only in the repair. They're kept in memory, so a relay restart starts them
+  over and the gap counts from the start.
+- **A Home Assistant repair, per heater:** *Water heater isn't reaching
+  Ayla*. It explains that HA is unaffected, gives the breaker fix, and clears
+  by itself once the heater signs in again.
+
 ### Changed
 - **`docs/dashboard.yaml` shows everything the integration has.** New:
-  - the heating element, mode, setpoints and pending write;
-  - model, serial number, DSN and both firmware versions;
-  - why relay health says what it does, and Local Connect status;
-  - the tank average's weight on top, vacation days and write status;
+  - badges for relay health, mode and heating element;
+  - the setpoint, active target and maximum, and any pending write;
+  - model, serial number, DSN, and both firmware versions;
+  - why relay health says what it does, and whether Local Connect is
+    registered;
+  - the tank average's weight on top;
   - a 24-hour timeline of mode and heating element.
 
-  A new test checks that every attribute row names an attribute the entity
-  has.
-  Vacation days only show in vacation mode, and the last write's status only
-  while a write is pending.
+  Vacation days show only in vacation mode, and the last write's status only
+  while a write is pending. A new test checks that every attribute row names
+  an attribute the entity really has.
+- **Docs:** the README section *Important: the relay is the water heater's
+  route to the cloud* (formerly about NAT rules only), the add-on page and
+  `docs/BEHAVIOR.md` cover the restart risk and the fix. `BEHAVIOR.md` also
+  corrects its earlier claim that a relay restart has no lasting effect.
 
 ## [0.7.2] - 2026-10-25
 

@@ -151,6 +151,21 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None =
         })
 
 
+def _cloud_idle_issue(hass: HomeAssistant, data: dict, issue_id: str,
+                      heater: str = "iCOMM Water Heater") -> None:
+    """The relay says the heater's cloud side stopped (health code cloud_idle):
+    HA is fine over Local Connect, Ayla and the app get nothing."""
+    health = data.get("health") or {}
+    if health.get("code") != "cloud_idle":
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    quiet = (health.get("evidence") or {}).get("cloud_quiet_s") or 0
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+        severity=ir.IssueSeverity.WARNING, translation_key="cloud_idle",
+        translation_placeholders={"heater": heater, "minutes": str(round(quiet / 60))})
+
+
 def _frozen_fix(mask: dict) -> str:
     """What to do about frozen data: the relay re-arms it itself, or the app."""
     if mask.get("renew"):
@@ -376,6 +391,19 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_on_unload(coordinator.async_add_listener(_update_frozen_issue))
     _update_frozen_issue()
 
+    def _update_cloud_idle_issue() -> None:
+        if not coordinator.last_update_success:
+            return
+        current: set[str] = set()
+        for dsn, data, name in _each_heater():
+            issue_id = _heater_issue_id("cloud_idle", entry.entry_id, dsn, coordinator.primary)
+            current.add(issue_id)
+            _cloud_idle_issue(hass, data, issue_id, name)
+        _forget(current, "cloud_idle")
+
+    entry.async_on_unload(coordinator.async_add_listener(_update_cloud_idle_issue))
+    _update_cloud_idle_issue()
+
     def _update_dns_issue() -> None:
         if coordinator.last_update_success:
             _dns_issue(hass, entry.entry_id, coordinator.data or {})
@@ -444,7 +472,7 @@ async def async_remove_config_entry_device(hass: HomeAssistant, entry, device) -
     if entry.data.get(CONF_DSN) == dsn:
         data[CONF_DSN] = None
     hass.config_entries.async_update_entry(entry, data=data)
-    for kind in ("stale_telemetry", "telemetry_frozen"):
+    for kind in ("stale_telemetry", "telemetry_frozen", "cloud_idle"):
         ir.async_delete_issue(hass, DOMAIN,
                               _heater_issue_id(kind, entry.entry_id, dsn, coordinator.primary))
     _reload_once_removed(hass, entry.entry_id, device.id)
@@ -513,6 +541,7 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
         ir.async_delete_issue(hass, DOMAIN, f"stale_telemetry_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"upstream_certificate_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"telemetry_frozen_{entry.entry_id}")
+        ir.async_delete_issue(hass, DOMAIN, f"cloud_idle_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"dns_server_failed_{entry.entry_id}")
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:

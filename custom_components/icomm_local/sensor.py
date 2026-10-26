@@ -155,9 +155,15 @@ class RelayHealthSensor(_RelaySensor):
     def extra_state_attributes(self):
         data = self._state
         health = data.get("health") or {}
+        evidence = health.get("evidence") or {}
         return {
             "reasons": health.get("reasons"),
             "remediation": health.get("remediation"),
+            # Cloud side over 24 h (relay 0.7.3+): a stopped cloud side shows
+            # as few dials and a long gap.
+            "cloud_dials_24h": evidence.get("cloud_dials_24h"),
+            "cloud_quiet_s": evidence.get("cloud_quiet_s"),
+            "longest_cloud_gap_24h_s": evidence.get("longest_cloud_gap_24h_s"),
             "unobservable": health.get("unobservable"),
             "last_telemetry_age_s": data.get("last_telemetry_age"),
             "upstream_errors": data.get("upstream_errors"),
