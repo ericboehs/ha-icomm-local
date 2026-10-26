@@ -20,6 +20,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
   A new test checks that every attribute row names an attribute the entity
   has.
+  Vacation days only show in vacation mode, and the last write's status only
+  while a write is pending.
 
 ## [0.7.2] - 2026-10-25
 

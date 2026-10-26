@@ -101,16 +101,26 @@ sections:
       attribute: weight_on_top
       name: Average's weight on top
       icon: mdi:scale-balance
-    - type: attribute
-      entity: water_heater.icomm_water_heater
-      attribute: vacation_days
-      name: Vacation days left
-      icon: mdi:palm-tree
-    - type: attribute
-      entity: water_heater.icomm_water_heater
-      attribute: write_status
-      name: Last write status
-      icon: mdi:check-decagram
+    - type: conditional
+      conditions:
+      - entity: sensor.icomm_water_heater_mode
+        state: vacation
+      row:
+        type: attribute
+        entity: water_heater.icomm_water_heater
+        attribute: vacation_days
+        name: Vacation days left
+        icon: mdi:palm-tree
+    - type: conditional
+      conditions:
+      - entity: sensor.icomm_water_heater_pending_write
+        state_not: none
+      row:
+        type: attribute
+        entity: water_heater.icomm_water_heater
+        attribute: write_status
+        name: Last write status
+        icon: mdi:check-decagram
 - type: grid
   cards:
   - type: heading
@@ -162,7 +172,7 @@ sections:
     - entity: sensor.icomm_water_heater_controller_firmware
       name: Controller firmware
     - entity: sensor.icomm_water_heater_wi_fi_module_firmware
-      name: Wi-Fi module firmware
+      name: Wi-Fi firmware
     - type: attribute
       entity: sensor.icomm_water_heater_wi_fi_module_firmware
       attribute: module_hardware
