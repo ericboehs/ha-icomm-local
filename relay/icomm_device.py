@@ -80,6 +80,13 @@ class DeviceFacts:
         if changed:
             self._save()
 
+    def note_ayla_id(self, device_id: str) -> None:
+        """Ayla's numeric device ID (the config reply's <key>). Not a credential:
+        it is in the path of every cloud request; kept so a restart can route
+        before the next config fetch (#18)."""
+        if device_id.isdigit() and len(device_id) <= 20 and self._set("ayla_id", device_id):
+            self._save()
+
     def note_dsn_id(self, dsn: str) -> None:
         """The DSN is in the config fetch's path, not its body."""
         if SAFE.fullmatch(dsn) and self._set("dsn", dsn):

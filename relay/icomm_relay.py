@@ -297,7 +297,7 @@ class Relay:
                                        queue_env.name)
         # Ayla's ID for this heater (the config reply's <key>): the /devices/<id>/
         # in every cloud request, so the hub can route them under NAT steering.
-        self.device_id: str | None = None
+        self.device_id: str | None = self.device.facts.get("ayla_id")
         # Set by the hub: every heater's DSN, for /state.
         self.heaters_list = lambda: [d for d in [self.heater.dsn] if d]
         self._device_read_asked = False
@@ -462,13 +462,15 @@ class Relay:
         found = DSN_PATH_RE.search(request.path)
         if not found or not request.get(TRUSTED, True):
             return None
-        known = self.device_dsn or self.lan.module_dsn or self.device.facts.get("dsn")
+        known = (self.device_dsn or self.lan.module_dsn or self.heater.dsn
+                 or self.device.facts.get("dsn"))
         return self.offline.answer(request, found.group(1), known, transform)
 
     def _learn_device_id(self, text: str) -> None:
         found = DEVICE_ID_RE.search(text)
         if found:
             self.device_id = found.group(1)
+            self.device.note_ayla_id(self.device_id)
 
     def _note_tls_failure(self, err: Exception) -> None:
         cause = getattr(err, "certificate_error", None) or err
@@ -948,6 +950,19 @@ class Relay:
                         self.lanip_cmd_id)
         return text.encode()
 
+    def _note_config(self, payload: bytes) -> str:
+        """What a config reply says about the heater, LAN mode or not: its
+        firmware, identity and Ayla ID (which the hub routes by)."""
+        text = payload.decode(errors="replace")
+        self.firmware.note_dsn(text)
+        self.device.note_dsn(text)
+        self._learn_device_id(text)
+        return text
+
+    def note_config(self, payload: bytes) -> None:
+        """A transform that only reads: the reply goes on unchanged."""
+        self._note_config(payload)
+
     def _rewrite_dsn(self, payload: bytes) -> bytes | None:
         """Flip Ayla's factory LAN-mode switches in a DSN config reply.
 
@@ -957,10 +972,7 @@ class Relay:
         local writes and telemetry. Only 200s are rewritten; a reply without a
         switch present passes through untouched.
         """
-        text = payload.decode(errors="replace")
-        self.firmware.note_dsn(text)
-        self.device.note_dsn(text)
-        self._learn_device_id(text)
+        text = self._note_config(payload)
         switched = []
         for element in ("lan-enabled", "local-access-enabled"):
             off = f"<{element}>false</{element}>"
@@ -1366,8 +1378,10 @@ class Relay:
             # Our command, our ack: Ayla never issued it, and answered the
             # forwarded ack with a 404 in the live repair. Keep it local.
             return web.Response(status=200, text="")
-        if (self.dsn_lan_rewrite or self.lan.enabled) and "/dsns/" in request.path:
-            return await self.proxy(request, transform=self._rewrite_dsn)
+        if "/dsns/" in request.path:
+            if self.dsn_lan_rewrite or self.lan.enabled:
+                return await self.proxy(request, transform=self._rewrite_dsn)
+            return await self.proxy(request, transform=self.note_config)
         if self.nudges_left and request.method == "GET":
             self.nudges_left -= 1
             # No body, and nothing forwarded: this is the module's cue to

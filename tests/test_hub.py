@@ -39,6 +39,8 @@ class _Up:
         self.status, self._body, self.headers = status, body, {}
 
     async def read(self) -> bytes:
+        import asyncio
+        await asyncio.sleep(0)            # a real network read yields: requests interleave
         return self._body
 
     async def __aenter__(self):
@@ -304,3 +306,146 @@ def test_the_primary_marker_is_best_effort(tmp_path, caplog):
     heater.data_dir = blocker
     heater.mark_primary()
     assert "could not record the primary heater" in caplog.text
+
+
+# -- review findings (#18 phase 2) ----------------------------------------------
+
+async def test_an_address_taken_over_by_another_heater_moves_with_aylas_200(
+        tmp_path, monkeypatch):
+    """B is off; A reboots and DHCP hands it B's old address. A's config fetch
+    looks trusted (B's pin), but must re-pin A and release the address from B."""
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    a, b = hub.primary, hub.secondaries[DSN_B]
+    reply = await _module(hub, B, "GET", f"/dsns/{DSN_A}.xml")       # A, from B's address
+    assert b"<lan-enabled>true</lan-enabled>" in reply.body
+    assert a.lan.module_ip == B and b.lan.module_ip is None
+    assert json.loads(b.lan.key_file.read_text())["module_ip"] is None    # persisted
+    await _module(hub, B, "POST", f"/devices/{ID_A}/properties/superBlockDyn1/datapoints.xml",
+                  _telemetry_body("telemetry_heat_pump.json"))
+    assert a.state["mode"] == "heat_pump" and not b.state.get("mode")
+    # Ayla refusing the fetch moves nothing.
+    hub.client.status[DSN_B] = 401
+    await _module(hub, A, "GET", f"/dsns/{DSN_B}.xml")
+    assert b.lan.module_ip is None and a.lan.module_ip == B
+
+
+async def test_nat_another_heaters_requests_never_reach_the_primary(
+        tmp_path, monkeypatch, blocks_electric):
+    hub = _hub(tmp_path, monkeypatch, MODULE_IP=A, MAX_HEATERS="1")
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_A}.xml")
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_B}.xml")          # refused: full
+    a = hub.primary
+    a._ingest_blocks(blocks_electric)
+    a.health = lambda: {"state": "healthy"}
+    a.queue_write("setpoint", 140)
+    poll = await _module(hub, GATEWAY, "GET", f"/devices/{ID_B}/commands.xml")
+    assert b"setBlockParameter" not in poll.body and "setpoint" in a.pending
+    await _module(hub, GATEWAY, "POST",
+                  f"/devices/{ID_B}/properties/superBlockDyn1/datapoints.xml",
+                  _telemetry_body("telemetry_heat_pump.json"))
+    assert a.state["mode"] == "electric"
+    lan_json = await _module(hub, GATEWAY, "GET", f"/devices/{ID_B}/lan.json")
+    assert a.lan.key.encode() not in lan_json.body
+    # The primary's own requests still work, and a restart still knows its ID.
+    mine = await _module(hub, GATEWAY, "GET", f"/devices/{ID_A}/commands.xml")
+    assert b"setBlockParameter" in mine.body
+    assert _hub(tmp_path, monkeypatch, MODULE_IP=A).primary.device_id == ID_A
+
+
+async def test_no_heater_is_added_from_an_offline_answer(tmp_path, monkeypatch):
+    """Ayla down while a new heater boots behind NAT: the primary's saved config
+    must not adopt it (no 200, no proof)."""
+    hub = _hub(tmp_path, monkeypatch, MODULE_IP=A)
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_A}.xml")
+    hub.client.dead = True
+    signed = {"x-Ayla-client-auth": "SIG"}
+    for _ in range(2):
+        reply = await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_B}.xml", headers=signed)
+        assert reply.status == 503
+    assert not hub.secondaries and hub.primary.offline.served == 0
+
+
+async def test_two_new_heaters_racing_for_the_last_slot(tmp_path, monkeypatch):
+    import asyncio
+    hub = _hub(tmp_path, monkeypatch, MAX_HEATERS="2")
+    await _module(hub, A, "GET", f"/dsns/{DSN_A}.xml")
+    CONFIG["AC000W066666666"] = ("333", "10.0.20.189")
+    try:
+        await asyncio.gather(_module(hub, B, "GET", f"/dsns/{DSN_B}.xml"),
+                             _module(hub, "10.0.20.189", "GET", "/dsns/AC000W066666666.xml"))
+    finally:
+        del CONFIG["AC000W066666666"]
+    assert len(hub.engines()) == 2 and len(hub.refused) == 1
+
+
+async def test_two_heaters_booting_together_on_a_fresh_install(tmp_path, monkeypatch):
+    """The primary adopts whichever Ayla confirms first; the other is added at
+    its next config fetch (pin_module refuses a second DSN for the primary)."""
+    import asyncio
+    hub = _hub(tmp_path, monkeypatch)
+    await asyncio.gather(_module(hub, A, "GET", f"/dsns/{DSN_A}.xml"),
+                         _module(hub, B, "GET", f"/dsns/{DSN_B}.xml"))
+    first = hub.primary.heater.dsn
+    assert first in (DSN_A, DSN_B) and not hub.secondaries
+    other, ip = (DSN_B, B) if first == DSN_A else (DSN_A, A)
+    await _module(hub, ip, "GET", f"/dsns/{other}.xml")
+    assert list(hub.secondaries) == [other]
+
+
+async def test_lan_mode_off_still_routes_by_device_id(tmp_path, monkeypatch):
+    hub = _hub(tmp_path, monkeypatch, LAN_MODE="0")
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_A}.xml")
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_B}.xml")
+    b = hub.secondaries[DSN_B]
+    assert b.lan.module_ip is None and hub.primary.lan.module_ip is None
+    await _module(hub, GATEWAY, "POST",
+                  f"/devices/{ID_B}/properties/superBlockDyn1/datapoints.xml",
+                  _telemetry_body("telemetry_heat_pump.json"))
+    assert b.state["mode"] == "heat_pump" and not hub.primary.state.get("mode")
+    assert not hub._pin_candidate(_from(B, "GET", f"/dsns/{DSN_B}.xml"))
+
+
+async def test_configured_module_ip_and_odd_directories(tmp_path, monkeypatch, caplog):
+    hub = _hub(tmp_path, monkeypatch, MODULE_IP=A)
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_A}.xml")
+    assert not hub._pin_candidate(_from(A, "GET", f"/dsns/{DSN_A}.xml"))   # configured
+    assert not hub._pin_candidate(_from(A, "POST", f"/dsns/{DSN_A}.xml"))
+    lower = tmp_path / "heaters" / DSN_B.lower()
+    lower.mkdir(parents=True)
+    (lower / "lanip.json").write_text("{}")
+    (tmp_path / "heaters" / "notes.txt").write_text("not a heater")
+    assert not _hub(tmp_path, monkeypatch, MODULE_IP=A).secondaries
+    hub.peers._module_ip = lambda: {B, A}
+    hub.peers.note_untrusted(_from("10.0.20.50", "GET", "/x"), ":443", "plain-proxying")
+    assert f"module {A}, {B}" in caplog.text
+
+
+async def test_a_cancel_during_startup_still_cleans_up(tmp_path, monkeypatch):
+    import asyncio
+
+    from aiohttp import web
+    from test_proxy import FakeSite
+    hub = _hub(tmp_path, monkeypatch, STATE_PORT="18126", LISTEN_PORT="18446",
+               LAN_PORT="18890")
+    FakeSite.started = []
+    monkeypatch.setattr(web, "TCPSite", FakeSite)
+    hub.primary.tls_context = lambda: object()
+    gate = asyncio.Event()
+
+    async def slow_start(listen=True):
+        await gate.wait()                                   # stuck mid-startup
+
+    hub.primary.lan.start = slow_start
+    task = asyncio.create_task(hub.run())
+    for _ in range(400):
+        await asyncio.sleep(0)
+        if len(FakeSite.started) == 3:
+            break
+    pending = asyncio.create_task(gate.wait())              # a heater's LAN start in flight
+    hub._tasks.add(pending)
+    task.cancel()
+    import contextlib
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0)
+    assert hub.client.closed and hub.running is False and pending.cancelled()

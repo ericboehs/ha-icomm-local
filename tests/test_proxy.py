@@ -411,9 +411,9 @@ async def test_run_binds_all_listeners_restores_the_queue_and_cleans_up(
     relay.tls_context = lambda: tls
 
     task = asyncio.create_task(relay.run())
-    for _ in range(200):
+    for _ in range(400):
         await asyncio.sleep(0)
-        if relay.client is not None:
+        if len(FakeSite.started) == 3:          # state, module and LAN listeners
             break
     assert relay.client is not None and not task.done()
 

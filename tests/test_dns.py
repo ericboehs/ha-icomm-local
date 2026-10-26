@@ -237,9 +237,9 @@ async def test_the_relay_adds_443_and_runs_dns(tmp_path, monkeypatch, site, erro
     monkeypatch.setattr(web, "TCPSite", site)
     relay.tls_context = lambda: object()
     task = asyncio.create_task(relay.run())
-    for _ in range(200):
+    for _ in range(400):
         await asyncio.sleep(0)
-        if relay.client is not None:
+        if relay.dns.status()["running"]:     # started after the listeners
             break
     ports = {s.port for s in FakeSite.started}
     assert (443 in ports) is (error is None)

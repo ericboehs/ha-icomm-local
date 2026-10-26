@@ -10,6 +10,30 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Added
+- **Several water heaters behind one relay** (#18, phase 2, relay only).
+  - Each heater gets its own engine: write queue, telemetry, LAN session and
+    key, saved config and offline fallback, kept in `/data/heaters/<DSN>/`.
+  - How requests are matched to a heater:
+    - a config fetch by its DSN;
+    - otherwise by the heater's own address (DNS steering);
+    - otherwise by Ayla's device ID (NAT steering, where all heaters arrive
+      from the gateway);
+    - Local Connect callbacks by the caller's address.
+  - A new heater is added only when Ayla answers its config fetch with 200,
+    and only if it came from the heater itself, the gateway or a
+    `trusted_peers` address. The limit is `max_heaters` (default 4); past it,
+    a heater works through Ayla only and never touches the others.
+  - A heater that takes over another's address (DHCP) is re-pinned on Ayla's
+    200, and the address is released from the other heater.
+  - New state API: `GET /heaters`, plus `/heaters/<dsn>/{state,raw}` and
+    `POST /heaters/<dsn>/{write,write/cancel,lan/reporting-mask,nudge}`.
+  - The existing endpoints act on the **primary** heater (the first one,
+    recorded in `heaters/PRIMARY`). With two or more heaters, writes through
+    them are refused with 409 and the list of heaters.
+  - `/state` gains `heaters`.
+  - Single-heater installs see no change.
+
 ## [0.6.0] - 2026-10-25
 
 ### Changed

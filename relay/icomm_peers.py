@@ -163,7 +163,12 @@ class PeerPolicy:
                 "is the water heater, power-cycle it so Ayla can confirm it (DNS "
                 "steering), or set module_ip.", action, method,
                 path, shown, port_label, sorted(self.gateways) or "none detected",
-                self._module_ip() or "unknown", shown)
+                self._modules_shown(), shown)
+
+    def _modules_shown(self) -> str:
+        module = self._module_ip()
+        modules = [module] if isinstance(module, str) else sorted(m for m in module or () if m)
+        return ", ".join(modules) or "unknown"
 
     def middleware(self, allowed, port_label: str, refuse: bool = True):
         """refuse=True: 403 for untrusted peers. False: mark request[TRUSTED]."""

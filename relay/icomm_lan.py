@@ -133,6 +133,7 @@ class LanServer:
 
     def __init__(self, relay, secondary: bool = False) -> None:
         self.relay = relay
+        self.secondary = secondary
         self.enabled = os.environ.get("LAN_MODE", "1") != "0"
         self.port = int(os.environ.get("LAN_PORT", "8888"))
         # MODULE_IP and LANIP_FILE describe the primary heater only (#18): a
@@ -220,7 +221,7 @@ class LanServer:
         """
         if not self.enabled:
             return ""
-        override = os.environ.get("LANIP_KEY", "")
+        override = "" if self.secondary else os.environ.get("LANIP_KEY", "")
         if override:
             return override
         try:
@@ -250,7 +251,7 @@ class LanServer:
 
     def _persist(self) -> None:
         """Rewrite the key file with the learned module address (still 0600)."""
-        if os.environ.get("LANIP_KEY"):
+        if os.environ.get("LANIP_KEY") and not self.secondary:
             return                      # dev override: nothing of ours on disk
         try:
             self.key_file.write_text(json.dumps({
