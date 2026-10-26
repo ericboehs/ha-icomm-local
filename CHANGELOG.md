@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-10-25
+
 **"Air at unit" is removed: it was never the air temperature.** It showed the
 heater's energy capacity (Wh) as °F, and now appears as *Energy capacity*.
 The upgrade removes the old entity; dashboards and automations that used
