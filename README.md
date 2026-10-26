@@ -172,6 +172,21 @@ Check the add-on log first, then the relay's state from the HA host:
 | The A.O. Smith/iCOMM app keeps logging you out | A.O. Smith allows **one login session per account**. Home Assistant's built-in *A. O. Smith* cloud integration on the same account logs the app out, and the app logs it out in turn. Every reload or HA restart is a new login. iCOMM Local uses no account, so it is not the cause | Disable the built-in A. O. Smith integration (iCOMM Local covers its entities locally), or give it a separate account through the app's device sharing |
 | A write shows `not_applied` | the tank accepted the frame but did not apply it | Retry later. A transient window of this was observed once; it cleared on its own |
 
+## More than one water heater
+
+One add-on and one integration entry serve up to `max_heaters` (default 4).
+- **Adding one:** steer it like the first one. With DNS steering that already
+  happens; with NAT it needs its own rules. Power-cycle it. The relay adds it
+  once Ayla confirms its config fetch.
+- **In HA:** each heater is its own device, "iCOMM Water Heater",
+  "iCOMM Water Heater 2" and so on, with its own entities, such as
+  `water_heater.icomm_water_heater_2`.
+- **Services:** `icomm_local.set_setpoint`, `set_mode` and `cancel_writes`
+  take a target (a water heater, its device or an area). With one heater the
+  target is optional; with several it's required.
+- **Upgrading from a single-heater install:** your entities keep their entity
+  IDs and history. Only their internal unique IDs move to the heater's DSN.
+
 ## When Ayla is down
 
 Local control doesn't need Ayla once the heater is running: telemetry, writes
@@ -237,7 +252,7 @@ Add-on options, or environment variables when running the relay directly:
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
-| `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters` and `/heaters/<dsn>/...`. The integration shows the first (primary) heater until multi-heater support lands there |
+| `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters` and `/heaters/<dsn>/...`. Each heater is its own device in HA |
 | `offline_fallback` / `OFFLINE_FALLBACK` | on | if Ayla is unreachable (or answers 5xx) when the heater boots, answer its config fetch from the last real reply, so local control survives a power cut during an outage. See `docs/LAN_MODE.md`, *When Ayla is down* |
 | `reporting_mask_renew` / `REPORTING_MASK_RENEW` | on | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, at most once per that interval |
 | `firmware_updates` / `FIRMWARE_UPDATES` | hold | `hold`: firmware updates wait for you to allow each one (a Home Assistant repair); `allow`: pass them through |
