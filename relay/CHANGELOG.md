@@ -10,6 +10,36 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+**"Air at unit" is removed: it was never the air temperature.** It showed the
+heater's energy capacity (Wh) as °F, and now appears as *Energy capacity*.
+The upgrade removes the old entity; dashboards and automations that used
+`sensor.icomm_water_heater_air_at_unit` need updating. The real ambient
+temperature will return once its field is confirmed.
+
+### Added
+- **New sensors** from a cross-check with
+  [stumpylog/aosmith-ble](https://github.com/stumpylog/aosmith-ble)'s map of
+  the controller's internal blocks (research phase 49):
+  - **Energy:** the heater's lifetime total, which works in HA's Energy
+    dashboard. It's the running total of the nominal power it reports, so it
+    reads above a meter on the circuit.
+  - **Energy capacity:** what "Air at unit" really was. It steps with the
+    setpoint and mode (2412 → 1812 Wh at 150 → 130 °F).
+  - **Operating state:** idle or heating.
+  - **Hot water level:** the heater's own low/medium/high. It's more cautious
+    than the app: "high" only at a zero deficit, and "medium" where the app
+    shows 100 %. *Hot water available %* still matches the app.
+  - **Expansion valve position,** a diagnostic (handbook display P7).
+  - **Fault:** the controller's fault code with the manufacturer's title
+    ("Air filter is dirty", "Compressor error", ...), from the `faultCode`
+    property.
+- **Relay `/state` fields:** `energy_wh`, `energy_capacity_wh`,
+  `operating_state` (and `_raw`), `hot_water_level`, `eev_pulses`, and the
+  device fact `fault_code`.
+
+### Removed
+- **Relay `/state` field `air` and the *Air at unit* sensor** (see above).
+
 ## [0.7.3] - 2026-10-25
 
 **Upgrade both the add-on and the integration.** Updating the add-on restarts

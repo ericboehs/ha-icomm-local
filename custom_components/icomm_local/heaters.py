@@ -160,6 +160,28 @@ def migrate_to_dsn(hass: HomeAssistant, entry, dsn: str) -> int:
     return moved
 
 
+# Keys whose entities were wrong and are gone: "air" (0.7.4) showed the energy
+# capacity in Wh as degrees F (research phase 49). Removed, not repurposed, so
+# its history can't sit under a new meaning or unit.
+RETIRED = ("air",)
+
+
+@callback
+def retire(hass: HomeAssistant, entry) -> list[str]:
+    """Remove this entry's entities for retired keys; returns their entity IDs."""
+    registry = er.async_get(hass)
+    gone = []
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique = entity.unique_id
+        dsn = dsn_of(unique)
+        key = unique[len(PREFIX) + (len(dsn) + 1 if dsn else 0):] if unique.startswith(
+            PREFIX) else None
+        if key in RETIRED:
+            registry.async_remove(entity.entity_id)
+            gone.append(entity.entity_id)
+    return gone
+
+
 @callback
 def rekey(hass: HomeAssistant, entry, old: str, new: str) -> int:
     """A replaced heater (#18): the old DSN's entities and device become the new

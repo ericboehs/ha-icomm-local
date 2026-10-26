@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import timedelta
 
@@ -36,10 +37,13 @@ from .heaters import (
     multi_capable,
     primary_dsn,
     rekey,
+    retire,
     update_device_pages,
     valid_dsn,
 )
 from .services import async_setup_services
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor", "water_heater"]
 
@@ -303,6 +307,9 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     # the move to per-heater keys, so entities come up under their new IDs with
     # their old entity IDs and history.
     _migrate_entity_ids(hass)
+    for entity_id in retire(hass, entry):
+        _LOGGER.warning("removed %s: it was the energy capacity shown as a temperature "
+                        "(see the Energy capacity sensor)", entity_id)
     if coordinator.replaced:
         rekey(hass, entry, *coordinator.replaced)
         coordinator.replaced = None

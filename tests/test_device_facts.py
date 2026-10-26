@@ -148,3 +148,13 @@ def test_a_trailing_newline_is_not_a_safe_value(tmp_path):
     facts.note_dsn_id("AC000W019949045\n")
     facts.note_property("superBlockStatic2", "00ab\n")
     assert "dsn" not in facts.facts and facts.static == {}
+
+
+def test_the_fault_code_is_kept_from_the_cloud_post_and_lan(tmp_path):
+    """faultCode (posted at boot and on change) becomes fact fault_code."""
+    facts = DeviceFacts(tmp_path / "device.json")
+    facts.note_upload("/devices/1/properties/faultCode/datapoints.xml",
+                      b"<datapoint><value>0</value></datapoint>")
+    assert facts.facts["fault_code"] == "0"
+    facts.note_property("faultCode", "80")                 # a LAN update: dirty filter
+    assert DeviceFacts(tmp_path / "device.json").facts["fault_code"] == "80"

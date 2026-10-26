@@ -165,6 +165,27 @@ def availability(deficit_wh: int) -> int:
     return 100 if deficit_wh <= AVAILABILITY_FULL_WH else 50
 
 
+# The heater's own hot-water level, block 4 offset 46 (Block 27 param 23 in
+# stumpylog/aosmith-ble's BLE map, research phase 49): 0/5/10 for low, medium
+# and high. Exposed beside availability() above, not instead of it: it is more
+# pessimistic than the app. "High" only at a zero deficit, "medium" at 270-300
+# Wh where the app's 0/50/100 (fitted to 33 app-labelled captures) says 100 %.
+HOT_WATER_LEVELS = {0: "low", 5: "medium", 10: "high"}
+# Block 4 offset 4 (Block 27 param 2): what the controller is doing.
+OPERATING_STATES = {11: "idle", 12: "heating"}
+
+
+def word(block: bytes, offset: int) -> int:
+    return int.from_bytes(block[offset:offset + 2], "big")
+
+
+def lifetime_energy(block: bytes) -> int | None:
+    """Block 4 offsets 14-19 (Block 27 params 7-9): a 48-bit running total, in
+    Wh, of the power the heater reports. All ones means no value."""
+    value = int.from_bytes(block[14:20], "big")
+    return None if value == 0xFFFFFFFFFFFF else value
+
+
 def fahrenheit(raw: bytes) -> float:
     return int.from_bytes(raw, "big") * TEMP_F + 32
 
@@ -209,7 +230,20 @@ def decode(blocks: list[bytes]) -> dict:
         "water_bottom": round(fahrenheit(b1[4:6]), 1),        # the blend
         "water_mid": round(fahrenheit(b1[2:4]), 1),           # bottom thermistor
         "heat_deficit_wh": int.from_bytes(b4[24:26], "big"),
-        "hot_water_availability": availability(int.from_bytes(b4[24:26], "big")),
+        "hot_water_availability": availability(word(b4, 24)),     # as the app shows it
+        "hot_water_level": HOT_WATER_LEVELS.get(word(b4, 46)),    # the heater's own
+        # Block 27 params 2, 7-9 and 15 (research phase 49). "air" used to be
+        # read from offset 30: it is this capacity, which stepped with the
+        # setpoint (2412 -> 1812 Wh at 150 -> 130 F), not a temperature. The
+        # real ambient thermistor is one of the block 1 candidates, not yet
+        # confirmed, so no "air" until it is.
+        "operating_state": OPERATING_STATES.get(word(b4, 4)),
+        "operating_state_raw": word(b4, 4),
+        "energy_wh": lifetime_energy(b4),
+        "energy_capacity_wh": word(b4, 30),
+        # Expansion valve opening (handbook maintenance display P7), block 1
+        # offset 100: 376-480 with the compressor running. Likely, not proven.
+        "eev_pulses": word(b1, 100),
         "mode_raw": f"{pair[0]}/{pair[1]}",
         "mode": mode_name(pair),
         # Vacation's first byte: the day count the app set (captured as 1 for
@@ -219,7 +253,6 @@ def decode(blocks: list[bytes]) -> dict:
         "heat_flags": b1[61],
         "heating_element": heating_element(b1[61]),
         "volts": b1[99],
-        "air": round(fahrenheit(b4[30:32]), 1),
         "rssi": int.from_bytes(b4[40:42], "big", signed=True),
     }
 

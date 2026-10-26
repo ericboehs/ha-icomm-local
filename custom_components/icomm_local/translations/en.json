@@ -30,6 +30,21 @@
           "lower": "Lower",
           "off": "Off"
         }
+      },
+      "operating_state": {
+        "name": "Operating state",
+        "state": {
+          "idle": "Idle",
+          "heating": "Heating"
+        }
+      },
+      "hot_water_level": {
+        "name": "Hot water level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
       }
     }
   },

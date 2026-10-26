@@ -25,6 +25,10 @@ sections:
       show_state: true
       show_icon: true
     - type: entity
+      entity: sensor.icomm_water_heater_operating_state
+      show_state: true
+      show_icon: true
+    - type: entity
       entity: sensor.icomm_water_heater_mode
       show_state: true
       show_icon: true
@@ -52,6 +56,14 @@ sections:
     name: Element
     icon: mdi:heating-coil
   - type: tile
+    entity: sensor.icomm_water_heater_hot_water_level
+    name: Hot water level (heater)
+    icon: mdi:water-check
+  - type: tile
+    entity: sensor.icomm_water_heater_fault
+    name: Fault
+    icon: mdi:alert-circle-outline
+  - type: tile
     entity: sensor.icomm_water_heater_pending_write
     name: Pending write
     icon: mdi:timer-sand
@@ -77,6 +89,10 @@ sections:
     entity: sensor.icomm_water_heater_heat_deficit
     name: Heat deficit
     icon: mdi:fire-alert
+  - type: tile
+    entity: sensor.icomm_water_heater_energy
+    name: Energy (lifetime)
+    icon: mdi:counter
   - type: heading
     heading: Setpoints
     heading_style: subtitle
@@ -91,9 +107,9 @@ sections:
     entity: sensor.icomm_water_heater_max_setpoint
     name: Maximum
   - type: tile
-    entity: sensor.icomm_water_heater_air_at_unit
-    name: Air at unit
-    icon: mdi:fan
+    entity: sensor.icomm_water_heater_energy_capacity
+    name: Energy capacity
+    icon: mdi:battery-high
   - type: entities
     entities:
     - type: attribute
@@ -183,6 +199,8 @@ sections:
       attribute: dsn
       name: DSN
       icon: mdi:identifier
+    - entity: sensor.icomm_water_heater_expansion_valve_position
+      name: Expansion valve
 - type: grid
   column_span: 4
   cards:
@@ -202,8 +220,6 @@ sections:
       name: Bottom
     - entity: sensor.icomm_water_heater_active_setpoint
       name: Target
-    - entity: sensor.icomm_water_heater_air_at_unit
-      name: Air
     grid_options:
       columns: 12
       rows: 5
