@@ -300,7 +300,8 @@ async def test_a_replaced_heater_takes_over_the_old_ones_entities(hass, aioclien
     entry = await _setup(hass, aioclient_mock, a={**STATE_A, "heaters": [A]})
     device = _device(hass, entry, A)
     replaced = {**STATE_A, "heater": {"dsn": x2}, "heaters": [x2],
-                "device": {"dsn": x2, "serial_number": "999"}, "water_top": 101.0, "water_bottom": 100.0}
+                "device": {"dsn": x2, "serial_number": "999"},
+                "water_top": 101.0, "water_bottom": 100.0}
     _relay(aioclient_mock, a=replaced)                      # at runtime: one reload
     await hass.data["icomm_local"][entry.entry_id].async_refresh()
     await hass.async_block_till_done()
