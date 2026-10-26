@@ -55,18 +55,28 @@ def dsn_of(unique: str | None) -> str | None:
     return found.group(1) if found else None
 
 
+def valid_dsn(value) -> str | None:
+    return value if isinstance(value, str) and DSN_RE.fullmatch(value) else None
+
+
+def heater_name(coordinator, dsn: str | None) -> str:
+    """A heater's number is kept in the config entry, so it doesn't shift when
+    another heater comes or goes."""
+    number = getattr(coordinator, "numbers", {}).get(dsn, 1)
+    return NAME if number == 1 else f"{NAME} {number}"
+
+
 def device_info(coordinator, dsn: str | None) -> dict:
-    order = getattr(coordinator, "order", [])
-    index = order.index(dsn) if dsn in order else 0
     return {"identifiers": {(DOMAIN, dsn) if dsn else LEGACY_DEVICE},
-            "name": NAME if index == 0 else f"{NAME} {index + 1}",
-            "manufacturer": "A. O. Smith"}
+            "name": heater_name(coordinator, dsn), "manufacturer": "A. O. Smith"}
 
 
 def relay_path(coordinator, dsn: str | None, path: str) -> str:
-    """Where a heater's write goes: its own endpoint on a multi-heater relay,
-    the single-heater one on an older relay (which has no other)."""
-    if dsn and multi_capable(coordinator.data):
+    """Where a heater's write goes: its own endpoint when the relay lists that
+    heater, otherwise the single-heater one (an older relay, or one that has
+    lost track of the DSN and only has its one heater)."""
+    data = coordinator.data or {}
+    if dsn and multi_capable(data) and dsn in data["heaters"]:
         return f"/heaters/{dsn}{path}"
     return path
 
@@ -106,6 +116,11 @@ def add_heaters(coordinator, entry, add_entities, build) -> None:
 
     @callback
     def _add() -> None:
+        if None in seen:
+            # Started on an older relay's single-heater keys: when the DSN
+            # turns up the entry reloads and migrates; adding DSN-keyed
+            # entities here first would register duplicates.
+            return
         dsns = list(coordinator.order) or [None]
         new = [dsn for dsn in dsns if dsn not in seen]
         if not new:

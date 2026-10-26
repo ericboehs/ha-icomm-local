@@ -28,10 +28,12 @@ STATE_B = {**STATE, "heater": {"dsn": B, "dir": f"/data/heaters/{B}"}, "heaters"
 WRITE_OK = {"queued": {"kind": "setpoint"}, "pending": 1, "lan_registered": True}
 
 
-def _relay(aioclient_mock, a=STATE_A, b=STATE_B, b_status=200):
+def _relay(aioclient_mock, a=STATE_A, b=STATE_B, b_status=200, more=None):
     aioclient_mock.clear_requests()
     aioclient_mock.get(f"{URL}/state", json=a)
     aioclient_mock.get(f"{URL}/heaters/{B}/state", json=b, status=b_status)
+    for dsn, state in (more or {}).items():
+        aioclient_mock.get(f"{URL}/heaters/{dsn}/state", json=state)
 
 
 async def _setup(hass, aioclient_mock, entry=None, **relay) -> MockConfigEntry:
@@ -219,3 +221,73 @@ async def test_a_half_done_migration_and_a_network_error(hass, aioclient_mock):
     assert registry.async_get("sensor.custom_thing").unique_id == "custom_thing"
     assert hass.states.get("sensor.icomm_water_heater_power").state == "356"
     assert hass.states.get("water_heater.icomm_water_heater_2").state == "unavailable"
+
+
+# -- review findings (#18 phase 3) ----------------------------------------------
+
+async def test_the_relay_forgetting_the_dsn_creates_no_duplicates(hass, aioclient_mock):
+    """Migrated, then the relay's data is reset: it names no DSN for a while."""
+    entry = await _setup(hass, aioclient_mock, a={**STATE_A, "heaters": [A]})
+    before = set(hass.states.async_entity_ids())
+    await hass.config_entries.async_reload(entry.entry_id)               # a restart, say
+    _relay(aioclient_mock, a={**STATE, "heaters": []})                   # 0.7 relay, no DSN
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert set(hass.states.async_entity_ids()) == before
+    assert not [e for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+                if e.unique_id.startswith("icomm_local_") and A not in e.unique_id]
+    aioclient_mock.post(f"{URL}/write", json=WRITE_OK)                   # not /heaters/A/write
+    await hass.services.async_call("water_heater", "set_temperature",
+                                   {"entity_id": "water_heater.icomm_water_heater",
+                                    "temperature": 139}, blocking=True)
+    assert entry.data["dsn"] == A
+
+
+async def test_the_dsn_arriving_reloads_once(hass, aioclient_mock, monkeypatch):
+    from homeassistant import config_entries
+    monkeypatch.delattr(config_entries.ConfigEntries, "async_schedule_reload")   # HA 2024.1
+    reloads = []
+    real_reload = config_entries.ConfigEntries.async_reload
+
+    async def counting_reload(self, entry_id):
+        reloads.append(entry_id)
+        return await real_reload(self, entry_id)
+
+    monkeypatch.setattr(config_entries.ConfigEntries, "async_reload", counting_reload)
+    entry = await _setup(hass, aioclient_mock, a=STATE)
+    coordinator = hass.data["icomm_local"][entry.entry_id]
+    _relay(aioclient_mock, a={**STATE_A, "heaters": [A]})
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()                                    # before it lands
+    await hass.async_block_till_done()
+    assert len(reloads) == 1
+    assert er.async_get(hass).async_get("sensor.icomm_water_heater_power").unique_id == (
+        f"icomm_local_{A}_watts")
+
+
+async def test_heater_numbers_stay_put(hass, aioclient_mock):
+    c, d = "AC000W066666666", "AC000W055555555"
+    state_c = {**STATE_B, "heater": {"dsn": c}, "device": {"dsn": c}}
+    state_d = {**STATE_B, "heater": {"dsn": d}, "device": {"dsn": d}}
+    entry = await _setup(hass, aioclient_mock, a={**STATE_A, "heaters": [A, B, c]},
+                         more={c: state_c})
+    assert entry.data["heater_numbers"] == {A: 1, B: 2, c: 3}
+    _relay(aioclient_mock, a={**STATE_A, "heaters": [A, c]}, more={c: state_c})   # B leaves
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _device(hass, entry, c).name == "iCOMM Water Heater 3"                  # not "2"
+    _relay(aioclient_mock, a={**STATE_A, "heaters": [A, c, d]}, more={c: state_c, d: state_d})
+    await hass.data["icomm_local"][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert entry.data["heater_numbers"][d] == 4          # B keeps 2 in case it comes back
+    assert _device(hass, entry, d).name == "iCOMM Water Heater 4"
+
+
+async def test_odd_dsns_from_the_relay_are_ignored(hass, aioclient_mock):
+    await _setup(hass, aioclient_mock,
+                 a={**STATE_A, "heaters": [A, "ac000w0777777", "../x", 42, B]})
+    heaters = [e for e in hass.states.async_entity_ids("water_heater")]
+    assert sorted(heaters) == ["water_heater.icomm_water_heater",
+                               "water_heater.icomm_water_heater_2"]
+    calls = [str(url) for method, url, *_ in aioclient_mock.mock_calls if method == "GET"]
+    assert not [c for c in calls if "x/state" in c or "ac000w" in c]

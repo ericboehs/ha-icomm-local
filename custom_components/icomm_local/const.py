@@ -28,6 +28,11 @@ def is_stale(data: dict | None) -> bool:
     data = data or {}
     return has_telemetry(data) and not data.get("fresh")
 
+# Kept in the config entry (#18): the primary heater's DSN once known, and the
+# number each heater's device is named with ("iCOMM Water Heater 2").
+CONF_DSN = "dsn"
+CONF_NUMBERS = "heater_numbers"
+
 # Options: a power sensor on the heater's own circuit, for the frozen-data check.
 CONF_POWER_ENTITY = "power_entity"
 FROZEN_POWER_W = 150          # above this the heater is running (heat pump ~260 W)
