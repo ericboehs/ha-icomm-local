@@ -10,6 +10,31 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Changed
+- **"Heat deficit" is now "Energy to setpoint".**
+  - **The entity ID stays `…_heat_deficit`,** on fresh installs too, so
+    dashboards and automations keep working.
+  - **What it is:** the controller's estimate of the **electric** energy still
+    needed to reach the setpoint in the current mode. It counts down at the
+    heater's nominal power (356 W → 6 Wh/min, 4500 W → 75 Wh/min), so it isn't
+    heat in the water. Heating 50 gal by 19 °F takes ~2.3 kWh of heat; the
+    sensor read 420 Wh.
+- **Energy capacity has a simple shape:** 30 Wh per °F of setpoint above
+  ~70 °F in heat pump mode (1812 Wh at 130 °F, 2412 at 150), and about 3×
+  that in electric mode.
+- **Hot water level's docs no longer say it's "more cautious than the app".**
+  Against the 33 app-labelled captures it doesn't track availability at all:
+  - high in electric with 2,850–5,100 Wh to go;
+  - medium at 120–300 Wh in heat pump;
+  - both low and high for one 906 Wh state.
+
+  *Hot water available %* matches the app in heat pump mode too (18 of those
+  captures), so it stays as is.
+
+### Added
+- **Time to recover:** minutes of heating left, energy to setpoint ÷ power.
+  It's 0 once satisfied, and unknown between cycles, when there's no rate.
+
 ## [0.7.4] - 2026-10-25
 
 **"Air at unit" is removed: it was never the air temperature.** It showed the

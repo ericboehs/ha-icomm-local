@@ -167,9 +167,12 @@ def availability(deficit_wh: int) -> int:
 
 # The heater's own hot-water level, block 4 offset 46 (Block 27 param 23 in
 # stumpylog/aosmith-ble's BLE map, research phase 49): 0/5/10 for low, medium
-# and high. Exposed beside availability() above, not instead of it: it is more
-# pessimistic than the app. "High" only at a zero deficit, "medium" at 270-300
-# Wh where the app's 0/50/100 (fitted to 33 app-labelled captures) says 100 %.
+# and high per that report. Exposed beside availability() above, not instead of
+# it, and not as availability: against the 33 app-labelled captures it reads
+# "high" in electric with 2850-5100 Wh still to go (app: 50/0 %), "medium" at
+# 120-300 Wh in heat pump (app: 100 %), and both "low" and "high" for the same
+# 906 Wh state. availability() matches the app in heat pump mode too (18 of the
+# 33 captures). Its meaning is open (research phase 49b).
 HOT_WATER_LEVELS = {0: "low", 5: "medium", 10: "high"}
 # Block 4 offset 4 (Block 27 param 2): what the controller is doing.
 OPERATING_STATES = {11: "idle", 12: "heating"}

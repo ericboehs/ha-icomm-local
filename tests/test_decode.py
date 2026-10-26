@@ -113,12 +113,30 @@ def test_lifetime_energy_rises_and_has_a_no_value(blocks_heat_pump: list[bytes])
     assert lifetime_energy(bytes(block)) is None
 
 
-def test_the_heaters_level_and_the_apps_percentage(blocks_hybrid: list[bytes]) -> None:
-    """The heater's level is more pessimistic than the app: medium at a 270 Wh
-    deficit, where the app (and hot_water_availability) says 100 %."""
+def test_the_heaters_level_is_not_the_apps_percentage(blocks_hybrid: list[bytes]) -> None:
+    """hot_water_availability stays the app's figure; the level is separate."""
     decoded = decode(blocks_hybrid)
     assert decoded["heat_deficit_wh"] == 270
     assert (decoded["hot_water_level"], decoded["hot_water_availability"]) == ("medium", 100)
+
+
+def test_the_level_disagrees_with_the_app_in_every_mode() -> None:
+    """Why the level isn't used for availability (phase 49b): in the 33
+    app-labelled captures it reads high while the app says 50/0 (electric),
+    medium while the app says 100 (heat pump), and both low and high at 906 Wh."""
+    import json
+    from pathlib import Path
+
+    from icomm_relay import word
+    data = json.loads((Path(__file__).parent / "fixtures/availability_labelled.json").read_text())
+    seen = {}
+    for sample in data["samples"]:
+        b4 = bytes.fromhex(sample["blocks"][4])
+        mode = decode([bytes.fromhex(b) for b in sample["blocks"]])["mode"]
+        seen.setdefault((mode, sample["cloud"]), set()).add(word(b4, 46))
+    assert 10 in seen[("electric", 50)] and 10 in seen[("electric", 0)]
+    assert 5 in seen[("heat_pump", 100)]
+    assert {0, 10} <= seen[("heat_pump", 50)]
 
 
 def test_an_unknown_state_or_level_is_none(blocks_heat_pump: list[bytes]) -> None:

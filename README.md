@@ -21,12 +21,17 @@ cloud keep working.
 - Sensors:
   - **Tank:** water temperature at the top and bottom, plus the controller's
     blended tank average.
-  - **Hot water:** **hot water available %** (the same 0/50/100 figure the
-    A.O. Smith app shows, computed locally), and the heater's own **hot water
-    level** (low/medium/high, which is more cautious than the app).
-  - **Energy:** heat deficit and energy capacity (Wh), and **lifetime
-    energy**, which works in HA's Energy dashboard. It counts the heater's
-    nominal power, so it reads above a meter.
+  - **Hot water:** **hot water available %**, the same 0/50/100 figure the
+    A.O. Smith app shows, computed locally in every mode. Also the heater's
+    own **hot water level** (low/medium/high), whose meaning is still open:
+    it doesn't track the app.
+  - **Energy:**
+    - **energy to setpoint:** the controller's estimate of the electric
+      energy still needed, in Wh;
+    - **time to recover:** energy to setpoint ÷ power, in minutes;
+    - **energy capacity**, in Wh;
+    - **lifetime energy,** which works in HA's Energy dashboard. It counts the
+      heater's nominal power, so it reads above a meter.
   - **Setpoints and mode:** setpoint, active setpoint (what the tank is heating
     to: 50 °F in vacation), max setpoint, mode, and **operating state** (idle
     or heating).
