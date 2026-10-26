@@ -78,7 +78,9 @@ handbook and Use & Care guide, with what each page confirmed:
     If you already run AdGuard or Pi-hole, add one rewrite there instead. See
     [docs/DNS_STEERING.md](docs/DNS_STEERING.md).
 - The Home Assistant host and the water heater on the **same subnet/VLAN**
-  (Local Connect calls back to the relay directly).
+  (Local Connect calls back to the relay directly). Across VLANs it works
+  with one forwarding rule on the gateway; see
+  [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md).
 - Access to the water heater's breaker for one power cycle during setup.
 
 ## Install
@@ -88,7 +90,9 @@ handbook and Use & Care guide, with what each page confirmed:
 1. Find the water heater's IP address in your router's client list (an
    Ayla/"Espressif"/unnamed device, or match the MAC shown in the iCOMM app's
    device info).
-2. **Reserve that IP** (a DHCP reservation/fixed IP). The NAT rules match on it.
+2. **Reserve that IP** (a DHCP reservation/fixed IP). The NAT rules match on
+   it. With DNS steering it's optional but recommended: a fixed address is
+   easier to firewall and to recognise in the logs.
 3. Note your Home Assistant host's IP and your gateway's LAN IP.
 
 ### 1. The add-on (relay)
@@ -110,15 +114,20 @@ survives reboots, plus the raw iptables version.
 
 ### 3. Arm Local Connect: power-cycle the water heater once
 
-Turn the water heater's breaker off for ~10 seconds, then back on. The tank keeps
-its heat and its thermostat. On boot, the module re-registers through the relay,
-takes the relay's LAN key, and starts polling it locally. Within a minute or
-two the add-on log shows:
+Turn the water heater's breaker off for about 30 seconds, then back on. The
+tank keeps its heat and its thermostat. On boot, the module re-registers through
+the relay, takes the relay's LAN key, and starts polling it locally. Within a
+minute or two the add-on log shows:
 
 ```
+DSN rewrite: flipped lan-enabled, local-access-enabled in config reply
 LAN mode: module fetched lan.json; answered with our key
 LAN mode: registered with the module
 ```
+
+With DNS steering, `DNS: steering …` and `LAN mode: module <DSN> is at …
+(its own address: steered by DNS, not NAT)` come first. The full sequence is
+in [docs/DNS_STEERING.md](docs/DNS_STEERING.md#built-in-dns_server).
 
 ### 4. The integration
 
@@ -157,7 +166,8 @@ view, showing every entity the integration creates:
   - the thermostat with mode buttons;
   - hot water available, power, the element and any pending write.
 - **Tank:**
-  - top, average and bottom temperatures, and the heat deficit;
+  - top, average and bottom temperatures, the energy to setpoint and the
+    time to recover;
   - the setpoint, active target and maximum, and the energy capacity;
   - how much the average weighs the top sensor, vacation days left, and the
     last write's status.
@@ -170,7 +180,7 @@ view, showing every entity the integration creates:
 - **Last 24 hours:**
   - tank temperatures against the active target (vacation shows
     as a drop to 50 °F);
-  - power, the heat deficit and hot water available;
+  - power, the energy to setpoint and hot water available;
   - a timeline of mode and heating element.
 
 To add it:
