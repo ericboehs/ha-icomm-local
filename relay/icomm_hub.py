@@ -152,7 +152,12 @@ class Hub:
         return self.primary, "default"
 
     def _pinnable(self, peer: str) -> bool:
-        """A heater's own address: private IPv4, not loopback, not a gateway."""
+        """A heater's own address: private IPv4, not loopback, not a gateway,
+        and not one the owner listed in trusted_peers (that's a router or proxy
+        in front of heaters, already trusted; pinning it would make every
+        heater behind it fight over one address)."""
+        if self.peers.allow_all or peer in self.peers.extra:
+            return False
         try:
             address = ipaddress.ip_address(peer)
         except ValueError:
@@ -237,8 +242,8 @@ class Hub:
                     self.refused.add(dsn)    # another heater won the race for the last slot
                     return None
                 engine = self._add(dsn)
-            if pin:
-                engine.lan.pin_module(peer, dsn)
+            if pin and engine.lan.pin_module(peer, dsn):
+                self._release(peer, keep=engine)     # a heater's old address, reused
             if engine.lan.enabled or engine.dsn_lan_rewrite:
                 return engine._rewrite_dsn(payload)
             engine.note_config(payload)          # LAN mode off: identity only
@@ -400,8 +405,10 @@ class Hub:
             _LOGGER.info("stopping on signal")
         finally:
             self.running = False
-            for task in list(self._tasks):
+            tasks = list(self._tasks)
+            for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             for sig in handled:
                 loop.remove_signal_handler(sig)
             for engine in self.engines():

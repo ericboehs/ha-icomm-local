@@ -449,3 +449,41 @@ async def test_a_cancel_during_startup_still_cleans_up(tmp_path, monkeypatch):
         await task
     await asyncio.sleep(0)
     assert hub.client.closed and hub.running is False and pending.cancelled()
+
+
+async def test_a_new_heater_on_a_known_heaters_old_address(tmp_path, monkeypatch):
+    """Review pass 2: C appears at B's old address; C's pin must release it."""
+    hub = await _two_heaters(tmp_path, monkeypatch)
+    CONFIG["AC000W066666666"] = ("333", B)
+    try:
+        await _module(hub, B, "GET", "/dsns/AC000W066666666.xml")
+    finally:
+        del CONFIG["AC000W066666666"]
+    c, b = hub.secondaries["AC000W066666666"], hub.secondaries[DSN_B]
+    assert c.lan.module_ip == B and b.lan.module_ip is None
+    await _module(hub, B, "POST", "/devices/333/properties/superBlockDyn1/datapoints.xml",
+                  _telemetry_body("telemetry_heat_pump.json"))
+    assert c.state["mode"] == "heat_pump" and not b.state.get("mode")
+
+
+async def test_a_listed_router_is_never_pinned_as_a_heater(tmp_path, monkeypatch):
+    """Review pass 2: a NAT router in trusted_peers fronting two heaters."""
+    router = "10.0.30.1"
+    hub = _hub(tmp_path, monkeypatch, TRUSTED_PEERS=router)
+    await _module(hub, router, "GET", f"/dsns/{DSN_A}.xml")
+    await _module(hub, router, "GET", f"/dsns/{DSN_B}.xml")
+    a, b = hub.primary, hub.secondaries[DSN_B]
+    assert router not in (a.lan.module_ip, b.lan.module_ip)
+    await _module(hub, router, "GET", f"/dsns/{DSN_A}.xml")        # again: still no pin
+    assert a.lan.module_ip != router and b.lan.module_ip != router
+    await _module(hub, router, "POST",
+                  f"/devices/{ID_B}/properties/superBlockDyn1/datapoints.xml",
+                  _telemetry_body("telemetry_heat_pump.json"))
+    assert b.state["mode"] == "heat_pump" and not a.state.get("mode")
+    # ...and during an outage it still gets the saved config (no forced re-pin).
+    hub.client.dead = True
+    signed = {"x-Ayla-client-auth": "SIG"}
+    replies = [await _module(hub, router, "GET", f"/dsns/{DSN_B}.xml", headers=signed)
+               for _ in range(2)]
+    assert [r.status for r in replies] == [401, 200]
+    assert not _hub(tmp_path, monkeypatch, TRUSTED_PEERS="*")._pinnable(B)
