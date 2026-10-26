@@ -10,6 +10,8 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-10-26
+
 ### Changed
 - **"Heat deficit" is now "Energy to setpoint".**
   - **The entity ID stays `…_heat_deficit`,** on fresh installs too, so
