@@ -28,6 +28,23 @@ def is_stale(data: dict | None) -> bool:
     data = data or {}
     return has_telemetry(data) and not data.get("fresh")
 
+# The controller's fault codes and the manufacturer's titles (via
+# stumpylog/aosmith-ble's docs/protocol/faults.md and the service handbook,
+# research phase 49). 25-27 are named per sensor as the handbook does.
+FAULTS = {
+    1: "Dry fire", 2: "High water temperature", 3: "Upper thermistor failure",
+    4: "Lower thermistor failure", 6: "Internal processor error",
+    9: "Power supply voltage error", 21: "Upper element circuit failure",
+    22: "Lower element circuit failure", 25: "Coil temperature sensor error",
+    26: "Suction temperature sensor error", 27: "Discharge temperature sensor error",
+    28: "Ambient temperature sensor failure", 29: "Outlet temperature sensor error",
+    31: "Water leak", 44: "Anode depleted", 46: "Water shut-off valve error",
+    47: "Smart valve failure", 48: "Battery low", 80: "Air filter is dirty",
+    81: "Condensate management error", 83: "Compressor low pressure",
+    84: "Compressor error", 85: "High discharge temperature", 86: "Fan error",
+    101: "Upper thermostat error", 102: "Lower thermostat error",
+}
+
 # Kept in the config entry (#18): the primary heater's DSN once known, and the
 # number each heater's device is named with ("iCOMM Water Heater 2").
 CONF_DSN = "dsn"

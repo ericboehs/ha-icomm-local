@@ -34,8 +34,13 @@ def test_invariants_hold_for_every_capture(fixture: str, request: pytest.Fixture
     assert 32.0 < decoded["setpoint"] <= decoded["max_setpoint"]
     # Wi-Fi RSSI is negative dBm; a positive value means a signedness bug.
     assert -100 < decoded["rssi"] < 0
-    # Air at the unit is a real temperature, not a nil-read zero.
-    assert 32.0 < decoded["air"] < 140.0
+    # Block 27 (research phase 49): a lifetime Wh counter in the millions, a
+    # known operating state, a level the heater names, and no "air" (that
+    # offset is the energy capacity).
+    assert 5_000_000 < decoded["energy_wh"] < 6_000_000
+    assert decoded["operating_state"] in ("idle", "heating")
+    assert decoded["hot_water_level"] in ("low", "medium", "high")
+    assert "air" not in decoded
     # Both tank probes report plausible water.
     assert 32.0 < decoded["water_bottom"] < 200.0
     assert 32.0 < decoded["water_top"] < 200.0
@@ -59,8 +64,7 @@ def test_heat_pump_running(blocks_heat_pump: list[bytes]) -> None:
     assert decoded["water_top"] == 114.0
     # A satisfied tank reads the same at both probes.
     assert decoded["water_top"] == decoded["water_bottom"]
-    # Cold air is the evaporator, not a nil read.
-    assert decoded["air"] < 60.0
+    assert decoded["operating_state"] == "heating" and decoded["eev_pulses"] == 480
 
 
 def test_hybrid(blocks_hybrid: list[bytes]) -> None:
@@ -84,20 +88,46 @@ def test_compressor_draw_is_not_element_draw(blocks_heat_pump: list[bytes],
     assert heat_pump["watts"] != electric["watts"]
 
 
-def test_air_is_a_lagging_thermal_reading_not_a_mode_signal(
-        blocks_heat_pump_cooldown: list[bytes]) -> None:
-    """Air temperature does not identify the mode, and believing it did was a bug.
+def test_what_was_read_as_air_is_the_energy_capacity(
+        blocks_heat_pump_cooldown: list[bytes], blocks_electric: list[bytes],
+        blocks_heat_pump: list[bytes]) -> None:
+    """Block 4 offset 30 is Block 27 param 15, an energy capacity in Wh, not air.
 
-    This payload is the first post after the element stopped: the mode register
-    already reads heat pump and draw is already 0 W, but air still reads 83.2 F
-    from the electric run that just ended (it fell to 49.0 F within 47 s). The
-    authoritative mode is the register -- `mode`/`mode_raw` -- and air is only a
-    thermal indicator of what the unit has been doing.
+    This payload once read as "air still 83.2 F" after the element stopped,
+    "falling to 49.0 F within 47 s". Those are 7275 and 2412 raw: the
+    electric-mode capacity, then the heat pump's at 150 F. Live, it stepped
+    2412 -> 1812 in the same report as a 150 -> 130 F setpoint change.
     """
-    decoded = decode(blocks_heat_pump_cooldown)
-    assert decoded["mode"] == "heat_pump"      # register says heat pump
-    assert decoded["watts"] == 0               # nothing is running
-    assert decoded["air"] > 80.0               # yet the air is still 83.2 F
+    cooldown = decode(blocks_heat_pump_cooldown)
+    assert cooldown["mode"] == "heat_pump" and cooldown["watts"] == 0
+    assert cooldown["operating_state"] == "idle"
+    assert cooldown["energy_capacity_wh"] == decode(blocks_electric)["energy_capacity_wh"] == 7275
+    assert decode(blocks_heat_pump)["energy_capacity_wh"] < 7275
+
+
+def test_lifetime_energy_rises_and_has_a_no_value(blocks_heat_pump: list[bytes]) -> None:
+    from icomm_relay import lifetime_energy
+    block = bytearray(blocks_heat_pump[4])
+    assert lifetime_energy(bytes(block)) == decode(blocks_heat_pump)["energy_wh"]
+    block[14:20] = b"\xff" * 6
+    assert lifetime_energy(bytes(block)) is None
+
+
+def test_the_heaters_level_and_the_apps_percentage(blocks_hybrid: list[bytes]) -> None:
+    """The heater's level is more pessimistic than the app: medium at a 270 Wh
+    deficit, where the app (and hot_water_availability) says 100 %."""
+    decoded = decode(blocks_hybrid)
+    assert decoded["heat_deficit_wh"] == 270
+    assert (decoded["hot_water_level"], decoded["hot_water_availability"]) == ("medium", 100)
+
+
+def test_an_unknown_state_or_level_is_none(blocks_heat_pump: list[bytes]) -> None:
+    block = bytearray(blocks_heat_pump[4])
+    block[4:6] = (99).to_bytes(2, "big")
+    block[46:48] = (7).to_bytes(2, "big")
+    decoded = decode([*blocks_heat_pump[:4], bytes(block)])
+    assert decoded["operating_state"] is None and decoded["operating_state_raw"] == 99
+    assert decoded["hot_water_level"] is None
 
 
 def test_fahrenheit_scale() -> None:

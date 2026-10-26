@@ -18,14 +18,22 @@ cloud keep working.
   is the app's vacation mode: turning it on sends vacation (1 day), and the
   operation reads `off` while it is on, as in Home Assistant's own A.O. Smith
   integration. Turning it off restores the mode the tank was in before.
-- Sensors: water temperature (top and bottom of the tank, plus the controller's
-  blended tank average), **hot water
-  available %** (the same 0/50/100 figure the A.O. Smith app shows, computed
-  locally), heat deficit (Wh), setpoint, active setpoint (what the tank is heating to: 50 °F
-  in vacation), max setpoint, mode, **live power draw** (4500 W element, ~350 W compressor, 0 W
-  idle), **which heating element is on** (upper or lower), line voltage, air temperature
-  at the unit, Wi-Fi RSSI, relay health, and
-  the pending write's status.
+- Sensors:
+  - **Tank:** water temperature at the top and bottom, plus the controller's
+    blended tank average.
+  - **Hot water:** **hot water available %** (the same 0/50/100 figure the
+    A.O. Smith app shows, computed locally), and the heater's own **hot water
+    level** (low/medium/high, which is more cautious than the app).
+  - **Energy:** heat deficit and energy capacity (Wh), and **lifetime
+    energy**, which works in HA's Energy dashboard. It counts the heater's
+    nominal power, so it reads above a meter.
+  - **Setpoints and mode:** setpoint, active setpoint (what the tank is heating
+    to: 50 °F in vacation), max setpoint, mode, and **operating state** (idle
+    or heating).
+  - **Power:** **live power draw** (4500 W element, ~350 W compressor, 0 W
+    idle), and **which heating element is on** (upper or lower).
+  - **Status:** the **fault** code with its title, expansion valve position,
+    line voltage, Wi-Fi RSSI, relay health, and the pending write's status.
 - Services: `icomm_local.set_setpoint`, `icomm_local.set_mode` (including
   `vacation` with an optional `days`), `icomm_local.cancel_writes`.
 - Writes go over the LAN and are usually confirmed by the tank's own telemetry
@@ -139,7 +147,7 @@ view, showing every entity the integration creates:
   - hot water available, power, the element and any pending write.
 - **Tank:**
   - top, average and bottom temperatures, and the heat deficit;
-  - the setpoint, active target and maximum, and the air at the unit;
+  - the setpoint, active target and maximum, and the energy capacity;
   - how much the average weighs the top sensor, vacation days left, and the
     last write's status.
 - **Connection:**
@@ -149,7 +157,7 @@ view, showing every entity the integration creates:
 - **Device:** model, serial number, DSN, controller and Wi-Fi module firmware,
   and the module hardware.
 - **Last 24 hours:**
-  - tank temperatures against the active target and the air (vacation shows
+  - tank temperatures against the active target (vacation shows
     as a drop to 50 °F);
   - power, the heat deficit and hot water available;
   - a timeline of mode and heating element.

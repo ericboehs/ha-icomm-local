@@ -33,7 +33,10 @@ _LOGGER = logging.getLogger("icomm_device")
 DSN_FIELDS = {"sw-version": "module_firmware", "manuf-model": "module_hardware",
               "oem-model": "model", "mac": "mac"}
 PROPERTIES = {"active_image_version": "controller_firmware",
-              "inactive_image_version": "controller_firmware_standby"}
+              "inactive_image_version": "controller_firmware_standby",
+              # The controller's current fault code, decimal; "0" is none. Posted
+              # at boot and when it changes. Titles: the integration's FAULTS.
+              "faultCode": "fault_code"}
 STATIC = ("superBlockStatic1", "superBlockStatic2", "superBlockStatic3")
 SAFE = re.compile(r"^[\x20-\x7e]{1,80}$")
 HEX_LIST = re.compile(r"^[0-9a-fA-F,]{1,4096}$")

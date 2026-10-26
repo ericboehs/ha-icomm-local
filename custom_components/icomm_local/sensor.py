@@ -19,7 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MODES, has_telemetry, is_stale
+from .const import DOMAIN, FAULTS, MODES, has_telemetry, is_stale
 from .heaters import HeaterEntity, add_heaters, unique_id
 
 F = UnitOfTemperature.FAHRENHEIT
@@ -42,7 +42,10 @@ SPECS = [
     ("watts", "Power", UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("volts", "Line voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE,
      SensorStateClass.MEASUREMENT),
-    ("air", "Air at unit", F, SensorDeviceClass.TEMPERATURE, None),
+    # Block 27 param 15 (research phase 49): what was shown as "Air at unit"
+    # until 0.7.4. The relay reads it in Wh; it steps with the setpoint and mode.
+    ("energy_capacity_wh", "Energy capacity", UnitOfEnergy.WATT_HOUR,
+     SensorDeviceClass.ENERGY_STORAGE, SensorStateClass.MEASUREMENT),
     ("rssi", "Wi-Fi RSSI", SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
      SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT),
 ]
@@ -58,6 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
         ]
         return entities + [
             TankAverageSensor(coordinator, dsn), ModeSensor(coordinator, dsn),
+            EnergySensor(coordinator, dsn), EnumSensor(coordinator, "operating_state",
+                                                       ("idle", "heating"), dsn),
+            EnumSensor(coordinator, "hot_water_level", ("low", "medium", "high"), dsn),
+            ValveSensor(coordinator, dsn), FaultSensor(coordinator, dsn),
             HeatingElementSensor(coordinator, dsn), RelayHealthSensor(coordinator, dsn),
             PendingWriteSensor(coordinator, dsn), LastAppWriteSensor(coordinator, dsn),
             FirmwareSensor(coordinator, "controller_firmware", "Controller firmware",
@@ -282,6 +289,81 @@ class HeatingElementSensor(IcommSensor):
     def extra_state_attributes(self):
         flags = self._state.get("heat_flags")
         return {"flags": f"0x{flags:02x}" if isinstance(flags, int) else None}
+
+
+class EnergySensor(IcommSensor):
+    """The heater's lifetime energy (Block 27 params 7-9, research phase 49): a
+    running Wh total of the power it reports, so it can go in HA's Energy
+    dashboard. It counts the nominal 356 W / 4500 W, not a measurement, so it
+    reads above a meter on the circuit."""
+
+    _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, "energy_wh", "Energy", UnitOfEnergy.WATT_HOUR,
+                         SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, dsn=dsn)
+
+
+class EnumSensor(IcommSensor):
+    """A translated enum; a value outside the options reads unknown rather than
+    taking the entity down (see ModeSensor)."""
+
+    def __init__(self, coordinator, field: str, options: tuple[str, ...],
+                 dsn: str | None = None) -> None:
+        super().__init__(coordinator, field, None, device_class=SensorDeviceClass.ENUM,
+                         dsn=dsn)
+        del self._attr_name
+        self._attr_translation_key = field
+        self._attr_options = list(options)
+
+    @property
+    def native_value(self):
+        value = super().native_value
+        return value if value in self._attr_options else None
+
+    @property
+    def extra_state_attributes(self):
+        raw = self._state.get(f"{self._field}_raw")
+        return {**super().extra_state_attributes, **({"raw": raw} if raw is not None else {})}
+
+
+class ValveSensor(IcommSensor):
+    """Expansion valve opening (handbook maintenance display P7): likely, not
+    proven, so diagnostic."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:valve"
+
+    def __init__(self, coordinator, dsn: str | None = None) -> None:
+        super().__init__(coordinator, "eev_pulses", "Expansion valve position", "steps",
+                         None, SensorStateClass.MEASUREMENT, dsn=dsn)
+
+
+class FaultSensor(_RelaySensor):
+    """The controller's fault code (the faultCode property, posted at boot and
+    on change), with the manufacturer's title."""
+
+    _key = "fault"
+    _attr_name = "Fault"
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def _code(self) -> int | None:
+        try:
+            return int((self._state.get("device") or {}).get("fault_code"))
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def native_value(self):
+        code = self._code()
+        if code is None:
+            return None
+        return "No fault" if code == 0 else FAULTS.get(code, f"Fault {code}")
+
+    @property
+    def extra_state_attributes(self):
+        return {"code": self._code()}
 
 
 class ModeSensor(IcommSensor):
