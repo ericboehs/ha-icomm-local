@@ -4,6 +4,8 @@ Local Home Assistant control of an A.O. Smith iCOMM heat-pump water heater: live
 telemetry and setpoint/mode writes over your LAN, while the A.O. Smith app and
 cloud keep working.
 
+<img width="875" height="688" alt="image" src="https://github.com/user-attachments/assets/c74289d4-25b1-4823-bea8-66a4780efdde" />
+
 > **Status: early, single-model.** Verified on one **A.O. Smith HPS10-50H45DV**
 > (iCOMM Wi-Fi module, Ayla firmware). Other iCOMM models (A.O. Smith, State,
 > American, Lowe's Signature 900) probably use the same cloud. Their register
