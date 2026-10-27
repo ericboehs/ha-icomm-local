@@ -216,11 +216,18 @@ def heating_element(flags: int) -> str | None:
 
 
 DSN_PATH_RE = re.compile(r"/dsns/([A-Za-z0-9]{6,32})\.xml$")
+# decode()'s furthest reads: block 1 [100:102], block 3 [31], block 4 [46:48].
+# Real blocks are 146/52/52 bytes. Block 2 is optional (the fault table).
+MIN_B1, MIN_B3, MIN_B4 = 102, 32, 48
 
 
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
     b1, b2, b3, b4 = blocks[1], blocks[2], blocks[3], blocks[4]
+    # Slicing a short block reads zeros, not an error: an empty block 4 would
+    # decode as 0 W and 100 % hot water. The furthest offsets read below.
+    if len(b1) < MIN_B1 or len(b3) < MIN_B3 or len(b4) < MIN_B4:
+        raise IndexError("telemetry block too short")
     has_faults = len(b2) >= 56
     pair = (b3[30], b3[31])
     return {
@@ -287,7 +294,9 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
         blob = text[start:end].strip()
         if "," not in blob:
             return None
-        return [bytes.fromhex(part) for part in blob.split(",") if part]
+        # Empty parts are kept, as on the LAN path: dropping one would shift
+        # every later block into the wrong place.
+        return [bytes.fromhex(part) for part in blob.split(",")]
     except (ValueError, IndexError):
         return None
 

@@ -33,3 +33,42 @@ def test_a_disk_error_saving_evidence_still_returns_the_rewrite(relay, monkeypat
     out = relay._rewrite_dsn(DSN_XML)
     assert out is not None and b"<lan-enabled>true</lan-enabled>" in out
     assert "evidence not saved (OSError)" in caplog.text
+
+
+# -- #4: block positions and short blocks -------------------------------------
+def _post(blocks):
+    return (b"<datapoint><value>" + ",".join(b.hex() for b in blocks).encode()
+            + b"</value></datapoint>")
+
+
+def test_an_empty_block_keeps_its_place(blocks_electric):
+    from icomm_relay import telemetry_blocks
+    blocks = list(blocks_electric)
+    blocks[2] = b""
+    parsed = telemetry_blocks(_post(blocks))
+    assert len(parsed) == len(blocks) and parsed[2] == b"" and parsed[4] == blocks[4]
+
+
+@pytest.mark.parametrize("index", [1, 3, 4])
+def test_a_short_block_is_a_decode_error_not_zeros(relay, blocks_electric, index):
+    from icomm_relay import decode
+    blocks = list(blocks_electric)
+    blocks[index] = b""
+    with pytest.raises(IndexError):
+        decode(blocks)
+    relay._ingest_blocks(blocks)
+    assert relay.decode_errors == 1
+    assert "hot_water_availability" not in relay.state     # no invented 100 %
+
+
+def test_an_empty_block_4_over_the_cloud_is_counted(relay, blocks_electric):
+    from icomm_relay import telemetry_blocks
+    blocks = list(blocks_electric)
+    blocks[4] = b""
+    relay._ingest_blocks(telemetry_blocks(_post(blocks)))
+    assert relay.decode_errors == 1 and relay.state.get("watts") is None
+
+
+def test_full_blocks_still_decode(relay, blocks_electric):
+    relay._ingest_blocks(list(blocks_electric))
+    assert relay.decode_errors == 0 and relay.state["watts"] == 4500
