@@ -157,8 +157,11 @@ def test_a_local_non_loopback_address_counts_as_this_host(monkeypatch):
         def __exit__(self, *exc):
             return False
 
-        def bind(self, addr):
-            return None
+        def connect(self, addr):
+            self.peer = addr[0]
+
+        def getsockname(self):
+            return (self.peer, 50000)              # routed to itself: ours
 
     monkeypatch.setattr("icomm_dns.socket.socket", Bindable)
     assert is_this_host("10.0.1.5")

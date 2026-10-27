@@ -123,13 +123,16 @@ def is_this_host(host: str) -> bool:
         return False                    # a name: not resolved here (it would block)
     if address.is_loopback or address.is_unspecified:
         return True
+    # Route to it and see which source address the kernel picks: for one of
+    # our own addresses that's the address itself. A UDP connect sends nothing.
     family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
     with socket.socket(family, socket.SOCK_DGRAM) as probe:
         try:
-            probe.bind((host, 0))
+            probe.connect((host, 9))
+            source = probe.getsockname()[0]
         except OSError:
             return False
-    return True
+    return ipaddress.ip_address(source.split("%")[0]) == address
 
 
 def local_address_for(peer: str) -> str | None:
