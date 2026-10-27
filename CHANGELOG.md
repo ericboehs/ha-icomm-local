@@ -10,7 +10,29 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
-### Fixed (relay, from a code review)
+### Fixed (integration, from a code review)
+- **Options dialog on HA before 2024.11:** it crashed, because older HA
+  doesn't give the flow its entry. It now looks the entry up itself.
+- **Odd relay data can't take the integration down.**
+  - **Before:** one unexpected value in the relay's `/state` (a string where
+    a number belongs, a list where an object belongs) could stop every later
+    listener and leave entities frozen.
+  - **Now:**
+    - values are type-checked;
+    - numeric sensors show unknown rather than raise;
+    - each repair check is isolated;
+    - a reply that isn't a JSON object is a normal update failure.
+- **No write to the wrong heater:** a write for a heater the relay no longer
+  lists is refused. It used to go to the primary heater.
+- **The same relay can't be added twice:** its URL is the entry's unique ID.
+- **Tank temperatures keep long-term statistics:** top, bottom and average
+  now have a measurement state class.
+- **Setting the operation to "off" is refused** with a message to use away
+  mode. On older HA it used to reach the relay.
+- **Mode and Heating element show their icons on HA 2024.1** (icon
+  translations arrived in 2024.2).
+- **Connections:** responses are always released, including on errors.
+
 - **A damaged LAN key file no longer strands the heater.**
   - **Before:** a corrupt or wrong-shaped `lanip.json` made the relay mint a
     new key over it, so the module was left holding the old one.

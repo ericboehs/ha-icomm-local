@@ -18,10 +18,18 @@ from homeassistant.components.water_heater import (
 )
 from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN, VACATION_DEFAULT_DAYS, has_telemetry, is_stale
+from .const import (
+    DOMAIN,
+    VACATION_DEFAULT_DAYS,
+    as_dict,
+    as_number,
+    has_telemetry,
+    is_stale,
+)
 from .heaters import HeaterEntity, add_heaters, relay_path, unique_id
 from .services import _post
 
@@ -77,7 +85,7 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
 
     def _remember_mode(self) -> None:
         mode = self._data.get("mode")
-        if mode in TO_HA:
+        if isinstance(mode, str) and mode in TO_HA:
             self._mode_before_vacation = mode
 
     @property
@@ -90,7 +98,7 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
         await self.coordinator.async_request_refresh()
 
     def _pending(self, kind: str):
-        return ((self._data.get("pending") or {}).get(kind) or {}).get("value")
+        return as_dict(as_dict(self._data.get("pending")).get(kind)).get("value")
 
     @property
     def available(self) -> bool:
@@ -104,22 +112,24 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
         # shown as "Water, tank average"): what it heats against, so the card
         # agrees with when it runs. The top thermistor is there as a sensor.
         data = self._data
-        blend = data.get("water_bottom")
-        return blend if isinstance(blend, (int, float)) else data.get("water_top")
+        blend = as_number(data.get("water_bottom"))
+        return blend if blend is not None else as_number(data.get("water_top"))
 
     @property
     def target_temperature(self):
-        pending = self._pending("setpoint")
+        pending = as_number(self._pending("setpoint"))
         if pending is not None:
             return pending
         # In vacation the tank holds a lower target (50 F) while keeping the
         # setpoint to return to; show what it is really doing, as the app does.
-        if self._data.get("mode") == "vacation" and self._data.get("active_setpoint"):
-            return self._data["active_setpoint"]
-        return self._data.get("setpoint")
+        active = as_number(self._data.get("active_setpoint"))
+        if self._data.get("mode") == "vacation" and active:
+            return active
+        return as_number(self._data.get("setpoint"))
 
-    def _effective_mode(self):
-        return self._pending("mode") or self._data.get("mode")
+    def _effective_mode(self) -> str | None:
+        mode = self._pending("mode") or self._data.get("mode")
+        return mode if isinstance(mode, str) else None
 
     @property
     def current_operation(self):
@@ -138,7 +148,7 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
 
     @property
     def max_temp(self) -> float:
-        return float(self._data.get("max_setpoint") or 140.0)
+        return float(as_number(self._data.get("max_setpoint")) or 140.0)
 
     @property
     def extra_state_attributes(self):
@@ -153,12 +163,12 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
             "water_bottom": data.get("water_mid"),
             "power_w": data.get("watts"),
             "pending": data.get("pending") or None,
-            "write_status": {kind: w.get("status") for kind, w in
-                             (data.get("pending") or {}).items()} or None,
+            "write_status": {kind: as_dict(w).get("status") for kind, w in
+                             as_dict(data.get("pending")).items()} or None,
             "vacation_days": data.get("vacation_days"),
             "mode_before_vacation": self._mode_before_vacation,
-            "relay_health": (data.get("health") or {}).get("state"),
-            "lan_registered": (data.get("lan") or {}).get("registered"),
+            "relay_health": as_dict(data.get("health")).get("state"),
+            "lan_registered": as_dict(data.get("lan")).get("registered"),
         }
 
     async def async_set_temperature(self, **kwargs) -> None:
@@ -167,6 +177,11 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
         await self._write({"setpoint": float(temperature)})
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
+        if operation_mode == STATE_OFF:
+            # Shown during vacation but not in operation_list, which older HA
+            # doesn't enforce; the relay has no "off" mode to write.
+            raise ServiceValidationError(
+                "This water heater can't be turned off; turn on away mode for vacation.")
         mode = FROM_HA.get(operation_mode, operation_mode)
         await self._write({"mode": mode})
 

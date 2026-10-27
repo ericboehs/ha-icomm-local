@@ -18,15 +18,18 @@ An older relay (no DSN in `/state`) keeps the old single-heater keys.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, as_dict
 
+_LOGGER = logging.getLogger(__name__)
 LEGACY_DEVICE = (DOMAIN, "water_heater")
 PREFIX = f"{DOMAIN}_"
 DSN_RE = re.compile(r"[A-Z0-9]{6,32}")
@@ -37,7 +40,8 @@ NAME = "iCOMM Water Heater"
 def primary_dsn(data: dict | None) -> str | None:
     """The DSN of the heater `/state` describes (relay 0.6+), if known."""
     data = data or {}
-    dsn = (data.get("heater") or {}).get("dsn") or (data.get("device") or {}).get("dsn")
+    dsn = (as_dict(data.get("heater")).get("dsn")
+           or as_dict(data.get("device")).get("dsn"))
     return dsn if isinstance(dsn, str) and DSN_RE.fullmatch(dsn) else None
 
 
@@ -74,11 +78,18 @@ def device_info(coordinator, dsn: str | None) -> dict:
 def relay_path(coordinator, dsn: str | None, path: str) -> str:
     """Where a heater's write goes: its own endpoint when the relay lists that
     heater, otherwise the single-heater one (an older relay, or one that has
-    lost track of the DSN and only has its one heater)."""
+    lost track of the DSN and only has its one heater).
+
+    A second heater the relay no longer lists is refused: the bare endpoint is
+    the primary heater's, so falling back would write to the wrong tank."""
     data = coordinator.data or {}
     if dsn and multi_capable(data) and dsn in data["heaters"]:
         return f"/heaters/{dsn}{path}"
-    return path
+    if dsn is None or dsn == getattr(coordinator, "primary", None) or not multi_capable(data):
+        return path
+    raise HomeAssistantError(
+        "The relay no longer lists this water heater; nothing was written. "
+        "Check the relay's heaters, or delete this device if the heater is gone.")
 
 
 def heater_state(coordinator, dsn: str | None) -> dict:
@@ -107,6 +118,17 @@ class HeaterEntity(CoordinatorEntity):
     @property
     def device_info(self):
         return device_info(self.coordinator, self._dsn)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # The coordinator calls its listeners in turn with nothing around
+        # them: one entity raising on a malformed field would leave every
+        # later one (other heaters', the device pages) un-updated.
+        try:
+            super()._handle_coordinator_update()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("%s failed to update (%s)", self.entity_id, type(err).__name__)
+            _LOGGER.debug("%s traceback", self.entity_id, exc_info=True)
 
 
 @callback
@@ -206,7 +228,7 @@ def rekey(hass: HomeAssistant, entry, old: str, new: str) -> int:
 def update_device_pages(hass: HomeAssistant, coordinator, entry_id: str) -> None:
     """Show each heater's firmware, model and serial on its HA device page."""
     for dsn in list(coordinator.order) or [None]:
-        device = (heater_state(coordinator, dsn).get("device")) or {}
+        device = as_dict(heater_state(coordinator, dsn).get("device"))
         entry = _device_by_identifier(hass, (DOMAIN, dsn) if dsn else LEGACY_DEVICE, entry_id)
         wanted = {"sw_version": device.get("controller_firmware"),
                   "model": device.get("model_number") or device.get("model"),
