@@ -10,54 +10,9 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
-### CI and tests (from a code review)
-- **Home Assistant 2024.1 is tested.** `hacs.json` promised it, but nothing
-  checked it. A CI job now runs the integration tests on HA 2024.1.5, and it
-  found the options-dialog crash fixed above.
-- **Least-privilege releases:**
-  - the release workflow is split into read-only verify, test and image jobs,
-    and a publish job, the only one that can write;
-  - a tag must be on `main`, and the release reruns the full test matrix and
-    the image build;
-  - checkouts don't keep the token.
-- **Pinned tools:** dev tools are hash-locked, the HA test harness is pinned,
-  and so is the busybox test image.
-- **Stricter gates:**
-  - branch coverage, with a 98.5% minimum;
-  - a PR that bumps the version runs the release checks;
-  - the changelog section for a release needs at least one entry;
-  - missing openssl fails CI instead of skipping the TLS tests.
-- **Tests:**
-  - relay modules are imported one way only, so there's one copy of each;
-  - environment variables are isolated per test;
-  - DNS tests listen on loopback;
-  - the freeze thresholds are checked at their exact boundaries;
-  - DNS over TCP is covered.
-- **Release order is documented** in `docs/RELEASING.md`: the add-on ships
-  from `main`, so a version bump has to be green before it merges.
+## [0.7.7] - 2026-10-26
 
-- **Options dialog on HA before 2024.11:** it crashed, because older HA
-  doesn't give the flow its entry. It now looks the entry up itself.
-- **Odd relay data can't take the integration down.**
-  - **Before:** one unexpected value in the relay's `/state` (a string where
-    a number belongs, a list where an object belongs) could stop every later
-    listener and leave entities frozen.
-  - **Now:**
-    - values are type-checked;
-    - numeric sensors show unknown rather than raise;
-    - each repair check is isolated;
-    - a reply that isn't a JSON object is a normal update failure.
-- **No write to the wrong heater:** a write for a heater the relay no longer
-  lists is refused. It used to go to the primary heater.
-- **The same relay can't be added twice:** its URL is the entry's unique ID.
-- **Tank temperatures keep long-term statistics:** top, bottom and average
-  now have a measurement state class.
-- **Setting the operation to "off" is refused** with a message to use away
-  mode. On older HA it used to reach the relay.
-- **Mode and Heating element show their icons on HA 2024.1** (icon
-  translations arrived in 2024.2).
-- **Connections:** responses are always released, including on errors.
-
+### Fixed (relay, from a code review)
 - **A damaged LAN key file no longer strands the heater.**
   - **Before:** a corrupt or wrong-shaped `lanip.json` made the relay mint a
     new key over it, so the module was left holding the old one.
@@ -100,6 +55,29 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   the relay logs one warning and counts it (`lan.suspected_desyncs`). It
   doesn't reconnect.
 
+### Fixed (integration, from a code review)
+- **Options dialog on HA before 2024.11:** it crashed, because older HA
+  doesn't give the flow its entry. It now looks the entry up itself.
+- **Odd relay data can't take the integration down.**
+  - **Before:** one unexpected value in the relay's `/state` (a string where
+    a number belongs, a list where an object belongs) could stop every later
+    listener and leave entities frozen.
+  - **Now:**
+    - values are type-checked;
+    - numeric sensors show unknown rather than raise;
+    - each repair check is isolated;
+    - a reply that isn't a JSON object is a normal update failure.
+- **No write to the wrong heater:** a write for a heater the relay no longer
+  lists is refused. It used to go to the primary heater.
+- **The same relay can't be added twice:** its URL is the entry's unique ID.
+- **Tank temperatures keep long-term statistics:** top, bottom and average
+  now have a measurement state class.
+- **Setting the operation to "off" is refused** with a message to use away
+  mode. On older HA it used to reach the relay.
+- **Mode and Heating element show their icons on HA 2024.1** (icon
+  translations arrived in 2024.2).
+- **Connections:** responses are always released, including on errors.
+
 ### Docs
 - **DNS steering:**
   - the built-in `dns_server` is marked tested (live since 0.5.5), with its
@@ -135,6 +113,32 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   - the troubleshooting rows cover both;
   - **Uninstall says to restore the router's DHCP DNS before removing the
     add-on.** Otherwise every device using it loses DNS.
+
+### CI and tests (from a code review)
+- **Home Assistant 2024.1 is tested.** `hacs.json` promised it, but nothing
+  checked it. A CI job now runs the integration tests on HA 2024.1.5, and it
+  found the options-dialog crash fixed above (integration).
+- **Least-privilege releases:**
+  - the release workflow is split into read-only verify, test and image jobs,
+    and a publish job, the only one that can write;
+  - a tag must be on `main`, and the release reruns the full test matrix and
+    the image build;
+  - checkouts don't keep the token.
+- **Pinned tools:** dev tools are hash-locked, the HA test harness is pinned,
+  and so is the busybox test image.
+- **Stricter gates:**
+  - branch coverage, with a 98.5% minimum;
+  - a PR that bumps the version runs the release checks;
+  - the changelog section for a release needs at least one entry;
+  - missing openssl fails CI instead of skipping the TLS tests.
+- **Tests:**
+  - relay modules are imported one way only, so there's one copy of each;
+  - environment variables are isolated per test;
+  - DNS tests listen on loopback;
+  - the freeze thresholds are checked at their exact boundaries;
+  - DNS over TCP is covered.
+- **Release order is documented** in `docs/RELEASING.md`: the add-on ships
+  from `main`, so a version bump has to be green before it merges.
 
 ## [0.7.6] - 2026-10-26
 
