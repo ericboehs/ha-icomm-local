@@ -5,6 +5,14 @@ This page covers what has to happen, how to make it **survive a router reboot**,
 how to check it is working. Only the recipes marked *tested* have been run against
 real hardware; the others are the same two rules expressed for other routers.
 
+## Before you start
+
+1. Find the water heater's IP address in your router's client list (an
+   Ayla/"Espressif"/unnamed device, or match the MAC shown in the iCOMM app's
+   device info).
+2. **Reserve that IP** (a DHCP reservation or fixed IP): the rules match on it.
+3. Note your Home Assistant host's IP and your gateway's LAN IP.
+
 ## What has to happen
 
 Two NAT rules on the gateway, both scoped to the water heater's IP address:
@@ -168,7 +176,7 @@ rules are needed. See [DNS_STEERING.md](DNS_STEERING.md).
 
 Disable or delete both rules first, then break the module's connection
 (`conntrack -D -s <module-ip> -p tcp --dport 443`, or power-cycle the heater).
-The heater goes straight back to Ayla's cloud. See the README's *Uninstall*.
+The heater goes straight back to Ayla's cloud. See the [README's *Uninstall*](../README.md#uninstall).
 
 ## Checking it works
 
@@ -183,3 +191,11 @@ The heater goes straight back to Ayla's cloud. See the README's *Uninstall*.
    (on the HA host; from Home Assistant, the *Relay health* sensor says the same).
 3. The mobile app still shows the water heater online — the relay forwards
    everything upstream, so nothing on the cloud side should change.
+4. After the heater's power cycle (README install step 3), the add-on log
+   shows Local Connect being armed, within a minute or two:
+
+   ```
+   DSN rewrite: flipped lan-enabled, local-access-enabled in config reply
+   LAN mode: module fetched lan.json; answered with our key
+   LAN mode: registered with the module
+   ```

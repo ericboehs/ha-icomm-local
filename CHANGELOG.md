@@ -14,6 +14,18 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 - **"Open in Home Assistant" buttons** in the install steps: one adds the
   repository and opens the add-on, one opens the integration in HACS, one
   starts the integration's setup.
+- **A much shorter README** (437 → about 150 lines): what you get, what you
+  need, four install steps, good-to-know and uninstall. The rest moved,
+  unchanged, to new pages:
+  - [docs/USING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/USING.md): every entity, writes, the dashboard, outages, uninstalling in detail;
+  - [docs/TROUBLESHOOTING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/TROUBLESHOOTING.md);
+  - [docs/CONFIGURATION.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/CONFIGURATION.md): every option, and running without the add-on;
+  - [docs/HOW_IT_WORKS.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/HOW_IT_WORKS.md): the design and security;
+  - [docs/DEVELOPMENT.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DEVELOPMENT.md).
+- **STEERING.md** gains *Before you start* (find and reserve the heater's IP)
+  and the log lines that show Local Connect is armed.
+- **Dropped:** the README's old release steps, superseded by
+  [docs/RELEASING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/RELEASING.md).
 
 ## [0.7.7] - 2026-10-26
 

@@ -1,0 +1,17 @@
+# Troubleshooting
+
+Check the add-on log first, then the relay's state from the HA host:
+`curl -s http://127.0.0.1:8124/state | jq '{online, fresh, lan, peers, health}'`
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Add-on log shows no requests from the heater at all | the steering isn't reaching the relay | **DNS:** check that the log shows `DNS: steering … for <heater-ip>`. If it doesn't, the heater isn't using Home Assistant for DNS: check the router's DHCP DNS setting (no secondary), then power-cycle the heater. **NAT:** check the router's DNAT counter and the heater IP; break the old connection (STEERING.md: *Checking it works*) or power-cycle the heater |
+| Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, power-cycle it so Ayla can confirm it (DNS steering); if that doesn't help, set `module_ip` |
+| `lan.last_registration_result: PUT 404` / `POST 404` | Local Connect not armed yet | Power-cycle the heater ([install step 3](../README.md#3-power-cycle-the-water-heater-once)) |
+| `PUT 412` | armed, waiting for the key | Wait a minute; if it persists, power-cycle |
+| Repair: *Water heater data is frozen* | reports keep arriving but their contents haven't changed for 90 minutes, or 20 while the last report said it was heating (30 with a power sensor showing the heater running). Power, operating state and heating element then show as unknown, because the snapshot's claims about activity can be wrong (seen: "heating" for nearly 2 hours after the compressor stopped). The controller's live reporting lapses hours after the A.O. Smith app was last opened, and after a reboot | Heating isn't affected. The relay tries to re-arm it by itself (`reporting_mask_renew`, on by default). That has brought live data back within minutes, and has also failed to; `experimental_freeze_reconnect` adds a LAN reconnect after 2 failed tries. If the repair stays, **open the A.O. Smith app**, or `POST /lan/reporting-mask` on the state API once. Optional: set a power sensor for the heater's circuit under the integration's **Configure** to catch it sooner |
+| `lan.needs_key_push: true` | the module holds a key this relay did not issue | Automatic: the relay pushes its key on the next cloud poll. See [LAN_MODE.md](LAN_MODE.md) |
+| Integration setup: *Could not reach the relay* | add-on not running, or a different URL | Start the add-on; use `http://127.0.0.1:8124` |
+| App shows the heater offline | relay stopped while the steering is active | Start the add-on, or undo the steering ([Uninstall](../README.md#uninstall) step 1) |
+| The A.O. Smith/iCOMM app keeps logging you out | A.O. Smith allows **one login session per account**. Home Assistant's built-in *A. O. Smith* cloud integration on the same account logs the app out, and the app logs it out in turn. Every reload or HA restart is a new login. iCOMM Local uses no account, so it is not the cause | Disable the built-in A. O. Smith integration (iCOMM Local covers its entities locally), or give it a separate account through the app's device sharing |
+| A write shows `not_applied` | the tank accepted the frame but did not apply it | Retry later. A transient window of this was observed once; it cleared on its own |
