@@ -10,7 +10,32 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
-### Fixed (integration, from a code review)
+### CI and tests (from a code review)
+- **Home Assistant 2024.1 is tested.** `hacs.json` promised it, but nothing
+  checked it. A CI job now runs the integration tests on HA 2024.1.5, and it
+  found the options-dialog crash fixed above.
+- **Least-privilege releases:**
+  - the release workflow is split into read-only verify, test and image jobs,
+    and a publish job, the only one that can write;
+  - a tag must be on `main`, and the release reruns the full test matrix and
+    the image build;
+  - checkouts don't keep the token.
+- **Pinned tools:** dev tools are hash-locked, the HA test harness is pinned,
+  and so is the busybox test image.
+- **Stricter gates:**
+  - branch coverage, with a 98.5% minimum;
+  - a PR that bumps the version runs the release checks;
+  - the changelog section for a release needs at least one entry;
+  - missing openssl fails CI instead of skipping the TLS tests.
+- **Tests:**
+  - relay modules are imported one way only, so there's one copy of each;
+  - environment variables are isolated per test;
+  - DNS tests listen on loopback;
+  - the freeze thresholds are checked at their exact boundaries;
+  - DNS over TCP is covered.
+- **Release order is documented** in `docs/RELEASING.md`: the add-on ships
+  from `main`, so a version bump has to be green before it merges.
+
 - **Options dialog on HA before 2024.11:** it crashed, because older HA
   doesn't give the flow its entry. It now looks the entry up itself.
 - **Odd relay data can't take the integration down.**

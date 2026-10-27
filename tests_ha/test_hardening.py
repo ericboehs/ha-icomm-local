@@ -18,6 +18,7 @@ from test_multi_heater import _refresh as _refresh_multi
 from test_multi_heater import _setup as _setup_multi
 
 from custom_components.icomm_local.config_flow import IcommLocalOptionsFlow
+from custom_components.icomm_local.sensor import ICON_TRANSLATIONS
 
 DOMAIN = "icomm_local"
 
@@ -44,6 +45,7 @@ async def test_options_flow_needs_no_config_entry_attribute(hass, aioclient_mock
     the way older HA builds it (no entry) must still show its form."""
     entry = await _setup(hass, aioclient_mock)
     hass.config_entries.async_update_entry(entry, options={"power_entity": "sensor.p"})
+    await hass.async_block_till_done()                     # the options reload
     flow = IcommLocalOptionsFlow()
     flow.hass, flow.handler = hass, entry.entry_id
     result = await flow.async_step_init()
@@ -252,8 +254,10 @@ async def test_state_icons_without_icon_translations(hass, aioclient_mock, monke
 
 
 async def test_icons_json_is_left_to_do_it(hass, aioclient_mock) -> None:
+    """From 2024.2 icons.json does it; before that, the Python fallback."""
     await _setup(hass, aioclient_mock)
-    assert "icon" not in hass.states.get("sensor.icomm_water_heater_mode").attributes
+    attrs = hass.states.get("sensor.icomm_water_heater_mode").attributes
+    assert ("icon" in attrs) is not ICON_TRANSLATIONS
 
 
 # -- 12: "off" ------------------------------------------------------------------------------
