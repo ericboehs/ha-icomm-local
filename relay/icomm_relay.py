@@ -301,6 +301,34 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
         return None
 
 
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+# Restored PendingWrite fields and the types they must have (None allowed).
+_RESTORED_NUMBERS = ("queued", "delivered", "acked", "attempts", "ack_status",
+                     "reports_after_ack", "days")
+_RESTORED_STRINGS = ("frame", "kind", "delivery_path", "command_id")
+
+
+def _restorable(kind, entry) -> bool:
+    """A saved write of a shape the queue can use: a hand-edited or foreign
+    queue file must not crash start-up or, later, every telemetry report."""
+    if not isinstance(kind, str) or not isinstance(entry, dict):
+        return False
+    if any(entry.get(k) is not None and not _number(entry[k]) for k in _RESTORED_NUMBERS):
+        return False
+    if any(entry.get(k) is not None and not isinstance(entry[k], str)
+           for k in _RESTORED_STRINGS):
+        return False
+    if entry.get("kind", kind) != kind:
+        return False
+    value = entry.get("value")
+    if kind == "setpoint":
+        return _number(value)           # _confirm_pending does float() on it
+    return kind != "mode" or isinstance(value, str)
+
+
 DEVICE_ID_RE = re.compile(r"<key>(\d{1,20})</key>")
 DEVICE_PATH_RE = re.compile(r"^/devices/(\d{1,20})/")
 
@@ -334,6 +362,7 @@ class Relay:
         self._last_blocks: tuple[bytes, ...] | None = None
         self._last_active_fault: int | None = None
         self.decode_errors = 0
+        self.ingest_errors = 0
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Heating changes tank temperatures within minutes: the longest healthy
         # gap between controller pushes while heating was 10 min (n=115); idle
@@ -586,8 +615,18 @@ class Relay:
     async def telemetry(self, request: web.Request) -> web.Response:
         """superBlockDyn1 POST: decode, then forward as if we were not here."""
         body = await request.read()
-        self._ingest_blocks(telemetry_blocks(body))
+        self._safe_ingest(telemetry_blocks(body))
         return await self.proxy(request)
+
+    def _safe_ingest(self, blocks: list[bytes] | None, lan: bool = False) -> None:
+        """_ingest_blocks, but a bug in it must not cost the report its trip
+        to Ayla (cloud) or turn into a 500 for the module (LAN)."""
+        try:
+            self._ingest_blocks(blocks, lan=lan)
+        except Exception as err:  # noqa: BLE001 -- forwarding must happen regardless
+            self.ingest_errors += 1
+            _LOGGER.warning("telemetry ingest failed (%s); %d so far",
+                            type(err).__name__, self.ingest_errors)
 
     def _ingest_blocks(self, blocks: list[bytes] | None, lan: bool = False) -> None:
         """Decode a superBlockDyn1 report, from the cloud POST or the LAN."""
@@ -710,10 +749,11 @@ class Relay:
                 self.lan.read_queue.append("superBlockStatic1")
         if data.get("name") == "superBlockDyn1" and data.get("value"):
             try:
-                self._ingest_blocks([bytes.fromhex(part)
-                                     for part in data["value"].split(",")], lan=True)
+                blocks = [bytes.fromhex(part) for part in data["value"].split(",")]
             except ValueError:
                 _LOGGER.warning("LAN telemetry undecodable")
+            else:
+                self._safe_ingest(blocks, lan=True)
         elif "ack_status" in data:
             _LOGGER.info("LAN write ack: status %s id %s",
                          data.get("ack_status"), data.get("id"))
@@ -831,9 +871,17 @@ class Relay:
         except (OSError, ValueError):
             _LOGGER.warning("unreadable queue file %s; starting empty", self.queue_file)
             return
+        if not isinstance(saved, dict):
+            _LOGGER.warning("queue file %s is not a JSON object; starting empty",
+                            self.queue_file)
+            return
         now = time.time()
         restored = 0
-        for kind, entry in (saved.get("pending") or {}).items():
+        pending = saved.get("pending")
+        for kind, entry in (pending.items() if isinstance(pending, dict) else ()):
+            if not _restorable(kind, entry):
+                _LOGGER.warning("dropping a malformed queued write from the queue file")
+                continue
             queued = entry.get("queued") or now
             if now - queued > self.queue_max_age_s:
                 # Older than the appliance could plausibly still care about. Dropping
@@ -859,7 +907,8 @@ class Relay:
             if write.frame:
                 self.pending[kind] = write
                 restored += 1
-        self.last_write = saved.get("last_write")
+        last_write = saved.get("last_write")
+        self.last_write = last_write if isinstance(last_write, dict) else None
         self.queue_restored = restored
         if restored:
             _LOGGER.info("restored %d queued write(s) from %s", restored, self.queue_file)
@@ -956,13 +1005,16 @@ class Relay:
             return False
         if last.get("kind") in self.pending:
             return False                # a newer write for the register owns it now
-        if not last.get("delivered") or time.time() - float(last["delivered"]) > 3600:
+        delivered = last.get("delivered")
+        if not _number(delivered) or time.time() - delivered > 3600:
             # Never sent, or long ago: a matching value now is more likely the
             # app or a person at the tank than our write landing late.
             return False
         got = self.state.get(last.get("kind"))
         if last.get("kind") == "setpoint":
-            took = got is not None and abs(float(got) - float(last.get("value", -999))) <= 0.5
+            value = last.get("value")
+            took = (got is not None and _number(value)
+                    and abs(float(got) - float(value)) <= 0.5)
         else:
             took = got is not None and got == last.get("value")
         if took:
@@ -1238,6 +1290,7 @@ class Relay:
         unchanged = (round(time.time() - self.contents_changed)
                      if self.contents_changed else None)
         out["decode_errors"] = self.decode_errors
+        out["ingest_errors"] = self.ingest_errors
         out["contents_unchanged_s"] = unchanged
         out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None

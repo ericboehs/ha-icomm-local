@@ -69,9 +69,13 @@ class DeviceFacts:
         self.static: dict[str, str] = {}
         with contextlib.suppress(OSError, ValueError):
             saved = json.loads(path.read_text())
-            self.facts = {k: v for k, v in (saved.get("facts") or {}).items()
+            saved = saved if isinstance(saved, dict) else {}     # wrong shape: start over
+            facts, static = saved.get("facts"), saved.get("static")
+            facts = facts if isinstance(facts, dict) else {}
+            static = static if isinstance(static, dict) else {}
+            self.facts = {k: v for k, v in facts.items()
                           if isinstance(v, str) and SAFE.fullmatch(v)}
-            self.static = {k: v for k, v in (saved.get("static") or {}).items()
+            self.static = {k: v for k, v in static.items()
                            if k in STATIC and isinstance(v, str) and HEX_LIST.fullmatch(v)}
 
     def note_dsn(self, text: str) -> None:
