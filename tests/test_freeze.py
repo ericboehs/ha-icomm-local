@@ -46,6 +46,30 @@ async def test_stale_sooner_while_heating(tmp_path, monkeypatch, blocks, frozen_
     assert state["contents_stale_after_s"] == (1200 if blocks is HEATING else 5400)
 
 
+def _clock(monkeypatch) -> None:
+    """Stop the clock, so `contents_unchanged_s` is exactly what a test sets."""
+    now = 1_800_000_000.0
+    monkeypatch.setattr("icomm_relay.time.time", lambda: now)
+
+
+@pytest.mark.parametrize("env", [{}, {"CONTENTS_STALE_HEATING_AFTER": "600"},
+                                 {"CONTENTS_STALE_AFTER": "3000"}])
+@pytest.mark.parametrize("blocks", [HEATING, IDLE], ids=["heating", "idle"])
+@pytest.mark.parametrize("offset", [-1, 0])
+async def test_stale_from_exactly_the_threshold(tmp_path, monkeypatch, env, blocks, offset):
+    """Stale at >= the threshold: 1200 s heating, 5400 s idle, or the env's."""
+    _clock(monkeypatch)
+    relay = _relay(tmp_path, monkeypatch, **env)
+    idle_after = float(env.get("CONTENTS_STALE_AFTER", 5400))
+    heating_after = min(float(env.get("CONTENTS_STALE_HEATING_AFTER", 1200)), idle_after)
+    after = heating_after if blocks is HEATING else idle_after
+    _frozen_for(relay, blocks, after + offset)
+    state = await _state(relay)
+    assert state["contents_stale_after_s"] == after
+    assert state["contents_unchanged_s"] == after + offset
+    assert state["contents_stale"] is (offset == 0)
+
+
 async def test_a_lower_idle_threshold_still_wins(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch, CONTENTS_STALE_AFTER="60")
     _frozen_for(relay, HEATING, 120)

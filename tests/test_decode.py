@@ -211,7 +211,7 @@ def test_hot_water_availability_matches_the_cloud() -> None:
             lagged += 1
             assert got == sample["next_cloud"], sample["t"]
     assert len(data["samples"]) == 33
-    assert lagged <= 2
+    assert lagged == 2
 
 
 def test_heat_deficit_falls_at_the_elements_rate() -> None:
