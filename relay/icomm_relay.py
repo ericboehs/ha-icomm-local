@@ -62,7 +62,7 @@ import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, web
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
-from icomm_heater import Heater, known_dsn
+from icomm_heater import Heater, known_dsn, write_private
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
@@ -1114,12 +1114,17 @@ class Relay:
             return None
         self.lan.learn_module_ip(text)
         evidence = self.heater.dir
-        evidence.mkdir(parents=True, exist_ok=True)
-        (evidence / "dsn-original.xml").write_bytes(payload)
-        (evidence / "dsn-rewritten.xml").write_text(text)
+        rewritten = text.encode()
+        try:
+            # Atomic and 0600: dsn-original.xml is the offline fallback's
+            # source, and a disk error must not turn Ayla's 200 into ours.
+            write_private(evidence / "dsn-original.xml", payload)
+            write_private(evidence / "dsn-rewritten.xml", rewritten)
+        except OSError as err:
+            _LOGGER.warning("DSN rewrite: evidence not saved (%s)", type(err).__name__)
         _LOGGER.warning("DSN rewrite: flipped %s in config reply (evidence in %s)",
                         ", ".join(switched), evidence)
-        return text.encode()
+        return rewritten
 
     # -- the Home-Assistant-facing side --------------------------------
     async def write_handler(self, request: web.Request) -> web.Response:
