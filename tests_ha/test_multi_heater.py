@@ -54,8 +54,11 @@ async def _refresh(hass, entry, aioclient_mock, **relay) -> None:
 
 
 def _device(hass, entry, identifier):
-    return dr.async_get(hass).async_get_device_by_identifier(
-        ("icomm_local", identifier), entry.entry_id)
+    registry = dr.async_get(hass)
+    lookup = getattr(registry, "async_get_device_by_identifier", None)
+    if lookup is None:                                       # before HA 2026.x
+        return registry.async_get_device(identifiers={("icomm_local", identifier)})
+    return lookup(("icomm_local", identifier), entry.entry_id)
 
 
 async def test_two_heaters_two_devices(hass: HomeAssistant, aioclient_mock):
@@ -245,7 +248,8 @@ async def test_the_relay_forgetting_the_dsn_creates_no_duplicates(hass, aioclien
 
 async def test_the_dsn_arriving_reloads_once(hass, aioclient_mock, monkeypatch):
     from homeassistant import config_entries
-    monkeypatch.delattr(config_entries.ConfigEntries, "async_schedule_reload")   # HA 2024.1
+    monkeypatch.delattr(config_entries.ConfigEntries, "async_schedule_reload",   # HA 2024.1
+                       raising=False)
     reloads = []
     real_reload = config_entries.ConfigEntries.async_reload
 

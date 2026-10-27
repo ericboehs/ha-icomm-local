@@ -32,7 +32,9 @@ async def _delete(hass, hass_ws_client, entry, dsn):
     if not allowed:
         return {"success": False, "error": {"message": "rejected"}}
     dr.async_get(hass).async_remove_device(device.id)
+    await hass.async_block_till_done()       # HA 2024.1 delivers the event a turn later
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))   # the reload
+    await hass.async_block_till_done()
     return {"success": True}
 
 

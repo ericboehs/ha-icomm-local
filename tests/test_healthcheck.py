@@ -8,9 +8,8 @@ import json
 import healthcheck
 import pytest
 from aiohttp import web
+from icomm_relay import Relay
 from test_lan import SECRET
-
-from relay.icomm_relay import Relay
 
 
 async def _serve(app: web.Application) -> tuple[web.AppRunner, int]:

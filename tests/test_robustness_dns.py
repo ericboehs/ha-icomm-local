@@ -4,7 +4,7 @@ import asyncio
 import struct
 
 import pytest
-from icomm_dns import MAX_IN_FLIGHT, allowed_client, is_this_host, notimp
+from icomm_dns import MAX_IN_FLIGHT, DnsServer, allowed_client, is_this_host, notimp
 from test_dns import HEATER_NAME, free_port, query, server, upstream
 
 
@@ -313,7 +313,7 @@ async def test_dns_host_narrows_the_listening_address(monkeypatch):
     finally:
         await dns.stop()
     monkeypatch.delenv("DNS_HOST")
-    assert server(monkeypatch).host == "0.0.0.0"
+    assert DnsServer().host == "0.0.0.0"                # the add-on's default
 
 
 async def test_tcp_retry_without_an_upstream_is_a_no_op(monkeypatch):

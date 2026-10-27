@@ -9,7 +9,7 @@ XML shapes are pinned to libada's parsers: <resource> has no leading slash,
 
 import json
 
-from relay.icomm_relay import Relay
+from icomm_relay import Relay
 
 XML = '<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n'
 

@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.release.outputs.tag }}
+          persist-credentials: false
       - name: Build the add-on image exactly as users get it
         run: docker build -t icomm-relay:release relay
       - name: Scan
@@ -92,6 +93,8 @@ jobs:
       TITLE: "Pinned action branches have moved"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compare each branch pin with its branch head
         run: |
           : > moved.md

@@ -10,6 +10,7 @@ misunderstanding as the decoder.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -56,7 +57,38 @@ def blocks_hybrid() -> list[bytes]:
     return load("telemetry_hybrid.json")
 
 
+# Every environment variable the relay reads. Cleared before each test so a
+# developer's shell (or a test that leaked) can't change what a test sees.
+RELAY_ENV = (
+    "CERT_DIR", "CLOUD_IDLE_AFTER", "CONTENTS_STALE_AFTER", "CONTENTS_STALE_HEATING_AFTER",
+    "DATA_DIR", "DEBUG_REQUESTS", "DEVICE_DSN", "DNS_ANSWER", "DNS_HOST", "DNS_PORT", "DNS_REWRITE",
+    "DNS_SERVER", "DNS_UPSTREAM", "DSN_LAN_REWRITE", "FIRMWARE_UPDATES", "FREEZE_RECONNECT",
+    "LAN_MODE", "LAN_PORT", "LAN_REFRESH_INTERVAL", "LAN_STALL_AFTER", "LANIP_FILE",
+    "LANIP_KEY", "LANIP_KEY_ID", "LANIP_PUSH", "LISTEN_PORT", "MAX_HEATERS", "MODULE_IP",
+    "OFFLINE_FALLBACK", "QUEUE_FILE", "QUEUE_MAX_AGE_S", "RELAY_CERT", "RELAY_DHPARAMS",
+    "RELAY_IP", "RELAY_KEY", "REPORTING_MASK_RENEW", "REPORTING_MASK_RENEW_AFTER",
+    "STATE_HOST", "STATE_PORT", "TRUSTED_PEERS", "UPSTREAM",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_relay_env(monkeypatch) -> None:
+    for key in RELAY_ENV:
+        monkeypatch.delenv(key, raising=False)
+    # A DNS server started by a test listens on loopback only, never on every
+    # interface of a dev machine or CI runner.
+    monkeypatch.setenv("DNS_HOST", "127.0.0.1")
+
+
+def require_openssl() -> None:
+    """Skip the TLS tests without openssl on a dev machine; in CI (CI set, as
+    on GitHub Actions) a missing openssl is a broken runner, so fail."""
+    if shutil.which("openssl") is None:
+        if os.environ.get("CI"):
+            pytest.fail("openssl not installed, and CI is set: the TLS tests must run")
+        pytest.skip("openssl not installed")
+
+
 @pytest.fixture
 def openssl_available() -> None:
-    if shutil.which("openssl") is None:
-        pytest.skip("openssl not installed")
+    require_openssl()

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 
+from icomm_relay import telemetry_blocks
 from test_proxy import _relay, _telemetry_body
-
-from relay.icomm_relay import telemetry_blocks
 
 
 async def _state(relay) -> dict:

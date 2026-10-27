@@ -34,3 +34,32 @@ def test_unknown_version_has_no_notes():
 
 def test_addon_and_integration_versions_agree():
     assert run("same-version").returncode == 0
+
+
+def _script():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("release_check", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_current_version_passes_the_tag_check():
+    import json
+    version = json.loads((SCRIPT.parent.parent / "custom_components/icomm_local/manifest.json")
+                         .read_text())["version"]
+    out = run("versions", f"v{version}")
+    assert out.returncode == 0 and f"versions ok: {version}" in out.stdout
+
+
+def test_a_section_needs_a_bullet():
+    check = _script()
+    changelog = ("## [1.2.3] - 2026-01-01\n\n### Fixed\n\nSome prose.\n\n"
+                 "## [1.2.2] - 2025-12-31\n\n### Added\n- **Thing:** it works.\n\n"
+                 "## [1.2.1] - 2025-12-30\n\n### Fixed\n  * nested star bullet\n")
+    assert check.section("1.2.3", changelog)                     # has content...
+    assert not check.has_entry(check.section("1.2.3", changelog))  # ...but no entry
+    assert check.has_entry(check.section("1.2.2", changelog))
+    assert check.has_entry(check.section("1.2.1", changelog))
+    assert not check.has_entry(check.section("9.9.9", changelog))
+    assert not check.has_entry("-not a bullet\n---")

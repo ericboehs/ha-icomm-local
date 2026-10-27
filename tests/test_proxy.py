@@ -21,10 +21,9 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from icomm_hub import Hub
 from icomm_peers import TRUSTED
+from icomm_relay import Relay
 from test_dsn import DSN
 from test_lan import SECRET
-
-from relay.icomm_relay import Relay
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EMPTY_COMMANDS = "<commands>\n  <properties/>\n  <schedules/>\n  <cmds/>\n</commands>\n"

@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import json
 
+from icomm_relay import Relay
 from test_dsn import DSN
 from test_proxy import FakeClient, _relay, _request
-
-from relay.icomm_relay import Relay
 
 HEATER = "10.0.20.187"
 DSN_PATH = "/dsns/AC000W019949045.xml"

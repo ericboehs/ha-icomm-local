@@ -281,13 +281,12 @@ async def test_a_heater_added_while_running_loads_its_queue_and_registers(
         tmp_path, monkeypatch):
     import asyncio
 
-    import icomm_lan
     started = []
 
     async def fake_start(self, listen=True):
         started.append((self.relay.heater.dsn, listen))
 
-    monkeypatch.setattr(icomm_lan.LanServer, "start", fake_start)
+    monkeypatch.setattr("icomm_lan.LanServer.start", fake_start)
     hub = _hub(tmp_path, monkeypatch)
     hub.running = True
     engine = hub._add(DSN_B)

@@ -11,8 +11,7 @@ import json
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
-
-from relay.icomm_relay import Relay
+from icomm_relay import Relay
 
 DSN = """<?xml version="1.0" encoding="UTF-8"?>
 <device>
