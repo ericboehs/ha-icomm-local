@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import os
 import re
@@ -41,6 +42,12 @@ DEFAULT_REWRITE = r"[a-z0-9-]+-71538015-device\.aylanetworks\.com"
 TYPE_A, TYPE_AAAA, CLASS_IN = 1, 28, 1
 FORWARD_TIMEOUT = 3.0
 REWRITE_TTL = 60
+# Forwards in flight at once (each holds a socket for up to FORWARD_TIMEOUT);
+# beyond it a query is dropped and the client retries. And queries one client
+# may send per second. Generous: a house's worth of devices may use this server.
+MAX_IN_FLIGHT = 128
+CLIENT_RATE = 100
+OPCODE_QUERY, RCODE_NOTIMP = 0, 4
 
 
 def parse_question(packet: bytes) -> tuple[str, int, int, int] | None:
@@ -91,6 +98,40 @@ def servfail(packet: bytes) -> bytes:
     return bytes(header) + packet[12:]
 
 
+def notimp(packet: bytes) -> bytes:
+    """NOTIMP for an opcode we don't serve (NOTIFY, UPDATE...)."""
+    header = bytearray(packet[:12])
+    header[2] = 0x80 | (packet[2] & 0x79)          # response; keep opcode and RD
+    header[3] = 0x80 | RCODE_NOTIMP
+    return bytes(header) + packet[12:]
+
+
+def allowed_client(client: str) -> bool:
+    """Only the LAN: private, link-local or loopback sources get answers."""
+    try:
+        address = ipaddress.ip_address(client)
+    except ValueError:
+        return False
+    return address.is_private or address.is_link_local or address.is_loopback
+
+
+def is_this_host(host: str) -> bool:
+    """True for an IP literal that is one of this host's own addresses (bindable)."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False                    # a name: not resolved here (it would block)
+    if address.is_loopback or address.is_unspecified:
+        return True
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    with socket.socket(family, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.bind((host, 0))
+        except OSError:
+            return False
+    return True
+
+
 def local_address_for(peer: str) -> str | None:
     """The address this host uses to reach `peer`: the one it can reach us on."""
     with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -114,6 +155,22 @@ class DnsServer:
         self._transport: asyncio.DatagramTransport | None = None
         self._tcp: asyncio.AbstractServer | None = None
         self._seen: set[tuple[str, str]] = set()
+        # Abuse limits (see MAX_IN_FLIGHT): what was dropped, and why.
+        self.dropped = {"source": 0, "malformed": 0, "busy": 0, "rate": 0, "duplicate": 0}
+        self.in_flight = 0
+        self._in_flight_keys: set[tuple[str, bytes]] = set()
+        self._rate_window = 0.0
+        self._rate_counts: dict[str, int] = {}
+        self._tasks: set[asyncio.Task] = set()
+        self._config_error = self._check_upstream_port()
+
+    def _check_upstream_port(self) -> str | None:
+        if not self.upstream or self.upstream.count(":") != 1:
+            return None
+        port = self.upstream.rpartition(":")[2]
+        if port.isdigit() and not 1 <= int(port) <= 65535:
+            return f"dns_upstream port {int(port)} is out of range (1-65535)"
+        return None
 
     def upstream_address(self) -> str | None:
         if self.upstream:
@@ -127,11 +184,24 @@ class DnsServer:
         if not address:
             return None
         host, _, port = address.rpartition(":") if address.count(":") == 1 else ("", "", "")
-        return (host, int(port)) if host and port.isdigit() else (address, 53)
+        if host and port.isdigit():
+            return (host, int(port)) if 1 <= int(port) <= 65535 else None
+        return (address, 53)
 
     async def resolve(self, packet: bytes, client: str) -> bytes:
         """One query in, one reply out (empty bytes: drop it)."""
         self.queries += 1
+        if not allowed_client(client):
+            self.dropped["source"] += 1
+            return b""
+        if len(packet) < 12 or packet[2] & 0x80:
+            self.dropped["malformed"] += 1      # too short, or a response: never a query
+            return b""
+        if not self._within_rate(client):
+            self.dropped["rate"] += 1
+            return b""
+        if (packet[2] >> 3) & 0x0F != OPCODE_QUERY:
+            return notimp(packet)
         question = parse_question(packet)
         if question:
             name, qtype, qclass, end = question
@@ -143,7 +213,29 @@ class DnsServer:
                         return answer(packet, end, target)
                 if qtype == TYPE_AAAA:
                     return answer(packet, end, None)
-        return await self.forward(packet)
+        key = (client, packet[:2] + packet[12:])
+        if key in self._in_flight_keys:
+            self.dropped["duplicate"] += 1      # a retransmit: the first one's reply answers it
+            return b""
+        if self.in_flight >= MAX_IN_FLIGHT:
+            self.dropped["busy"] += 1
+            return b""
+        self.in_flight += 1
+        self._in_flight_keys.add(key)
+        try:
+            return await self.forward(packet)
+        finally:
+            self.in_flight -= 1
+            self._in_flight_keys.discard(key)
+
+    def _within_rate(self, client: str) -> bool:
+        now = time.monotonic()
+        if now - self._rate_window >= 1.0:
+            self._rate_window = now
+            self._rate_counts.clear()
+        count = self._rate_counts.get(client, 0) + 1
+        self._rate_counts[client] = count
+        return count <= CLIENT_RATE
 
     def _note_rewrite(self, name: str, client: str, target: str) -> None:
         self.rewritten += 1
@@ -196,6 +288,10 @@ class DnsServer:
     async def start(self) -> None:
         if not self.enabled:
             return
+        self.error = self._config_error or self._loop_error()
+        if self.error:
+            _LOGGER.error("DNS: not started: %s", self.error)
+            return
         loop = asyncio.get_running_loop()
         server = self
 
@@ -204,20 +300,31 @@ class DnsServer:
                 self.transport = transport
 
             def datagram_received(self, data, addr):
+                if not allowed_client(addr[0]):
+                    server.queries += 1
+                    server.dropped["source"] += 1      # no task for a stranger
+                    return
+
                 async def reply():
                     out = await server.resolve(data, addr[0])
                     if out:
                         self.transport.sendto(out, addr)
-                loop.create_task(reply())
+                task = loop.create_task(reply())
+                server._tasks.add(task)
+                task.add_done_callback(server._tasks.discard)
 
         async def _tcp(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-            with contextlib.suppress(OSError, asyncio.IncompleteReadError, TimeoutError):
-                size = struct.unpack(">H", await asyncio.wait_for(reader.readexactly(2), 10))[0]
-                data = await asyncio.wait_for(reader.readexactly(size), 10)
-                out = await server.resolve(data, writer.get_extra_info("peername")[0])
-                writer.write(struct.pack(">H", len(out)) + out)
-                await writer.drain()
-            writer.close()
+            try:
+                with contextlib.suppress(OSError, asyncio.IncompleteReadError, TimeoutError):
+                    size = struct.unpack(
+                        ">H", await asyncio.wait_for(reader.readexactly(2), 10))[0]
+                    data = await asyncio.wait_for(reader.readexactly(size), 10)
+                    out = await server.resolve(data, writer.get_extra_info("peername")[0])
+                    if out:
+                        writer.write(struct.pack(">H", len(out)) + out)
+                        await writer.drain()
+            finally:
+                writer.close()
 
         try:
             self._transport, _ = await loop.create_datagram_endpoint(
@@ -234,7 +341,20 @@ class DnsServer:
                         self.port, self.rewrite.pattern,
                         self.upstream_address() or "nothing (no gateway)")
 
+    def _loop_error(self) -> str | None:
+        """dns_upstream naming this very server would forward every query to
+        itself until each one timed out."""
+        endpoint = self._upstream_endpoint()
+        if endpoint and endpoint[1] == self.port and is_this_host(endpoint[0]):
+            return (f"dns_upstream points back at this DNS server (port {self.port}); "
+                    "set it to the router or another resolver")
+        return None
+
     async def stop(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         if self._transport is not None:
             self._transport.close()
             self._transport = None
@@ -250,4 +370,5 @@ class DnsServer:
                 "upstream": self.upstream_address(), "queries": self.queries,
                 "rewritten": self.rewritten, "forwarded": self.forwarded,
                 "failures": self.failures, "last_error": self.last_error,
+                "dropped": dict(self.dropped), "in_flight": self.in_flight,
                 "last_rewrite": self.last_rewrite}
