@@ -10,6 +10,7 @@ misunderstanding as the decoder.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -76,7 +77,15 @@ def _clean_relay_env(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def require_openssl() -> None:
+    """Skip the TLS tests without openssl on a dev machine; in CI (CI set, as
+    on GitHub Actions) a missing openssl is a broken runner, so fail."""
+    if shutil.which("openssl") is None:
+        if os.environ.get("CI"):
+            pytest.fail("openssl not installed, and CI is set: the TLS tests must run")
+        pytest.skip("openssl not installed")
+
+
 @pytest.fixture
 def openssl_available() -> None:
-    if shutil.which("openssl") is None:
-        pytest.skip("openssl not installed")
+    require_openssl()

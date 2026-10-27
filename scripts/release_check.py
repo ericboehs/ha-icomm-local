@@ -29,12 +29,17 @@ def integration_version() -> str:
     return json.loads(manifest.read_text())["version"]
 
 
-def section(version: str) -> str:
+def section(version: str, text: str | None = None) -> str:
     """The body of '## [version] - date', up to the next '## [' heading."""
-    text = CHANGELOG.read_text()
+    text = CHANGELOG.read_text() if text is None else text
     found = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]: |\Z)",
                       text, re.S | re.M)
     return found.group(1).strip() if found else ""
+
+
+def has_entry(body: str) -> bool:
+    """At least one bullet (`- ...` or `* ...`): a heading alone is no release note."""
+    return re.search(r"^\s*[-*]\s+\S", body, re.M) is not None
 
 
 def main(argv: list[str]) -> int:
@@ -61,8 +66,8 @@ def main(argv: list[str]) -> int:
             errors.append(f"relay/config.yaml version {addon_version()} != tag {tag}")
         if integration_version() != tag:
             errors.append(f"manifest.json version {integration_version()} != tag {tag}")
-        if not section(tag):
-            errors.append(f"CHANGELOG.md has no '## [{tag}]' section with content")
+        if not has_entry(section(tag)):
+            errors.append(f"CHANGELOG.md has no '## [{tag}]' section with at least one bullet")
         for error in errors:
             print(f"::error::{error}")
         if not errors:
