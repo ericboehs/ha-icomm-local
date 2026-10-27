@@ -158,8 +158,11 @@ source NAT" for the hairpin. Notes from other users welcome as issues.
 
 Most mesh systems and ISP gateways (Eero, Google/Nest Wifi, typical ISP
 routers) only offer WAN→LAN port forwarding, which does not apply to traffic
-that starts on the LAN. They cannot steer the module, and this project does not
-work behind them. Do not use a DNS override: the module ignores local DNS.
+that starts on the LAN. They cannot steer the module with NAT.
+
+Use DNS steering instead (relay 0.5.5+). Turn on the add-on's built-in
+`dns_server` and set the router's DHCP DNS server to Home Assistant. No router
+rules are needed. See [DNS_STEERING.md](DNS_STEERING.md).
 
 ## Undoing it
 

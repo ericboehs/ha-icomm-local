@@ -119,9 +119,11 @@ own `rule_index`.
    cloud name through Home Assistant.
 
 Measured: the heater was back with telemetry within about 30 s, and Local
-Connect was verified within a minute. **Set `module_ip`**: right after the
-move, Ayla's registration reply still listed the old address, and relays
-before 0.5.1 believed it over the setting.
+Connect was verified within a minute. **On relays before 0.5.3, set
+`module_ip`**: right after the move, Ayla's registration reply still listed
+the old address, and relays before 0.5.1 believed it over the setting. From
+0.5.3, DNS steering pins the heater's real address once Ayla confirms it, so
+`module_ip` is optional.
 
 Rollback: turn the override off, set the fixed IP back, clear `module_ip` and
 `relay_ip`, and restart the add-on. The old NAT rules for the main LAN can

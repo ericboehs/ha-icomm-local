@@ -50,12 +50,19 @@ cloud keep working.
   (*Last app write*), so app and Home Assistant changes can be told apart. The mobile app and A.O. Smith cloud keep working in
   parallel.
 
-## How it works (one paragraph)
+## How it works
 
-The water heater's Wi-Fi module talks to Ayla's IoT cloud over HTTPS. Two NAT
-rules on your router send that traffic to a small relay (a Home Assistant
-add-on). The relay forwards everything to the real cloud unchanged, so the app
-keeps working, and decodes the telemetry as it passes. It also flips the
+The water heater's Wi-Fi module talks to Ayla's IoT cloud over HTTPS. That
+traffic is steered to a small relay (a Home Assistant add-on), in one of two
+ways:
+
+- **DNS:** the add-on's built-in DNS server answers the module's cloud name
+  with Home Assistant's address. No router rules are needed, only the router's
+  DHCP DNS setting.
+- **NAT:** two rules on a router that supports them.
+
+The relay forwards everything to the real cloud unchanged, so the app keeps
+working, and decodes the telemetry as it passes. It also flips the
 module's built-in Ayla **Local Connect** feature on, with an encryption key the
 relay generates itself. After that, the module polls the relay on your LAN every
 ~10 seconds, and writes ride that poll. No A.O. Smith account or password is
@@ -75,12 +82,20 @@ handbook and Use & Care guide, with what each page confirmed:
   - **Or DNS:** turn on the add-on's built-in `dns_server` and set the
     router's DHCP DNS server to Home Assistant. This works with mesh and ISP
     routers that can't do NAT, and needs ports 53 and 443 free on the HA host.
-    If you already run AdGuard or Pi-hole, add one rewrite there instead. See
+    If you already run AdGuard or Pi-hole, add one rewrite there instead and
+    set the add-on's `listen_port` to `443`: the relay only listens on 443 by
+    itself while `dns_server` is on. See
     [docs/DNS_STEERING.md](docs/DNS_STEERING.md).
 - The Home Assistant host and the water heater on the **same subnet/VLAN**
-  (Local Connect calls back to the relay directly). Across VLANs it works
-  with one forwarding rule on the gateway; see
-  [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md).
+  (Local Connect calls back to the relay directly). Across VLANs it works,
+  but the gateway needs more setup:
+  - a DNAT rule for the Local Connect callback and an SNAT rule for the
+    relay's calls to the module;
+  - `relay_ip` set to the gateway's address on the heater's VLAN;
+  - firewall policies that let the heater reach the relay, and the relay
+    reach the heater.
+
+  See [docs/NETWORK_ISOLATION.md](docs/NETWORK_ISOLATION.md).
 - Access to the water heater's breaker for one power cycle during setup.
 
 ## Install
@@ -113,6 +128,10 @@ for that flow to `<gateway-ip>`. The page has the native UniFi recipe, which
 survives reboots, plus the raw iptables version.
 
 ### 3. Arm Local Connect: power-cycle the water heater once
+
+With DNS steering you already did this in step 4 of
+[docs/DNS_STEERING.md](docs/DNS_STEERING.md#built-in-dns_server). If the log
+lines below are there, skip to step 4.
 
 Turn the water heater's breaker off for about 30 seconds, then back on. The
 tank keeps its heat and its thermostat. On boot, the module re-registers through
@@ -202,14 +221,14 @@ Check the add-on log first, then the relay's state from the HA host:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Add-on log shows no requests from the heater at all | NAT rules not matching | Check the router's DNAT counter; check the heater IP; break the old connection (STEERING.md: *Checking it works*) or power-cycle the heater |
-| Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, set `module_ip` |
+| Add-on log shows no requests from the heater at all | the steering isn't reaching the relay | **DNS:** check that the log shows `DNS: steering … for <heater-ip>`. If it doesn't, the heater isn't using Home Assistant for DNS: check the router's DHCP DNS setting (no secondary), then power-cycle the heater. **NAT:** check the router's DNAT counter and the heater IP; break the old connection (STEERING.md: *Checking it works*) or power-cycle the heater |
+| Log: `plain-proxying ... from <ip>: not a trusted peer`, and no telemetry in HA | the module arrives from an address the relay does not recognize (e.g. the SNAT source is not the host's default gateway). The heater keeps its cloud connection but gets no local features | If `<ip>` is your router/gateway, add it to the `trusted_peers` option. If it is the heater, power-cycle it so Ayla can confirm it (DNS steering); if that doesn't help, set `module_ip` |
 | `lan.last_registration_result: PUT 404` / `POST 404` | Local Connect not armed yet | Power-cycle the heater (install step 3) |
 | `PUT 412` | armed, waiting for the key | Wait a minute; if it persists, power-cycle |
 | Repair: *Water heater data is frozen* | reports keep arriving but their contents haven't changed for 90 minutes, or 20 while the last report said it was heating (30 with a power sensor showing the heater running). Power, operating state and heating element then show as unknown, because the snapshot's claims about activity can be wrong (seen: "heating" for nearly 2 hours after the compressor stopped). The controller's live reporting lapses hours after the A.O. Smith app was last opened, and after a reboot | Heating isn't affected. The relay tries to re-arm it by itself (`reporting_mask_renew`, on by default). That has brought live data back within minutes, and has also failed to; `experimental_freeze_reconnect` adds a LAN reconnect after 2 failed tries. If the repair stays, **open the A.O. Smith app**, or `POST /lan/reporting-mask` on the state API once. Optional: set a power sensor for the heater's circuit under the integration's **Configure** to catch it sooner |
 | `lan.needs_key_push: true` | the module holds a key this relay did not issue | Automatic: the relay pushes its key on the next cloud poll. See [docs/LAN_MODE.md](docs/LAN_MODE.md) |
 | Integration setup: *Could not reach the relay* | add-on not running, or a different URL | Start the add-on; use `http://127.0.0.1:8124` |
-| App shows the heater offline | relay stopped while the NAT rules are active | Start the add-on, or disable the NAT rules |
+| App shows the heater offline | relay stopped while the steering is active | Start the add-on, or undo the steering (Uninstall step 1) |
 | The A.O. Smith/iCOMM app keeps logging you out | A.O. Smith allows **one login session per account**. Home Assistant's built-in *A. O. Smith* cloud integration on the same account logs the app out, and the app logs it out in turn. Every reload or HA restart is a new login. iCOMM Local uses no account, so it is not the cause | Disable the built-in A. O. Smith integration (iCOMM Local covers its entities locally), or give it a separate account through the app's device sharing |
 | A write shows `not_applied` | the tank accepted the frame but did not apply it | Retry later. A transient window of this was observed once; it cleared on its own |
 
@@ -269,9 +288,16 @@ the heater's cloud side may not come back by itself.
 
 Do it in this order:
 
-1. **Disable or delete the router NAT rules.** After this, the heater talks to
-   the cloud directly again. Then break its existing connection, or power-cycle
-   it.
+1. **Undo the steering first,** so the heater talks to the cloud directly
+   again:
+   - **DNS (`dns_server`):** set the router's DHCP DNS server back to what it
+     was, typically the router itself. Do this **before** removing the add-on:
+     while the router still hands out Home Assistant as DNS, removing the
+     add-on cuts DNS for every device that uses it. Devices pick up the change
+     when their DHCP lease renews; reconnecting one or rebooting it is faster.
+   - **NAT:** disable or delete the two router rules.
+   - **Either way:** then power-cycle the heater, or break its existing
+     connection.
 2. Remove the *iCOMM Local* integration (and its HACS entry).
 3. Uninstall the add-on. This deletes its key (`/data/heaters/<DSN>/lanip.json`). The module keeps that
    now-orphaned Local Connect key, which is harmless: the app does not use
@@ -300,7 +326,7 @@ Add-on options, or environment variables when running the relay directly:
 
 | Option / env | Default | Meaning |
 |---|---|---|
-| `listen_port` / `LISTEN_PORT` | 8444 | port the NAT rule sends the module's HTTPS to |
+| `listen_port` / `LISTEN_PORT` | 8444 | port the NAT rule sends the module's HTTPS to. Set it to 443 with your own DNS resolver; with `dns_server` the relay also listens on 443 by itself |
 | `state_port` / `STATE_PORT` | 8124 | state and write API for the integration |
 | `STATE_HOST` | 127.0.0.1 | state API bind address |
 | `upstream` / `UPSTREAM` | `proxy-ingress-usfield.aylanetworks.com` | the real Ayla endpoint every module request is forwarded to (US field) |
@@ -311,8 +337,12 @@ Add-on options, or environment variables when running the relay directly:
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
 | `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen). Primary heater only |
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
+| `CLOUD_IDLE_AFTER` | 1800 | seconds with no cloud request from the module, while Local Connect still delivers changing reports, before health turns `degraded` (`cloud_idle`) |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
+| `DNS_PORT` | 53 | the port `dns_server` listens on |
+| `DNS_ANSWER` | detected | the address `dns_server` answers for the heater's cloud name. By default, the host's own address on the route to the asking client |
+| `DNS_REWRITE` | `[a-z0-9-]+-71538015-device\.aylanetworks\.com` | the names `dns_server` rewrites, as a case-insensitive regular expression matched against the whole name. Change it if your model uses another hostname (see [docs/DNS_STEERING.md](docs/DNS_STEERING.md#1-the-dns-rewrite)) |
 | `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters`, `/heaters/<dsn>/...`, and `DELETE /heaters/<dsn>?confirm=<dsn>` to forget one. Each heater is its own device in HA |
 | `offline_fallback` / `OFFLINE_FALLBACK` | on | if Ayla is unreachable (or answers 5xx) when the heater boots, answer its config fetch from the last real reply, so local control survives a power cut during an outage. See `docs/LAN_MODE.md`, *When Ayla is down* |
 | `reporting_mask_renew` / `REPORTING_MASK_RENEW` | on | re-send the app's periodic-reporting mask over LAN when the contents have been frozen for `REPORTING_MASK_RENEW_AFTER` (1800) seconds, or `CONTENTS_STALE_HEATING_AFTER` (1200) while the last report said heating, at most once per that interval |
@@ -321,15 +351,22 @@ Add-on options, or environment variables when running the relay directly:
 | `QUEUE_MAX_AGE_S` | 86400 | queued writes older than this are dropped |
 | `LAN_REFRESH_INTERVAL` | 300 | seconds between keep-alive telemetry reads; 0 disables |
 | `LANIP_PUSH` | off | force the LAN-key push (normally automatic) |
+| `LANIP_FILE` | `$DATA_DIR/heaters/<DSN>/lanip.json` | where the primary heater's LAN key is kept. For development |
+| `LANIP_KEY_ID` | 1 | the key ID used when a new LAN key is generated. A saved key keeps its own ID |
+| `LANIP_KEY` | generated | development only: use this LAN key instead of the saved one. Nothing is written to disk |
+| `DSN_LAN_REWRITE` | off | flip `lan-enabled` and `local-access-enabled` in the config reply even with `lan_mode` off. An experiment switch; with `lan_mode` on it changes nothing |
 | `DEBUG_REQUESTS` | off | log every module request path |
-| `CERT_DIR`, `RELAY_CERT`, `RELAY_KEY`, `RELAY_DHPARAMS` | `$DATA_DIR/certs/...` | TLS material locations |
+| `CERT_DIR`, `RELAY_CERT`, `RELAY_KEY`, `RELAY_DHPARAMS` | add-on: `/data/certs/...`; run directly: `./certs/...` | TLS material locations. `run.sh` (the add-on) sets `CERT_DIR` to `$DATA_DIR/certs`; the relay and `gen-cert.sh` default to `certs` in the working directory |
 
 ## Security
 
-- The module-facing ports (8444, 8888) bind all interfaces but trust only the
-  module: the gateway's address (the NAT rules make it arrive from there), the
-  module's own address, and loopback. On 8444, anyone else is just forwarded to
-  Ayla, with no key, telemetry, writes or rewrites. On 8888, anyone else gets 403.
+- The module-facing ports bind all interfaces but trust only a few addresses:
+  - **8444 (and 443 with `dns_server`):** loopback, the host's default
+    gateway (the NAT rules make the module arrive from there), the module's
+    own address, and `trusted_peers`. Anyone else is just forwarded to Ayla,
+    with no key, telemetry, writes or rewrites.
+  - **8888 (Local Connect):** loopback, the module's own address, and
+    `trusted_peers`. The gateway is not trusted here. Anyone else gets 403.
 - The state API is unauthenticated and on loopback by default.
 - The relay's TLS certificate is self-signed. The module does not validate it.
   The relay *does* verify Ayla's real certificate on the upstream side: the
@@ -343,7 +380,7 @@ Add-on options, or environment variables when running the relay directly:
   it there, or ignore the repair to keep it held. Only the allowed image's
   exact URL is fetched, from its real host, with the certificate verified.
 - The LAN key is generated locally, never logged, and stored at
-  `/data/lanip.json` (0600). Nothing here uses or stores A.O. Smith credentials.
+  `/data/heaters/<DSN>/lanip.json` (0600). Nothing here uses or stores A.O. Smith credentials.
 - The module's own Local Connect registration endpoint is unauthenticated by
   Ayla's design, so treat the heater's LAN segment as trusted.
 

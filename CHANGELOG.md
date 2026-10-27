@@ -23,6 +23,28 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   - the IP reservation is optional with DNS steering;
   - VLANs are workable;
   - the dashboard wording matches 0.7.5.
+- **The add-on's Documentation tab now has content:** `relay/ADDON.md` is
+  renamed to `relay/DOCS.md`, the file Home Assistant shows. It covers DNS and
+  NAT steering, where the keys live, and the update caveat.
+- **Corrections across the docs** (from a review against the code):
+  - STEERING.md no longer says mesh or ISP routers can't be used. They can,
+    with `dns_server`.
+  - The trusted peers are listed per port: 8888 doesn't trust the gateway.
+  - The LAN key's path is `/data/heaters/<DSN>/lanip.json`.
+  - Across VLANs needs DNAT and SNAT for the callback, plus `relay_ip`.
+  - The own-resolver steps are under their own heading, and say that
+    `listen_port: 443` is needed.
+  - The README's configuration table lists the remaining environment
+    variables (`DNS_REWRITE` for other models, `DNS_PORT`, `CLOUD_IDLE_AFTER`,
+    and others).
+  - Changelog links are absolute, so the add-on's copy works too.
+- **NAT is no longer presented as the only option:**
+  - "How it works" names DNS and NAT as the two ways to steer the heater;
+  - the add-on's docs page describes `dns_server`, replacing the pre-0.5.5
+    `listen_port: 443` + `module_ip` recipe;
+  - the troubleshooting rows cover both;
+  - **Uninstall says to restore the router's DHCP DNS before removing the
+    add-on.** Otherwise every device using it loses DNS.
 
 ## [0.7.6] - 2026-10-26
 
@@ -220,10 +242,10 @@ is needed.
     over the old one's entities. See `docs/MULTI_HEATER.md`.
 
 ### Added
-- **Multi-heater guide**, [docs/MULTI_HEATER.md](docs/MULTI_HEATER.md) (#18,
+- **Multi-heater guide**, [docs/MULTI_HEATER.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/MULTI_HEATER.md) (#18,
   phase 4): adding a heater, telling heaters apart, service targets, the
   primary heater and the relay's per-heater API, and limits.
-- **[docs/dashboard-multi.yaml](docs/dashboard-multi.yaml)**: a two-heater
+- **[docs/dashboard-multi.yaml](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/dashboard-multi.yaml)**: a two-heater
   view with a column per heater and shared 24-hour graphs. A test checks it
   against a two-heater install.
 
@@ -437,7 +459,7 @@ customised names, history, dashboards and automations are unchanged.
   credentials. It pins that address to that DSN (or `device_dsn`), persists
   it, and trusts it over Ayla's possibly stale `lan-ip`. A configured
   `module_ip` always wins. `/state` shows `lan.module_ip_source`.
-- [docs/DNS_STEERING.md](docs/DNS_STEERING.md): steering with an AdGuard (or
+- [docs/DNS_STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DNS_STEERING.md): steering with an AdGuard (or
   any DNS) rewrite instead of router NAT, tested end to end.
 
 ### Fixed
