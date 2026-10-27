@@ -155,9 +155,7 @@ async def test_tls13_is_refused(tmp_path, monkeypatch, openssl_available: None) 
         # Either a clean protocol alert or an immediate reset is acceptable; what
         # must not happen is a TLS 1.3 session.
         with pytest.raises((ssl.SSLError, ConnectionResetError)):
-            reader, writer = await __import__("asyncio").open_connection(
-                "127.0.0.1", port, ssl=client_ctx)
-            assert writer.get_extra_info("ssl_object").version() != "TLSv1.3"
+            await __import__("asyncio").open_connection("127.0.0.1", port, ssl=client_ctx)
     finally:
         server.close()
         await server.wait_closed()
