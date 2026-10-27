@@ -126,6 +126,9 @@ APP_REPORTING_MASK = (
     "00000000000000000000000000000000,"
     "10000000000000010111100000,"
     "00010000001111110000000001")
+# Commands delivered in a row with nothing authentic back before a suspected
+# desync is logged. Every delivery asks for a reply (an ack or a datapoint).
+DESYNC_AFTER = 3
 MASK_RE = re.compile(r"^[01]{73},[01]{105},[01]{26},[01]{26}$")
 
 
@@ -222,6 +225,13 @@ class LanServer:
         # otherwise only arrives at boot). Same read-only GET as telemetry.
         self.read_queue: list[str] = []
         self.masks_sent = 0
+        # Suspected CBC desync (detection only). Each reply advances our side's
+        # IV chain whether or not it arrives; if one is lost, the module can't
+        # decrypt anything after it. The sign: commands delivered, nothing
+        # authentic back. Counted and logged; recovery is left to the existing
+        # stall and re-key paths.
+        self.unanswered_deliveries = 0
+        self.suspected_desyncs = 0
         self.last_mask_sent = 0.0
 
     @property
@@ -464,6 +474,8 @@ class LanServer:
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
                 "stall_recoveries": self.stall_recoveries,
                 "masks_sent": self.masks_sent,
+                "unanswered_deliveries": self.unanswered_deliveries,
+                "suspected_desyncs": self.suspected_desyncs,
                 "last_mask_sent_age": round(now - self.last_mask_sent, 1)
                 if self.last_mask_sent else None}
 
@@ -548,6 +560,7 @@ class LanServer:
         except (KeyError, TypeError, AttributeError):
             return web.Response(status=400)
         self.session_verified = False
+        self.unanswered_deliveries = 0     # a new session starts a new chain
         self.last_poll = time.time()       # a new session counts as contact
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
@@ -626,8 +639,19 @@ class LanServer:
                 "data": "", "cmd_id": self.refresh_cmd_id,
                 "uri": "/local_lan/property/datapoint.json"}}]}
             _LOGGER.info("LAN mode: reading %s (cmd %d)", name, self.refresh_cmd_id)
+        if data:
+            self._note_delivery()
         return web.json_response(self.session.app.encrypt_sign(
             {"seq_no": self.seq_no, "data": data}))
+
+    def _note_delivery(self) -> None:
+        self.unanswered_deliveries += 1
+        if self.unanswered_deliveries == DESYNC_AFTER:
+            self.suspected_desyncs += 1
+            _LOGGER.warning("LAN mode: %d commands delivered with no authentic update or "
+                            "ack back; the module may have lost a reply and fallen out "
+                            "of step (suspected %d time(s))", DESYNC_AFTER,
+                            self.suspected_desyncs)
 
     async def _datapoint(self, request: web.Request) -> web.Response:
         if self.session is None:
@@ -651,6 +675,7 @@ class LanServer:
         self.updates += 1
         self.last_update = time.time()
         self.exchanges_since_update = 0
+        self.unanswered_deliveries = 0
         self.needs_key_push = False
         await self.relay.ingest_lan_update(update)
         return web.Response()

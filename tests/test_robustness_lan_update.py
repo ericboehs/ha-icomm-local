@@ -67,6 +67,32 @@ async def test_ingest_lan_update_tolerates_any_shape(lan, update):
     assert "controller_firmware" not in lan.relay.device.facts
 
 
+# -- #9: a suspected CBC desync is detected, not acted on ------------------------
+async def test_deliveries_with_nothing_back_are_flagged_once(lan, caplog):
+    session, lan.registered = lan.session, True
+    for _ in range(5):
+        lan.request_telemetry()
+        await lan._commands(None)
+    assert lan.unanswered_deliveries == 5
+    assert lan.status()["suspected_desyncs"] == 1
+    assert caplog.text.count("fallen out of step") == 1
+    assert lan.session is session and lan.registered is True       # no reconnect
+
+
+async def test_an_authentic_update_or_new_session_clears_the_count(lan):
+    lan.request_telemetry()
+    await lan._commands(None)
+    await lan._commands(None)                       # nothing to send: not counted
+    assert lan.unanswered_deliveries == 1
+    payload = {"seq_no": 1, "data": {"name": "faultCode", "value": "0"}}
+    assert (await lan._datapoint(_Json(_authentic(lan, payload)))).status == 200
+    assert lan.unanswered_deliveries == 0
+    lan.request_telemetry()
+    await lan._commands(None)
+    await lan._key_exchange(_Json({"key_exchange": EXCHANGE}))
+    assert lan.unanswered_deliveries == 0
+
+
 # -- #15: the advertised callback address follows the module --------------------
 class _RouteSocket:
     """socket.socket stand-in: our address toward a module, per its subnet."""
