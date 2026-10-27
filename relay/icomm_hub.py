@@ -207,9 +207,19 @@ class Hub:
         return response
 
     def _foreign_device(self, request: web.Request) -> bool:
+        """A /devices/<id>/ request no engine claimed: not the primary's?
+
+        Known primary ID: anything else is foreign. Unknown (a first boot, before
+        its config reply): with one heater it is the primary's, as a single
+        relay assumes; with another heater known (added, or refused for room)
+        it could be either, so it gets Ayla only until the ID is learned.
+        """
         device = DEVICE_PATH_RE.match(request.path)
-        return bool(device and self.primary.device_id
-                    and device.group(1) != self.primary.device_id)
+        if not device:
+            return False
+        if self.primary.device_id:
+            return device.group(1) != self.primary.device_id
+        return len(self.engines()) > 1 or bool(self.refused)
 
     def _needs_repin(self, engine: Relay, request: web.Request, peer: str) -> bool:
         return (request.method == "GET" and engine.lan.enabled
