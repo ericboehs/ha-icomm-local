@@ -29,6 +29,13 @@ def mock_recorder_before_hass(async_test_recorder) -> None:
     """Start the recorder before hass, as the plugin requires."""
 
 
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(recorder_mock, enable_custom_integrations):
+    """The recorder before custom integrations (and so before hass): older
+    plugins (HA 2024.1) set up hass in whichever fixture asks first."""
+    yield
+
+
 async def test_history_follows_the_renamed_sensors(recorder_mock, hass, aioclient_mock):
     hass.config.units = US_CUSTOMARY_SYSTEM
     entry = MockConfigEntry(domain="icomm_local", data={CONF_URL: URL}, title="iCOMM relay")
