@@ -23,6 +23,13 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   - the IP reservation is optional with DNS steering;
   - VLANs are workable;
   - the dashboard wording matches 0.7.5.
+- **NAT is no longer presented as the only option:**
+  - "How it works" names DNS and NAT as the two ways to steer the heater;
+  - the add-on's docs page describes `dns_server`, replacing the pre-0.5.5
+    `listen_port: 443` + `module_ip` recipe;
+  - the troubleshooting rows cover both;
+  - **Uninstall says to restore the router's DHCP DNS before removing the
+    add-on.** Otherwise every device using it loses DNS.
 
 ## [0.7.6] - 2026-10-26
 

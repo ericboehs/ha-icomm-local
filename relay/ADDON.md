@@ -11,8 +11,12 @@ Two things need doing outside Home Assistant:
      Recipes, including native UniFi NAT rules that survive reboots, are in
      [docs/STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/STEERING.md).
      DNAT chooses the port, so 443 can stay with whatever already owns it.
-   - **Or a DNS rewrite** of the module's device hostname to this host, with
-     `listen_port: 443` and `module_ip` set. That needs port 443 free here. See
+   - **Or DNS, with no router rules:** turn on `dns_server` and set the
+     router's DHCP DNS server to this host. That needs ports 53 and 443 free
+     here; Home Assistant raises a repair if they aren't. Check it with `dig`
+     before power-cycling the heater, and remember the router setting before
+     you uninstall. An existing AdGuard or Pi-hole can do the rewrite instead,
+     with `listen_port: 443`. See
      [docs/DNS_STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DNS_STEERING.md).
 2. Power-cycle the water heater once so it registers through the relay.
 
