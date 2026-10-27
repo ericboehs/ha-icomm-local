@@ -727,9 +727,13 @@ class Relay:
 
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
-        data = update.get("data") or {}
-        name = data.get("name") or ("ack" if "ack_status" in data else "?")
-        value = str(data.get("value", ""))
+        data = update.get("data") if isinstance(update, dict) else None
+        data = data if isinstance(data, dict) else {}
+        name = data.get("name")
+        name = name if isinstance(name, str) and name else (
+            "ack" if "ack_status" in data else "?")
+        raw = data.get("value")
+        value = raw if isinstance(raw, str) else "" if raw is None else str(raw)
         if name not in ("superBlockDyn1", "ack") and 0 < len(value) <= 512:
             # Small configuration/echo properties (periodicParameterSetting,
             # setBlockParameter echoes...) carry no secrets, and phase 30 showed
@@ -747,9 +751,9 @@ class Relay:
                 self.lan.read_queue.append("active_image_version")
             if "serial_number" not in self.device.facts:
                 self.lan.read_queue.append("superBlockStatic1")
-        if data.get("name") == "superBlockDyn1" and data.get("value"):
+        if name == "superBlockDyn1" and value:
             try:
-                blocks = [bytes.fromhex(part) for part in data["value"].split(",")]
+                blocks = [bytes.fromhex(part) for part in value.split(",")]
             except ValueError:
                 _LOGGER.warning("LAN telemetry undecodable")
             else:

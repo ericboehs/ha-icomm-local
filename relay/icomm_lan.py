@@ -129,6 +129,19 @@ APP_REPORTING_MASK = (
 MASK_RE = re.compile(r"^[01]{73},[01]{105},[01]{26},[01]{26}$")
 
 
+def _well_formed(update) -> bool:
+    """A LAN update as libada sends it: {"seq_no": n, "data": {...}}, with a
+    string name and a scalar value when they are present."""
+    if not isinstance(update, dict):
+        return False
+    data = update.get("data", {})
+    if not isinstance(data, dict):
+        return False
+    name, value = data.get("name"), data.get("value")
+    return ((name is None or isinstance(name, str))
+            and (value is None or isinstance(value, (str, int, float))))
+
+
 class LanServer:
     """The relay's local doorbell: registration, command polls, telemetry."""
 
@@ -616,6 +629,11 @@ class LanServer:
             update = self.session.dev.decrypt_validate(await request.json())
         except (ValueError, KeyError, TypeError) as err:
             _LOGGER.warning("LAN mode: undecryptable update: %r", err)
+            return web.Response(status=400)
+        if not _well_formed(update):
+            # Authentic but not the shape libada sends: refused before it can
+            # count as proof of the session or reach the relay.
+            _LOGGER.warning("LAN mode: malformed update (%s); ignored", type(update).__name__)
             return web.Response(status=400)
         if not self.session_verified and self.relay.pending:
             # A write queued while the session was re-keying waited for this
