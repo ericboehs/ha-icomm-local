@@ -10,6 +10,11 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Docs
+- **"Open in Home Assistant" buttons** in the install steps: one adds the
+  repository and opens the add-on, one opens the integration in HACS, one
+  starts the integration's setup.
+
 ## [0.7.7] - 2026-10-26
 
 ### Fixed (relay, from a code review)

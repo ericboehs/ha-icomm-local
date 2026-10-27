@@ -114,6 +114,11 @@ handbook and Use & Care guide, with what each page confirmed:
 
 ### 1. The add-on (relay)
 
+[![Open your Home Assistant instance and show the iCOMM Local Relay add-on.](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=3f70756d_icomm_relay&repository_url=https%3A%2F%2Fgithub.com%2Fericboehs%2Fha-icomm-local)
+
+The button adds this repository to your add-on store, if it isn't there yet,
+and opens the add-on. Or by hand:
+
 1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories** → add
    `https://github.com/ericboehs/ha-icomm-local`
 2. Install **iCOMM Local Relay** and start it. The defaults are fine: module
@@ -152,13 +157,19 @@ in [docs/DNS_STEERING.md](docs/DNS_STEERING.md#built-in-dns_server).
 
 ### 4. The integration
 
-With [HACS](https://hacs.xyz): HACS → ⋮ → **Custom repositories** → add
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ericboehs&repository=ha-icomm-local&category=integration)
+
+With [HACS](https://hacs.xyz): the button opens this repository in HACS
+(adding it as a custom repository) → **Download** → restart Home Assistant.
+By hand: HACS → ⋮ → **Custom repositories** → add
 `https://github.com/ericboehs/ha-icomm-local`, type **Integration** → install
-**iCOMM Local** → restart Home Assistant. Without HACS: copy
+**iCOMM Local** → restart. Without HACS: copy
 `custom_components/icomm_local/` into `config/custom_components/` and restart.
 
-Then Settings → Devices & services → **Add integration** → *iCOMM Local*, URL
-`http://127.0.0.1:8124`.
+[![Open your Home Assistant instance and start setting up iCOMM Local.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=icomm_local)
+
+Then add the integration (the button, or Settings → Devices & services →
+**Add integration** → *iCOMM Local*), URL `http://127.0.0.1:8124`.
 
 ## Using it
 
