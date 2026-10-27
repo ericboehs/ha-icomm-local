@@ -59,7 +59,8 @@ async def upstream(silent=False):
 
 
 def server(monkeypatch, **env) -> DnsServer:
-    for key in ("DNS_SERVER", "DNS_PORT", "DNS_UPSTREAM", "DNS_ANSWER", "DNS_REWRITE"):
+    for key in ("DNS_SERVER", "DNS_PORT", "DNS_HOST", "DNS_UPSTREAM", "DNS_ANSWER",
+                "DNS_REWRITE"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)

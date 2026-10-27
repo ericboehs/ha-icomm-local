@@ -62,7 +62,7 @@ import icomm_frames as frames
 from aiohttp import ClientSession, ClientSSLError, web
 from icomm_dns import DnsServer
 from icomm_firmware import FirmwareGate
-from icomm_heater import Heater, known_dsn
+from icomm_heater import Heater, known_dsn, write_private
 from icomm_lan import LanServer
 from icomm_peers import TRUSTED, PeerPolicy, normalize
 from yarl import URL
@@ -216,11 +216,18 @@ def heating_element(flags: int) -> str | None:
 
 
 DSN_PATH_RE = re.compile(r"/dsns/([A-Za-z0-9]{6,32})\.xml$")
+# decode()'s furthest reads: block 1 [100:102], block 3 [31], block 4 [46:48].
+# Real blocks are 146/52/52 bytes. Block 2 is optional (the fault table).
+MIN_B1, MIN_B3, MIN_B4 = 102, 32, 48
 
 
 def decode(blocks: list[bytes]) -> dict:
     """One telemetry post -> the fields the integration exposes."""
     b1, b2, b3, b4 = blocks[1], blocks[2], blocks[3], blocks[4]
+    # Slicing a short block reads zeros, not an error: an empty block 4 would
+    # decode as 0 W and 100 % hot water. The furthest offsets read below.
+    if len(b1) < MIN_B1 or len(b3) < MIN_B3 or len(b4) < MIN_B4:
+        raise IndexError("telemetry block too short")
     has_faults = len(b2) >= 56
     pair = (b3[30], b3[31])
     return {
@@ -287,9 +294,39 @@ def telemetry_blocks(body: bytes) -> list[bytes] | None:
         blob = text[start:end].strip()
         if "," not in blob:
             return None
-        return [bytes.fromhex(part) for part in blob.split(",") if part]
+        # Empty parts are kept, as on the LAN path: dropping one would shift
+        # every later block into the wrong place.
+        return [bytes.fromhex(part) for part in blob.split(",")]
     except (ValueError, IndexError):
         return None
+
+
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+# Restored PendingWrite fields and the types they must have (None allowed).
+_RESTORED_NUMBERS = ("queued", "delivered", "acked", "attempts", "ack_status",
+                     "reports_after_ack", "days")
+_RESTORED_STRINGS = ("frame", "kind", "delivery_path", "command_id")
+
+
+def _restorable(kind, entry) -> bool:
+    """A saved write of a shape the queue can use: a hand-edited or foreign
+    queue file must not crash start-up or, later, every telemetry report."""
+    if not isinstance(kind, str) or not isinstance(entry, dict):
+        return False
+    if any(entry.get(k) is not None and not _number(entry[k]) for k in _RESTORED_NUMBERS):
+        return False
+    if any(entry.get(k) is not None and not isinstance(entry[k], str)
+           for k in _RESTORED_STRINGS):
+        return False
+    if entry.get("kind", kind) != kind:
+        return False
+    value = entry.get("value")
+    if kind == "setpoint":
+        return _number(value)           # _confirm_pending does float() on it
+    return kind != "mode" or isinstance(value, str)
 
 
 DEVICE_ID_RE = re.compile(r"<key>(\d{1,20})</key>")
@@ -325,6 +362,7 @@ class Relay:
         self._last_blocks: tuple[bytes, ...] | None = None
         self._last_active_fault: int | None = None
         self.decode_errors = 0
+        self.ingest_errors = 0
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Heating changes tank temperatures within minutes: the longest healthy
         # gap between controller pushes while heating was 10 min (n=115); idle
@@ -477,6 +515,11 @@ class Relay:
         exception: a command poll may carry a locally queued write instead of
         (never in addition to) whatever Ayla had queued for it.
         """
+        if transform is None and "commands.xml" in request.path:
+            # FIRMWARE_UPDATES=hold covers every command poll that passes
+            # through, trusted or not: an untrusted peer or a heater no engine
+            # owns (hub) is still a module that would install an OTA command.
+            transform = self.firmware.filter
         body = await request.read()
         headers = {
             k: v for k, v in request.headers.items()
@@ -577,8 +620,18 @@ class Relay:
     async def telemetry(self, request: web.Request) -> web.Response:
         """superBlockDyn1 POST: decode, then forward as if we were not here."""
         body = await request.read()
-        self._ingest_blocks(telemetry_blocks(body))
+        self._safe_ingest(telemetry_blocks(body))
         return await self.proxy(request)
+
+    def _safe_ingest(self, blocks: list[bytes] | None, lan: bool = False) -> None:
+        """_ingest_blocks, but a bug in it must not cost the report its trip
+        to Ayla (cloud) or turn into a 500 for the module (LAN)."""
+        try:
+            self._ingest_blocks(blocks, lan=lan)
+        except Exception as err:  # noqa: BLE001 -- forwarding must happen regardless
+            self.ingest_errors += 1
+            _LOGGER.warning("telemetry ingest failed (%s); %d so far",
+                            type(err).__name__, self.ingest_errors)
 
     def _ingest_blocks(self, blocks: list[bytes] | None, lan: bool = False) -> None:
         """Decode a superBlockDyn1 report, from the cloud POST or the LAN."""
@@ -679,9 +732,13 @@ class Relay:
 
     async def ingest_lan_update(self, update: dict) -> None:
         """A decrypted LAN property update: telemetry, or a write ack."""
-        data = update.get("data") or {}
-        name = data.get("name") or ("ack" if "ack_status" in data else "?")
-        value = str(data.get("value", ""))
+        data = update.get("data") if isinstance(update, dict) else None
+        data = data if isinstance(data, dict) else {}
+        name = data.get("name")
+        name = name if isinstance(name, str) and name else (
+            "ack" if "ack_status" in data else "?")
+        raw = data.get("value")
+        value = raw if isinstance(raw, str) else "" if raw is None else str(raw)
         if name not in ("superBlockDyn1", "ack") and 0 < len(value) <= 512:
             # Small configuration/echo properties (periodicParameterSetting,
             # setBlockParameter echoes...) carry no secrets, and phase 30 showed
@@ -699,12 +756,13 @@ class Relay:
                 self.lan.read_queue.append("active_image_version")
             if "serial_number" not in self.device.facts:
                 self.lan.read_queue.append("superBlockStatic1")
-        if data.get("name") == "superBlockDyn1" and data.get("value"):
+        if name == "superBlockDyn1" and value:
             try:
-                self._ingest_blocks([bytes.fromhex(part)
-                                     for part in data["value"].split(",")], lan=True)
+                blocks = [bytes.fromhex(part) for part in value.split(",")]
             except ValueError:
                 _LOGGER.warning("LAN telemetry undecodable")
+            else:
+                self._safe_ingest(blocks, lan=True)
         elif "ack_status" in data:
             _LOGGER.info("LAN write ack: status %s id %s",
                          data.get("ack_status"), data.get("id"))
@@ -822,9 +880,17 @@ class Relay:
         except (OSError, ValueError):
             _LOGGER.warning("unreadable queue file %s; starting empty", self.queue_file)
             return
+        if not isinstance(saved, dict):
+            _LOGGER.warning("queue file %s is not a JSON object; starting empty",
+                            self.queue_file)
+            return
         now = time.time()
         restored = 0
-        for kind, entry in (saved.get("pending") or {}).items():
+        pending = saved.get("pending")
+        for kind, entry in (pending.items() if isinstance(pending, dict) else ()):
+            if not _restorable(kind, entry):
+                _LOGGER.warning("dropping a malformed queued write from the queue file")
+                continue
             queued = entry.get("queued") or now
             if now - queued > self.queue_max_age_s:
                 # Older than the appliance could plausibly still care about. Dropping
@@ -850,7 +916,8 @@ class Relay:
             if write.frame:
                 self.pending[kind] = write
                 restored += 1
-        self.last_write = saved.get("last_write")
+        last_write = saved.get("last_write")
+        self.last_write = last_write if isinstance(last_write, dict) else None
         self.queue_restored = restored
         if restored:
             _LOGGER.info("restored %d queued write(s) from %s", restored, self.queue_file)
@@ -947,13 +1014,16 @@ class Relay:
             return False
         if last.get("kind") in self.pending:
             return False                # a newer write for the register owns it now
-        if not last.get("delivered") or time.time() - float(last["delivered"]) > 3600:
+        delivered = last.get("delivered")
+        if not _number(delivered) or time.time() - delivered > 3600:
             # Never sent, or long ago: a matching value now is more likely the
             # app or a person at the tank than our write landing late.
             return False
         got = self.state.get(last.get("kind"))
         if last.get("kind") == "setpoint":
-            took = got is not None and abs(float(got) - float(last.get("value", -999))) <= 0.5
+            value = last.get("value")
+            took = (got is not None and _number(value)
+                    and abs(float(got) - float(value)) <= 0.5)
         else:
             took = got is not None and got == last.get("value")
         if took:
@@ -1114,12 +1184,17 @@ class Relay:
             return None
         self.lan.learn_module_ip(text)
         evidence = self.heater.dir
-        evidence.mkdir(parents=True, exist_ok=True)
-        (evidence / "dsn-original.xml").write_bytes(payload)
-        (evidence / "dsn-rewritten.xml").write_text(text)
+        rewritten = text.encode()
+        try:
+            # Atomic and 0600: dsn-original.xml is the offline fallback's
+            # source, and a disk error must not turn Ayla's 200 into ours.
+            write_private(evidence / "dsn-original.xml", payload)
+            write_private(evidence / "dsn-rewritten.xml", rewritten)
+        except OSError as err:
+            _LOGGER.warning("DSN rewrite: evidence not saved (%s)", type(err).__name__)
         _LOGGER.warning("DSN rewrite: flipped %s in config reply (evidence in %s)",
                         ", ".join(switched), evidence)
-        return text.encode()
+        return rewritten
 
     # -- the Home-Assistant-facing side --------------------------------
     async def write_handler(self, request: web.Request) -> web.Response:
@@ -1224,6 +1299,7 @@ class Relay:
         unchanged = (round(time.time() - self.contents_changed)
                      if self.contents_changed else None)
         out["decode_errors"] = self.decode_errors
+        out["ingest_errors"] = self.ingest_errors
         out["contents_unchanged_s"] = unchanged
         out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None

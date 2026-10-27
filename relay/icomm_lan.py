@@ -48,6 +48,7 @@ from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, web
 from Crypto.Cipher import AES
+from icomm_heater import write_private
 
 _LOGGER = logging.getLogger("icomm_lan")
 LAN_IP_RE = re.compile(r"<lan-ip>([^<]+)</lan-ip>")
@@ -125,7 +126,23 @@ APP_REPORTING_MASK = (
     "00000000000000000000000000000000,"
     "10000000000000010111100000,"
     "00010000001111110000000001")
+# Commands delivered in a row with nothing authentic back before a suspected
+# desync is logged. Every delivery asks for a reply (an ack or a datapoint).
+DESYNC_AFTER = 3
 MASK_RE = re.compile(r"^[01]{73},[01]{105},[01]{26},[01]{26}$")
+
+
+def _well_formed(update) -> bool:
+    """A LAN update as libada sends it: {"seq_no": n, "data": {...}}, with a
+    string name and a scalar value when they are present."""
+    if not isinstance(update, dict):
+        return False
+    data = update.get("data", {})
+    if not isinstance(data, dict):
+        return False
+    name, value = data.get("name"), data.get("value")
+    return ((name is None or isinstance(name, str))
+            and (value is None or isinstance(value, (str, int, float))))
 
 
 class LanServer:
@@ -150,10 +167,14 @@ class LanServer:
         self.module_ip_observed = False
         self.module_dsn: str | None = None
         self.advertise_ip = os.environ.get("RELAY_IP", "") or None
+        # The module_ip a derived advertise_ip was worked out for; None while
+        # it is RELAY_IP's (or not derived yet), which is never re-derived.
+        self._advertised_for: str | None = None
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         # LANIP_FILE pins the key somewhere fixed (development); otherwise it
         # follows the heater's directory, which may be renamed once its DSN is known.
         self._key_file_override = "" if secondary else os.environ.get("LANIP_FILE", "")
+        self.key_quarantined = 0          # unusable key files moved aside at start
         self.key = self._load_or_create_key()
         self.key_served_at = 0.0          # when we last answered lan.json
         self.registered = False
@@ -204,6 +225,13 @@ class LanServer:
         # otherwise only arrives at boot). Same read-only GET as telemetry.
         self.read_queue: list[str] = []
         self.masks_sent = 0
+        # Suspected CBC desync (detection only). Each reply advances our side's
+        # IV chain whether or not it arrives; if one is lost, the module can't
+        # decrypt anything after it. The sign: commands delivered, nothing
+        # authentic back. Counted and logged; recovery is left to the existing
+        # stall and re-key paths.
+        self.unanswered_deliveries = 0
+        self.suspected_desyncs = 0
         self.last_mask_sent = 0.0
 
     @property
@@ -224,43 +252,73 @@ class LanServer:
         override = "" if self.secondary else os.environ.get("LANIP_KEY", "")
         if override:
             return override
+        path = self.key_file
         try:
-            saved = json.loads(self.key_file.read_text())
-            if saved.get("lanip_key"):
-                self.key_id = int(saved.get("lanip_key_id", self.key_id))
-                # The module's address is only announced at re-registration,
-                # which can be hours after a relay restart: remember it.
-                self.module_ip = self.module_ip or saved.get("module_ip")
-                self.module_ip_observed = (not self.module_ip_configured
-                                           and bool(saved.get("module_ip_observed")))
-                self.module_dsn = saved.get("module_dsn")
-                return saved["lanip_key"]
-        except (OSError, ValueError):
-            pass
+            saved = json.loads(path.read_text())
+            key_id = int(saved.get("lanip_key_id", self.key_id))
+            key = saved["lanip_key"]
+            if not isinstance(key, str) or not key:
+                raise ValueError("no key")
+        except (FileNotFoundError, NotADirectoryError):
+            pass                                # first start: mint one below
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as err:
+            # A key file that is there but unusable (torn, hand-edited, not a
+            # JSON object) may still hold the key the module has. Overwriting
+            # it would strand the module for good, so keep it aside first.
+            if not self._quarantine_key_file(path, err):
+                return secrets.token_urlsafe(21)        # in memory only; see the log
+        else:
+            self.key_id = key_id
+            # The module's address is only announced at re-registration,
+            # which can be hours after a relay restart: remember it.
+            saved_ip = saved.get("module_ip")
+            self.module_ip = self.module_ip or (saved_ip if isinstance(saved_ip, str)
+                                                else None)
+            self.module_ip_observed = (not self.module_ip_configured
+                                       and bool(saved.get("module_ip_observed")))
+            saved_dsn = saved.get("module_dsn")
+            self.module_dsn = saved_dsn if isinstance(saved_dsn, str) else None
+            return key
         key = secrets.token_urlsafe(21)       # 28 chars; libada caps at 32
         try:
-            self.key_file.parent.mkdir(parents=True, exist_ok=True)
-            self.key_file.write_text(json.dumps(
-                {"lanip_key": key, "lanip_key_id": self.key_id}))
-            os.chmod(self.key_file, 0o600)
-            _LOGGER.info("LAN mode: generated a new shared key at %s", self.key_file)
+            write_private(path, json.dumps(
+                {"lanip_key": key, "lanip_key_id": self.key_id}).encode())
+            _LOGGER.info("LAN mode: generated a new shared key at %s", path)
         except OSError as err:
             _LOGGER.warning("LAN mode: key not persisted (%s); a restart will strand "
-                            "a module that already learned it", err)
+                            "a module that already learned it", type(err).__name__)
         return key
+
+    def _quarantine_key_file(self, path: Path, err: Exception) -> bool:
+        """Move an unusable key file to <name>.corrupt-<time>; False if it stayed."""
+        self.key_quarantined += 1
+        earlier = len(list(path.parent.glob(f"{path.name}.corrupt-*")))
+        aside = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        try:
+            path.rename(aside)
+        except OSError as move_err:
+            _LOGGER.error("LAN mode: the key file is unusable (%s) and could not be "
+                          "moved aside (%s); using a temporary key and leaving the "
+                          "file alone", type(err).__name__, type(move_err).__name__)
+            return False
+        _LOGGER.error("LAN mode: the key file is unusable (%s); kept it as %s and "
+                      "minting a new key. A module holding the old key is re-keyed "
+                      "through the cloud once it is detected (%d earlier corrupt "
+                      "key file(s) beside it)", type(err).__name__, aside.name, earlier)
+        return True
 
     def _persist(self) -> None:
         """Rewrite the key file with the learned module address (still 0600)."""
         if os.environ.get("LANIP_KEY") and not self.secondary:
             return                      # dev override: nothing of ours on disk
         try:
-            self.key_file.write_text(json.dumps({
+            write_private(self.key_file, json.dumps({
                 "lanip_key": self.key, "lanip_key_id": self.key_id,
                 "module_ip": self.module_ip, "module_ip_observed": self.module_ip_observed,
-                "module_dsn": self.module_dsn}))
-            os.chmod(self.key_file, 0o600)
+                "module_dsn": self.module_dsn}).encode())
         except OSError as err:
-            _LOGGER.warning("LAN mode: could not persist module address: %s", err)
+            _LOGGER.warning("LAN mode: could not persist module address: %s",
+                            type(err).__name__)
 
     def lan_json(self) -> dict:
         """Answer the agent's GET /devices/<key>/lan.json with our own key."""
@@ -410,22 +468,29 @@ class LanServer:
                 "last_registration_result": self.last_registration_result,
                 "registration_failures": self.registration_failures,
                 "needs_key_push": self.needs_key_push,
+                "key_quarantined": self.key_quarantined,
                 "refresh_pending": self.refresh_pending,
                 "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
                 "stall_recoveries": self.stall_recoveries,
                 "masks_sent": self.masks_sent,
+                "unanswered_deliveries": self.unanswered_deliveries,
+                "suspected_desyncs": self.suspected_desyncs,
                 "last_mask_sent_age": round(now - self.last_mask_sent, 1)
                 if self.last_mask_sent else None}
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
-        if not self.advertise_ip and self.module_ip:
+        derived_stale = (self._advertised_for is not None
+                         and self._advertised_for != self.module_ip)
+        if self.module_ip and (not self.advertise_ip or derived_stale):
             # The address the module should call back on: ours, on its subnet.
+            # Worked out again when the module moves (a new VLAN, DHCP).
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
                 sock.connect((self.module_ip, 80))
                 self.advertise_ip = sock.getsockname()[0]
+                self._advertised_for = self.module_ip
             finally:
                 sock.close()
         return {"local_reg": {"ip": self.advertise_ip, "port": self.port,
@@ -495,6 +560,7 @@ class LanServer:
         except (KeyError, TypeError, AttributeError):
             return web.Response(status=400)
         self.session_verified = False
+        self.unanswered_deliveries = 0     # a new session starts a new chain
         self.last_poll = time.time()       # a new session counts as contact
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
@@ -573,8 +639,19 @@ class LanServer:
                 "data": "", "cmd_id": self.refresh_cmd_id,
                 "uri": "/local_lan/property/datapoint.json"}}]}
             _LOGGER.info("LAN mode: reading %s (cmd %d)", name, self.refresh_cmd_id)
+        if data:
+            self._note_delivery()
         return web.json_response(self.session.app.encrypt_sign(
             {"seq_no": self.seq_no, "data": data}))
+
+    def _note_delivery(self) -> None:
+        self.unanswered_deliveries += 1
+        if self.unanswered_deliveries == DESYNC_AFTER:
+            self.suspected_desyncs += 1
+            _LOGGER.warning("LAN mode: %d commands delivered with no authentic update or "
+                            "ack back; the module may have lost a reply and fallen out "
+                            "of step (suspected %d time(s))", DESYNC_AFTER,
+                            self.suspected_desyncs)
 
     async def _datapoint(self, request: web.Request) -> web.Response:
         if self.session is None:
@@ -583,6 +660,11 @@ class LanServer:
             update = self.session.dev.decrypt_validate(await request.json())
         except (ValueError, KeyError, TypeError) as err:
             _LOGGER.warning("LAN mode: undecryptable update: %r", err)
+            return web.Response(status=400)
+        if not _well_formed(update):
+            # Authentic but not the shape libada sends: refused before it can
+            # count as proof of the session or reach the relay.
+            _LOGGER.warning("LAN mode: malformed update (%s); ignored", type(update).__name__)
             return web.Response(status=400)
         if not self.session_verified and self.relay.pending:
             # A write queued while the session was re-keying waited for this
@@ -593,6 +675,7 @@ class LanServer:
         self.updates += 1
         self.last_update = time.time()
         self.exchanges_since_update = 0
+        self.unanswered_deliveries = 0
         self.needs_key_push = False
         await self.relay.ingest_lan_update(update)
         return web.Response()

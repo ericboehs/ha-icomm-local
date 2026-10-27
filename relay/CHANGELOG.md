@@ -10,6 +10,49 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+### Fixed (relay, from a code review)
+- **A damaged LAN key file no longer strands the heater.**
+  - **Before:** a corrupt or wrong-shaped `lanip.json` made the relay mint a
+    new key over it, so the module was left holding the old one.
+  - **Now:** the relay renames the file to `lanip.json.corrupt-<time>`, logs
+    an error, then mints a key (and `/state` counts it in `key_quarantined`).
+  - **Writes:** the key file, the write queue and the DSN evidence files are
+    written atomically and created 0600.
+- **Telemetry always reaches Ayla:** a bug while decoding a report no longer
+  turns the module's POST into a 500. It's counted (`ingest_errors`) and the
+  report is forwarded anyway.
+- **Telemetry decoding:**
+  - an empty part no longer shifts later blocks into the wrong place;
+  - a block too short to decode is a counted decode error, not a stream of
+    zeros.
+- **Firmware hold covers every path:** OTA commands in `commands.xml` replies
+  are held even for untrusted or foreign-device requests.
+- **Several heaters:**
+  - while the primary's device ID is still unknown, another heater's
+    `/devices/<id>/` requests no longer reach the primary;
+  - the refused-heater list is capped at 64.
+- **The built-in DNS server:**
+  - answers only private, link-local and loopback addresses;
+  - caps concurrent forwards (128) and each client's rate (100 per second);
+  - drops duplicate retransmits, responses and runt packets;
+  - answers other opcodes with NOTIMP;
+  - refuses to start when `dns_upstream` points back at itself or has a bad
+    port;
+  - a client asking over TCP now gets the full answer: a truncated UDP reply
+    is re-asked over TCP;
+  - drops are counted in `/state` `dns.dropped`;
+  - new `DNS_HOST` sets the listening address.
+- **Robust loading:** a queue or device file of the wrong shape no longer
+  crashes start-up, and malformed queued writes are dropped.
+- **Malformed LAN updates:** they're refused with a 400 instead of a 500, and
+  don't mark the session verified.
+- **Local Connect callback:** the callback address the module is given is
+  worked out again when the module's address changes. A `relay_ip` that is
+  set is kept.
+- **Suspected encryption desync:** after 3 unanswered LAN deliveries in a row,
+  the relay logs one warning and counts it (`lan.suspected_desyncs`). It
+  doesn't reconnect.
+
 ### Docs
 - **DNS steering:**
   - the built-in `dns_server` is marked tested (live since 0.5.5), with its

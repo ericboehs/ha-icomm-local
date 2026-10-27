@@ -61,6 +61,28 @@ def clean_dsn(value) -> str | None:
     return None if dsn in RESERVED else dsn
 
 
+def write_private(path: Path, data: bytes) -> None:
+    """Replace `path` with `data` atomically, owner-only (0600) from creation.
+
+    A crash mid-write leaves the old file, never a torn one, and the bytes are
+    never readable under the process umask, even briefly. Raises OSError.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o600)    # a stale temporary keeps its old mode
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        raise
+
+
 def _json(path: Path) -> dict:
     try:
         data = json.loads(path.read_text())

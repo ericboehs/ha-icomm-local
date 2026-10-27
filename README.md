@@ -341,6 +341,7 @@ Add-on options, or environment variables when running the relay directly:
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [docs/DNS_STEERING.md](docs/DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |
 | `DNS_PORT` | 53 | the port `dns_server` listens on |
+| `DNS_HOST` | all interfaces | the address `dns_server` listens on (UDP and TCP) |
 | `DNS_ANSWER` | detected | the address `dns_server` answers for the heater's cloud name. By default, the host's own address on the route to the asking client |
 | `DNS_REWRITE` | `[a-z0-9-]+-71538015-device\.aylanetworks\.com` | the names `dns_server` rewrites, as a case-insensitive regular expression matched against the whole name. Change it if your model uses another hostname (see [docs/DNS_STEERING.md](docs/DNS_STEERING.md#1-the-dns-rewrite)) |
 | `max_heaters` / `MAX_HEATERS` | 4 | how many water heaters the relay serves (#18). Each new one is added when Ayla accepts its config fetch; the relay's API has `/heaters`, `/heaters/<dsn>/...`, and `DELETE /heaters/<dsn>?confirm=<dsn>` to forget one. Each heater is its own device in HA |
