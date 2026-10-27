@@ -7,10 +7,9 @@ import json
 import os
 
 import pytest
+from icomm_relay import FROZEN_UNKNOWN, telemetry_blocks
 from test_lan import _server
 from test_proxy import _relay, _telemetry_body
-
-from relay.icomm_relay import FROZEN_UNKNOWN, telemetry_blocks
 
 HEATING = telemetry_blocks(_telemetry_body())                              # electric, 4500 W
 IDLE = telemetry_blocks(_telemetry_body("telemetry_heat_pump_cooldown.json"))  # 0 W

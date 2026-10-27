@@ -16,10 +16,9 @@ import os
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from icomm_lan import APP_REPORTING_MASK, MASK_RE
+from icomm_relay import telemetry_blocks
 from test_lan import EXCHANGE, SECRET, _server, module_directions
 from test_proxy import _telemetry_body
-
-from relay.icomm_relay import telemetry_blocks
 
 POLL = make_mocked_request("GET", "/local_lan/commands.json", app=web.Application())
 

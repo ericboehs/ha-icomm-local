@@ -16,8 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from Crypto.Cipher import AES
 from icomm_lan import LanServer, Session
-
-from relay.icomm_relay import Relay
+from icomm_relay import Relay
 
 SECRET = "test-lanip-key-28-chars-pad!!"
 EXCHANGE = {"ver": 1, "proto": 1, "random_1": "RpAKxT1NIl6t8XgK",

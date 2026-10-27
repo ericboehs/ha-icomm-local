@@ -11,8 +11,8 @@ import asyncio
 import json
 import logging
 import os
+import socket
 
-import icomm_lan
 import pytest
 from aiohttp import web
 from icomm_lan import LanServer
@@ -122,7 +122,7 @@ async def test_pause_without_a_wake_event_just_sleeps(tmp_path, monkeypatch):
     async def fake_sleep(delay):
         slept.append(delay)
 
-    monkeypatch.setattr(icomm_lan.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr("icomm_lan.asyncio.sleep", fake_sleep)
     await lan._pause(7.0)
     assert slept == [7.0]
 
@@ -203,18 +203,18 @@ def test_registration_body_detects_our_address_on_the_modules_subnet(tmp_path, m
         def close(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(icomm_lan.socket, "socket", FakeSocket)
+    monkeypatch.setattr("icomm_lan.socket.socket", FakeSocket)
     assert lan._registration_body()["local_reg"]["ip"] == "10.0.1.113"
     sock, = sockets
     assert sock.connected == (MODULE, 80)      # UDP connect: routing only, no packet
-    assert sock.kind == icomm_lan.socket.SOCK_DGRAM and sock.closed
+    assert sock.kind == socket.SOCK_DGRAM and sock.closed
     lan._registration_body()
     assert len(sockets) == 1                   # learned once
 
 
 def test_registration_body_respects_relay_ip(tmp_path, monkeypatch):
     relay = _relay(tmp_path, monkeypatch, RELAY_IP="192.168.9.9")
-    monkeypatch.setattr(icomm_lan.socket, "socket", None)   # must not be needed
+    monkeypatch.setattr("icomm_lan.socket.socket", None)   # must not be needed
     assert relay.lan._registration_body()["local_reg"]["ip"] == "192.168.9.9"
 
 

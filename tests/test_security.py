@@ -11,15 +11,13 @@ import time
 from unittest import mock
 
 import aiohttp
-import icomm_lan
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from icomm_lan import Session
 from icomm_peers import PeerPolicy, default_gateways
+from icomm_relay import MAX_ATTEMPTS, RETIRE_AFTER_S, Relay
 from test_lan import EXCHANGE, SECRET, _server, module_directions
-
-from relay.icomm_relay import MAX_ATTEMPTS, RETIRE_AFTER_S, Relay
 
 GATEWAY, MODULE, STRANGER = "10.0.1.1", "10.0.1.187", "10.0.1.66"
 
@@ -273,7 +271,7 @@ async def test_registration_loop_survives_a_non_oserror(tmp_path, monkeypatch):
         if sleeps >= 3:
             raise asyncio.CancelledError
 
-    monkeypatch.setattr(icomm_lan.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr("icomm_lan.asyncio.sleep", fake_sleep)
     with pytest.raises(asyncio.CancelledError):
         await lan._registration_loop()
     assert lan.registration_failures == 3

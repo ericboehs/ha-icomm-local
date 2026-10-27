@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from icomm_relay import decode
 from test_proxy import _relay
-
-from relay.icomm_relay import decode
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
