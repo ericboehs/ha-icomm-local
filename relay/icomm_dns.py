@@ -144,6 +144,9 @@ class DnsServer:
     def __init__(self) -> None:
         self.enabled = os.environ.get("DNS_SERVER", "0") == "1"
         self.port = int(os.environ.get("DNS_PORT", "53"))
+        # Listening address: every interface by default (the heater must reach
+        # it); tests and multi-homed hosts can narrow it.
+        self.host = os.environ.get("DNS_HOST", "").strip() or "0.0.0.0"
         self.upstream = os.environ.get("DNS_UPSTREAM", "").strip() or None
         self.answer_ip = os.environ.get("DNS_ANSWER", "").strip() or None
         self.rewrite = re.compile(os.environ.get("DNS_REWRITE", "") or DEFAULT_REWRITE,
@@ -188,7 +191,7 @@ class DnsServer:
             return (host, int(port)) if 1 <= int(port) <= 65535 else None
         return (address, 53)
 
-    async def resolve(self, packet: bytes, client: str) -> bytes:
+    async def resolve(self, packet: bytes, client: str, tcp: bool = False) -> bytes:
         """One query in, one reply out (empty bytes: drop it)."""
         self.queries += 1
         if not allowed_client(client):
@@ -223,7 +226,12 @@ class DnsServer:
         self.in_flight += 1
         self._in_flight_keys.add(key)
         try:
-            return await self.forward(packet)
+            reply = await self.forward(packet)
+            if tcp and len(reply) > 2 and reply[2] & 0x02:
+                # Truncated over UDP, and the client asked over TCP precisely to
+                # get the whole answer: ask upstream over TCP too.
+                reply = await self.forward_tcp(packet) or reply
+            return reply
         finally:
             self.in_flight -= 1
             self._in_flight_keys.discard(key)
@@ -278,6 +286,31 @@ class DnsServer:
         self.forwarded += 1
         return data
 
+    async def forward_tcp(self, packet: bytes) -> bytes:
+        """The same question over TCP (RFC 7766 framing). Empty bytes on any
+        failure: the caller then keeps the truncated UDP reply."""
+        endpoint = self._upstream_endpoint()
+        if not endpoint:
+            return b""
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(*endpoint), FORWARD_TIMEOUT)
+            writer.write(struct.pack(">H", len(packet)) + packet)
+            await writer.drain()
+            size = struct.unpack(">H", await asyncio.wait_for(
+                reader.readexactly(2), FORWARD_TIMEOUT))[0]
+            data = await asyncio.wait_for(reader.readexactly(size), FORWARD_TIMEOUT)
+        except (OSError, TimeoutError, asyncio.IncompleteReadError) as err:
+            self._fail(f"{endpoint[0]}:{endpoint[1]} over TCP: {type(err).__name__}")
+            return b""
+        finally:
+            if writer is not None:
+                writer.close()
+        if data[:2] != packet[:2]:
+            return b""
+        return data
+
     def _fail(self, message: str) -> None:
         self.failures += 1
         if message != self.last_error:
@@ -319,7 +352,8 @@ class DnsServer:
                     size = struct.unpack(
                         ">H", await asyncio.wait_for(reader.readexactly(2), 10))[0]
                     data = await asyncio.wait_for(reader.readexactly(size), 10)
-                    out = await server.resolve(data, writer.get_extra_info("peername")[0])
+                    out = await server.resolve(data, writer.get_extra_info("peername")[0],
+                                               tcp=True)
                     if out:
                         writer.write(struct.pack(">H", len(out)) + out)
                         await writer.drain()
@@ -328,8 +362,8 @@ class DnsServer:
 
         try:
             self._transport, _ = await loop.create_datagram_endpoint(
-                _Udp, local_addr=("0.0.0.0", self.port))
-            self._tcp = await asyncio.start_server(_tcp, "0.0.0.0", self.port)
+                _Udp, local_addr=(self.host, self.port))
+            self._tcp = await asyncio.start_server(_tcp, self.host, self.port)
         except OSError as err:
             self.error = f"could not listen on port {self.port}: {err.strerror or err}"
             _LOGGER.error("DNS: %s. Is another DNS server (AdGuard, Pi-hole) running "

@@ -181,7 +181,7 @@ async def test_the_tcp_writer_is_closed_even_when_resolve_fails(monkeypatch):
     await dns.start()
     closed = asyncio.Event()
 
-    async def boom(packet, client):
+    async def boom(packet, client, tcp=False):
         try:
             raise RuntimeError("bug")
         finally:
@@ -242,3 +242,77 @@ async def test_other_opcodes_get_notimp(monkeypatch, opcode):
 def test_notimp_shape():
     q = query("a.example", flags=(4 << 11))
     assert notimp(q)[3] == 0x84 and notimp(q)[12:] == q[12:]
+
+
+# -- TCP clients get the whole answer; the listening address is configurable --------
+async def _tcp_upstream(reply_id_ok=True):
+    """A TCP-only upstream answering with a full (TC=0) reply."""
+    from icomm_dns import answer, parse_question
+
+    async def handle(reader, writer):
+        size = struct.unpack(">H", await reader.readexactly(2))[0]
+        data = await reader.readexactly(size)
+        _, _, _, end = parse_question(data)
+        out = answer(data, end, "203.0.113.7")
+        if not reply_id_ok:
+            out = bytes([out[0] ^ 0xFF]) + out[1:]
+        writer.write(struct.pack(">H", len(out)) + out)
+        await writer.drain()
+        writer.close()
+
+    srv = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return srv, srv.sockets[0].getsockname()[1]
+
+
+def _truncated(packet):
+    return packet[:2] + b"\x83\x80" + packet[4:]           # QR, TC, RD; RA
+
+
+@pytest.mark.parametrize("tcp, id_ok, want_tc", [
+    (True, True, False),       # TCP client: re-asked over TCP, full answer
+    (False, True, True),       # UDP client: TC=1 tells it to retry over TCP itself
+    (True, False, True)])      # upstream's TCP answer under another id: keep TC=1
+async def test_a_truncated_reply_is_re_asked_over_tcp_for_tcp_clients(
+        monkeypatch, tcp, id_ok, want_tc):
+    srv, port = await _tcp_upstream(id_ok)
+    try:
+        dns = server(monkeypatch, DNS_UPSTREAM=f"127.0.0.1:{port}")
+
+        async def udp_truncated(packet):
+            return _truncated(packet)
+
+        monkeypatch.setattr(dns, "forward", udp_truncated)
+        reply = await dns.resolve(query("big.example"), "10.0.1.50", tcp=tcp)
+        assert bool(reply[2] & 0x02) is want_tc
+    finally:
+        srv.close()
+        await srv.wait_closed()
+
+
+async def test_tcp_upstream_down_keeps_the_truncated_reply(monkeypatch):
+    port = free_port()                                  # nothing listens on TCP here
+    dns = server(monkeypatch, DNS_UPSTREAM=f"127.0.0.1:{port}")
+
+    async def udp_truncated(packet):
+        return _truncated(packet)
+
+    monkeypatch.setattr(dns, "forward", udp_truncated)
+    reply = await dns.resolve(query("big.example"), "10.0.1.50", tcp=True)
+    assert reply[2] & 0x02 and "over TCP" in dns.last_error
+
+
+async def test_dns_host_narrows_the_listening_address(monkeypatch):
+    dns = server(monkeypatch, DNS_SERVER="1", DNS_PORT="0", DNS_HOST="127.0.0.1")
+    await dns.start()
+    try:
+        assert dns._transport.get_extra_info("sockname")[0] == "127.0.0.1"
+        assert dns._tcp.sockets[0].getsockname()[0] == "127.0.0.1"
+    finally:
+        await dns.stop()
+    monkeypatch.delenv("DNS_HOST")
+    assert server(monkeypatch).host == "0.0.0.0"
+
+
+async def test_tcp_retry_without_an_upstream_is_a_no_op(monkeypatch):
+    monkeypatch.setattr("icomm_dns.default_gateways", set)
+    assert await server(monkeypatch).forward_tcp(query("big.example")) == b""
