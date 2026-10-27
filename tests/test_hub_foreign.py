@@ -40,9 +40,32 @@ async def test_with_two_heaters_an_unknown_primary_id_is_not_assumed(tmp_path, m
 
 async def test_a_refused_heater_also_makes_an_unknown_id_foreign(tmp_path, monkeypatch):
     hub = _hub(tmp_path, monkeypatch, MODULE_IP=A, MAX_HEATERS="1")
-    hub.refused.add(DSN_B)
+    hub._refuse(DSN_B)
     await _module(hub, GATEWAY, "POST", TELEMETRY.format("555"), _telemetry_body())
     assert not hub.primary.state.get("mode")
     # Paths without a device ID still go to the primary.
     await _module(hub, GATEWAY, "GET", "/time.json")
     assert hub.primary._dial is not None
+
+
+# -- #8: the refused list ------------------------------------------------------
+async def test_strangers_cannot_fill_the_refused_list(tmp_path, monkeypatch, caplog):
+    hub = _hub(tmp_path, monkeypatch, MODULE_IP=A, MAX_HEATERS="1")
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_A}.xml")
+    caplog.clear()
+    for n in range(5):
+        await _module(hub, "127.0.0.1", "GET", f"/dsns/AC000W00000000{n}.xml")
+    assert not hub.refused and "max_heaters" not in caplog.text
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_B}.xml")          # vouched: recorded
+    await _module(hub, GATEWAY, "GET", f"/dsns/{DSN_B}.xml")          # once
+    assert list(hub.refused) == [DSN_B] and caplog.text.count("max_heaters") == 1
+
+
+def test_the_refused_list_is_capped_oldest_first(tmp_path, monkeypatch):
+    from icomm_hub import MAX_REFUSED
+    hub = _hub(tmp_path, monkeypatch)
+    for n in range(MAX_REFUSED + 5):
+        assert hub._refuse(f"AC{n:010d}")
+    assert not hub._refuse(f"AC{MAX_REFUSED + 4:010d}")
+    assert len(hub.refused) == MAX_REFUSED
+    assert next(iter(hub.refused)) == "AC0000000005"

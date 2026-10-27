@@ -56,6 +56,7 @@ def _shown(value) -> str:
 # State-API routes that act on one heater: aliased to the primary, and under
 # /heaters/<dsn>/ for each.
 PERSISTED = ("lanip.json", "dsn-original.xml")
+MAX_REFUSED = 64
 HEATER_GETS = {"/state": "state_handler", "/raw": "raw_handler"}
 HEATER_POSTS = {"/write": "write_handler", "/write/cancel": "write_cancel_handler",
                 "/lan/reporting-mask": "reporting_mask_handler",
@@ -69,7 +70,9 @@ class Hub:
         self.secondaries: dict[str, Relay] = {}
         self.client: ClientSession | None = None
         self.running = False
-        self.refused: set[str] = set()
+        # Heaters left on Ayla for want of room, oldest first (a dict as an
+        # ordered set), at most MAX_REFUSED.
+        self.refused: dict[str, None] = {}
         self._tasks: set[asyncio.Task] = set()
         self._marked: str | None = None
         self._stop: asyncio.Event | None = None
@@ -128,6 +131,15 @@ class Hub:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         return engine
+
+    def _refuse(self, dsn: str) -> bool:
+        """Remember a heater left on Ayla for want of room; True if it is new."""
+        if dsn in self.refused:
+            return False
+        self.refused[dsn] = None
+        while len(self.refused) > MAX_REFUSED:
+            del self.refused[next(iter(self.refused))]
+        return True
 
     def by_dsn(self, dsn: str | None) -> Relay | None:
         if not dsn:
@@ -248,8 +260,10 @@ class Hub:
                    or self.peers.allow_all)
         if (request.method != "GET" or not vouched
                 or len(self.engines()) >= self.max_heaters):
-            if len(self.engines()) >= self.max_heaters and dsn not in self.refused:
-                self.refused.add(dsn)
+            # Only a vouched config fetch counts: a stranger inventing DSNs
+            # must not fill the list or the log.
+            if (request.method == "GET" and vouched
+                    and len(self.engines()) >= self.max_heaters and self._refuse(dsn)):
                 _LOGGER.warning("heater %s: not added, max_heaters (%d) reached; it keeps "
                                 "working through Ayla only", _shown(dsn), self.max_heaters)
             return await self.primary.proxy(request)
@@ -258,7 +272,7 @@ class Hub:
             engine = self.secondaries.get(dsn)
             if engine is None:
                 if len(self.engines()) >= self.max_heaters:
-                    self.refused.add(dsn)    # another heater won the race for the last slot
+                    self._refuse(dsn)        # another heater won the race for the last slot
                     return None
                 engine = self._add(dsn)
             if pin and engine.lan.pin_module(peer, dsn):
