@@ -6,8 +6,9 @@ url: https://github.com/ericboehs/ha-icomm-local
 arch:
   - aarch64
   - amd64
-# The module is steered here by the router's DNAT rule, so the listener must be
-# on the host's network namespace at the address the route points to.
+# The module is steered here by the router's DNAT rule or by DNS (dns_server),
+# so the listeners (and the DNS server on port 53) must be on the host's own
+# network, at the address the module is sent to.
 host_network: true
 init: false
 options:
@@ -36,15 +37,19 @@ schema:
   # account. The module polls this relay locally every ~10 s once armed.
   lan_mode: bool
   lan_port: port
-  # Usually learned from the module's own registration reply; set only if the
-  # relay should know it before the module's next registration, or callback
-  # detection picks the wrong address. The module must be on the same subnet.
+  # Usually learned: from the module's registration reply (NAT), or pinned once
+  # Ayla accepts its config fetch (DNS). Set it only if the relay should know
+  # it before then, or callback detection picks the wrong address. Primary
+  # heater only. A module on another subnet also needs relay_ip and the
+  # gateway rules in docs/NETWORK_ISOLATION.md.
   module_ip: str?
   relay_ip: str?
-  # The module-facing ports answer only the module: the gateway's address (the
-  # NAT rules make the module arrive from it) and the module's own address.
-  # Add comma-separated addresses here only for unusual steering; "*" disables
-  # the check.
+  # The module-facing ports answer only the module. The cloud port (8444, and
+  # 443 with dns_server) trusts loopback, the host's default gateway (the NAT
+  # rules make the module arrive from it) and the module's own address. The
+  # Local Connect port (8888) trusts loopback and the module, not the gateway.
+  # Add comma-separated addresses here only for unusual steering; they are
+  # trusted on both. "*" disables the check.
   trusted_peers: str?
   # Firmware updates for the module or the heater's controller arrive through
   # the relay. "hold" keeps them from the module and raises a Home Assistant

@@ -85,9 +85,14 @@ delete that file after the module has learned it.
   (default 60 s) of accepted heartbeats without a poll.
 - **Keep-alive reads:** while a LAN session is up, the same read is issued
   whenever telemetry is more than 5 minutes old (`LAN_REFRESH_INTERVAL`, `0`
-  disables). Without it an idle tank goes 10+ minutes without reporting, the
-  relay calls the data stale, and Home Assistant marks the entity unavailable
-  and **silently drops service calls** (measured twice on the live tank).
+  disables). Without it an idle tank goes 10+ minutes without reporting, and
+  the relay calls the data stale.
+  - **Before the integration's stale handling** (measured twice on the live
+    tank): Home Assistant marked the entity unavailable and **silently dropped
+    service calls**.
+  - **Now:** the entities stay available with their last values and
+    `stale: true`, a *stale data* repair appears, and writes are still
+    accepted. The keep-alive keeps that from happening on an idle tank.
 
   **Confirmation is still the tank's own telemetry, never the ack.** An ack can
   be followed by a fresh report that still contains the old setpoint: that
@@ -139,7 +144,7 @@ reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
 ## Arming and recovery
 
 - **First arming needs one re-registration.** Power-cycle the module once
-  (breaker, ~10 s) after enabling LAN mode. The tank's own thermostat is
+  (breaker off for about 30 s) after enabling LAN mode. The tank's own thermostat is
   unaffected. After that the module persists both the enable flag and the key,
   so subsequent reboots need nothing **as long as the relay stays in the
   path**. Measured (research phase 39): one boot talking to the real Ayla and
@@ -176,7 +181,12 @@ reports the retired value anyway, `last_write` is upgraded to `confirmed`, with
   the DSN rewrite; writes then wait for a cloud poll, and nothing about the
   module's configuration changes back. To disarm the module itself you would
   have to make it re-register against the *real* Ayla without the relay in the
-  path (remove the NAT steering first).
+  path. Remove the steering first:
+  - **NAT:** disable the two router rules.
+  - **DNS:** set the router's DHCP DNS back first (or remove your resolver's
+    rewrite), so the heater no longer resolves its cloud name to the relay.
+
+  Then power-cycle the heater.
 
 ## When Ayla is down
 

@@ -110,7 +110,8 @@ first heater.
 
 ## Repairs
 
-The *stale data* and *data frozen* repairs are per heater. They name the
+The *stale data*, *data frozen* and *isn't reaching Ayla* (cloud idle)
+repairs are per heater. They name the
 heater by its number ("iCOMM Water Heater 2"), even if you've renamed the
 device. The relay's own repairs are relay-wide: firmware hold, upstream
 certificate, and port in use.
@@ -206,6 +207,7 @@ as well.
   - **NAT steering:** update the router rules to the new address. Better,
     give each heater a DHCP reservation.
   - **Either way:** a primary with `module_ip` set stays on that address.
-- **A heater's number** is freed only when you delete its device (below).
+- **A heater's number** is freed only when you delete its device (see *Removing or replacing a heater*
+above).
 - **Each heater must have booted once through the relay with Ayla
   reachable** before the offline fallback can cover it.

@@ -1,7 +1,8 @@
 # iCOMM Local Relay
 
-See the [repository README](../README.md) for what this does, why the module
-accepts a self-signed certificate, and how to steer the water heater here.
+See the [repository README](https://github.com/ericboehs/ha-icomm-local/blob/main/README.md)
+for what this does, why the module accepts a self-signed certificate, and how
+to steer the water heater here.
 
 Two things need doing outside Home Assistant:
 
@@ -20,7 +21,10 @@ Two things need doing outside Home Assistant:
      [docs/DNS_STEERING.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DNS_STEERING.md).
 2. Power-cycle the water heater once so it registers through the relay.
 
-Keys are generated into `/data/certs` on first start and never leave the box.
+Keys are generated on first start and never leave the box:
+
+- the TLS certificate and key in `/data/certs`;
+- each heater's LAN key in `/data/heaters/<DSN>/lanip.json`.
 
 **Updating or restarting this add-on** can leave the water heater's cloud side
 idle afterwards.
@@ -28,4 +32,4 @@ idle afterwards.
 - **After 30 minutes** Home Assistant raises *Water heater isn't reaching Ayla*.
 - **The fix:** flip the heater's breaker off for about 30 seconds, then on.
 
-See the README, *Important: the relay is the water heater's route to the cloud*.
+See the README, [*Important: the relay is the water heater's route to the cloud*](https://github.com/ericboehs/ha-icomm-local/blob/main/README.md#important-the-relay-is-the-water-heaters-route-to-the-cloud).
