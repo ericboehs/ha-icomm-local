@@ -48,6 +48,7 @@ from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, web
 from Crypto.Cipher import AES
+from icomm_heater import write_private
 
 _LOGGER = logging.getLogger("icomm_lan")
 LAN_IP_RE = re.compile(r"<lan-ip>([^<]+)</lan-ip>")
@@ -154,6 +155,7 @@ class LanServer:
         # LANIP_FILE pins the key somewhere fixed (development); otherwise it
         # follows the heater's directory, which may be renamed once its DSN is known.
         self._key_file_override = "" if secondary else os.environ.get("LANIP_FILE", "")
+        self.key_quarantined = 0          # unusable key files moved aside at start
         self.key = self._load_or_create_key()
         self.key_served_at = 0.0          # when we last answered lan.json
         self.registered = False
@@ -224,43 +226,73 @@ class LanServer:
         override = "" if self.secondary else os.environ.get("LANIP_KEY", "")
         if override:
             return override
+        path = self.key_file
         try:
-            saved = json.loads(self.key_file.read_text())
-            if saved.get("lanip_key"):
-                self.key_id = int(saved.get("lanip_key_id", self.key_id))
-                # The module's address is only announced at re-registration,
-                # which can be hours after a relay restart: remember it.
-                self.module_ip = self.module_ip or saved.get("module_ip")
-                self.module_ip_observed = (not self.module_ip_configured
-                                           and bool(saved.get("module_ip_observed")))
-                self.module_dsn = saved.get("module_dsn")
-                return saved["lanip_key"]
-        except (OSError, ValueError):
-            pass
+            saved = json.loads(path.read_text())
+            key_id = int(saved.get("lanip_key_id", self.key_id))
+            key = saved["lanip_key"]
+            if not isinstance(key, str) or not key:
+                raise ValueError("no key")
+        except (FileNotFoundError, NotADirectoryError):
+            pass                                # first start: mint one below
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as err:
+            # A key file that is there but unusable (torn, hand-edited, not a
+            # JSON object) may still hold the key the module has. Overwriting
+            # it would strand the module for good, so keep it aside first.
+            if not self._quarantine_key_file(path, err):
+                return secrets.token_urlsafe(21)        # in memory only; see the log
+        else:
+            self.key_id = key_id
+            # The module's address is only announced at re-registration,
+            # which can be hours after a relay restart: remember it.
+            saved_ip = saved.get("module_ip")
+            self.module_ip = self.module_ip or (saved_ip if isinstance(saved_ip, str)
+                                                else None)
+            self.module_ip_observed = (not self.module_ip_configured
+                                       and bool(saved.get("module_ip_observed")))
+            saved_dsn = saved.get("module_dsn")
+            self.module_dsn = saved_dsn if isinstance(saved_dsn, str) else None
+            return key
         key = secrets.token_urlsafe(21)       # 28 chars; libada caps at 32
         try:
-            self.key_file.parent.mkdir(parents=True, exist_ok=True)
-            self.key_file.write_text(json.dumps(
-                {"lanip_key": key, "lanip_key_id": self.key_id}))
-            os.chmod(self.key_file, 0o600)
-            _LOGGER.info("LAN mode: generated a new shared key at %s", self.key_file)
+            write_private(path, json.dumps(
+                {"lanip_key": key, "lanip_key_id": self.key_id}).encode())
+            _LOGGER.info("LAN mode: generated a new shared key at %s", path)
         except OSError as err:
             _LOGGER.warning("LAN mode: key not persisted (%s); a restart will strand "
-                            "a module that already learned it", err)
+                            "a module that already learned it", type(err).__name__)
         return key
+
+    def _quarantine_key_file(self, path: Path, err: Exception) -> bool:
+        """Move an unusable key file to <name>.corrupt-<time>; False if it stayed."""
+        self.key_quarantined += 1
+        earlier = len(list(path.parent.glob(f"{path.name}.corrupt-*")))
+        aside = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+        try:
+            path.rename(aside)
+        except OSError as move_err:
+            _LOGGER.error("LAN mode: the key file is unusable (%s) and could not be "
+                          "moved aside (%s); using a temporary key and leaving the "
+                          "file alone", type(err).__name__, type(move_err).__name__)
+            return False
+        _LOGGER.error("LAN mode: the key file is unusable (%s); kept it as %s and "
+                      "minting a new key. A module holding the old key is re-keyed "
+                      "through the cloud once it is detected (%d earlier corrupt "
+                      "key file(s) beside it)", type(err).__name__, aside.name, earlier)
+        return True
 
     def _persist(self) -> None:
         """Rewrite the key file with the learned module address (still 0600)."""
         if os.environ.get("LANIP_KEY") and not self.secondary:
             return                      # dev override: nothing of ours on disk
         try:
-            self.key_file.write_text(json.dumps({
+            write_private(self.key_file, json.dumps({
                 "lanip_key": self.key, "lanip_key_id": self.key_id,
                 "module_ip": self.module_ip, "module_ip_observed": self.module_ip_observed,
-                "module_dsn": self.module_dsn}))
-            os.chmod(self.key_file, 0o600)
+                "module_dsn": self.module_dsn}).encode())
         except OSError as err:
-            _LOGGER.warning("LAN mode: could not persist module address: %s", err)
+            _LOGGER.warning("LAN mode: could not persist module address: %s",
+                            type(err).__name__)
 
     def lan_json(self) -> dict:
         """Answer the agent's GET /devices/<key>/lan.json with our own key."""
@@ -410,6 +442,7 @@ class LanServer:
                 "last_registration_result": self.last_registration_result,
                 "registration_failures": self.registration_failures,
                 "needs_key_push": self.needs_key_push,
+                "key_quarantined": self.key_quarantined,
                 "refresh_pending": self.refresh_pending,
                 "telemetry_requests": self.telemetry_requests, "wakes": self.wakes,
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
