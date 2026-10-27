@@ -4,7 +4,6 @@ frozen, and the experimental LAN reconnect after 2 failed renewals."""
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 from icomm_relay import FROZEN_UNKNOWN, telemetry_blocks
@@ -71,11 +70,7 @@ async def test_frozen_activity_is_unknown_and_temperatures_stay(tmp_path, monkey
 
 
 def _reconnecting(tmp_path, enabled: str = "1"):
-    os.environ["FREEZE_RECONNECT"] = enabled
-    try:
-        server = _server(tmp_path)
-    finally:
-        os.environ.pop("FREEZE_RECONNECT", None)
+    server = _server(tmp_path, FREEZE_RECONNECT=enabled)
     server.registered = True
     return server, server.relay
 
@@ -88,8 +83,8 @@ def _due(server, relay, blocks=HEATING) -> None:
     relay._ingest_blocks(blocks)
 
 
-def test_off_by_default(tmp_path):
-    os.environ.pop("FREEZE_RECONNECT", None)
+def test_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("FREEZE_RECONNECT", raising=False)
     assert _server(tmp_path).relay.freeze_reconnect is False
 
 

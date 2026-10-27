@@ -8,7 +8,6 @@ from relay/icomm_lan.py, so a mistake in the server cannot validate itself.
 import base64
 import hmac
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -73,20 +72,21 @@ def test_bad_signature_is_rejected():
         session.dev.decrypt_validate(body)
 
 
-def _server(tmp_path) -> LanServer:
-    os.environ["QUEUE_FILE"] = str(tmp_path / "pending.json")
-    os.environ["LANIP_KEY"] = SECRET
-    relay = Relay()
-    try:
-        server = relay.lan
-        assert isinstance(server, LanServer)
-        server.session = Session(SECRET.encode(), EXCHANGE)
-        server.session_verified = True                   # the module has proven our key
-        server.last_update = __import__("time").time()   # fresh unless a test says otherwise
-        return server
-    finally:
-        os.environ.pop("LANIP_KEY", None)
-        os.environ.pop("QUEUE_FILE", None)
+def _server(tmp_path, **env) -> LanServer:
+    """A relay's LAN server with a verified session. The environment (`env`
+    included) is set only while the relay is built: it reads its settings then."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("QUEUE_FILE", str(tmp_path / "pending.json"))
+        mp.setenv("LANIP_KEY", SECRET)
+        for key, value in env.items():
+            mp.setenv(key, value)
+        relay = Relay()
+    server = relay.lan
+    assert isinstance(server, LanServer)
+    server.session = Session(SECRET.encode(), EXCHANGE)
+    server.session_verified = True                   # the module has proven our key
+    server.last_update = __import__("time").time()   # fresh unless a test says otherwise
+    return server
 
 
 async def test_commands_delivers_the_queued_write_as_an_encrypted_property(tmp_path):
@@ -182,19 +182,16 @@ async def test_lan_telemetry_updates_state_and_confirms_the_write(tmp_path):
     assert server.updates == 1
 
 
-def test_key_is_persisted_not_logged(tmp_path):
-    os.environ["QUEUE_FILE"] = str(tmp_path / "pending.json")
-    os.environ.pop("LANIP_KEY", None)
-    try:
-        first = Relay().lan
-        assert first.key and len(first.key) <= 32
-        mode = first.key_file.stat().st_mode & 0o777
-        assert mode == 0o600
-        second = Relay().lan
-        assert second.key == first.key           # a restart keeps the same key
-        assert second.key_id == first.key_id
-    finally:
-        os.environ.pop("QUEUE_FILE", None)
+def test_key_is_persisted_not_logged(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUEUE_FILE", str(tmp_path / "pending.json"))
+    monkeypatch.delenv("LANIP_KEY", raising=False)
+    first = Relay().lan
+    assert first.key and len(first.key) <= 32
+    mode = first.key_file.stat().st_mode & 0o777
+    assert mode == 0o600
+    second = Relay().lan
+    assert second.key == first.key           # a restart keeps the same key
+    assert second.key_id == first.key_id
 
 
 def test_lan_json_matches_libadas_expected_shape(tmp_path):

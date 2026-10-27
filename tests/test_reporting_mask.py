@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -82,11 +81,7 @@ async def test_a_newer_mask_from_the_app_is_learned(tmp_path):
 
 
 def _renewing_relay(tmp_path, enabled="1"):
-    os.environ["REPORTING_MASK_RENEW"] = enabled
-    try:
-        return _server(tmp_path)
-    finally:
-        os.environ.pop("REPORTING_MASK_RENEW", None)
+    return _server(tmp_path, REPORTING_MASK_RENEW=enabled)
 
 
 def test_frozen_contents_renew_the_mask_once_per_interval(tmp_path):
@@ -103,8 +98,8 @@ def test_frozen_contents_renew_the_mask_once_per_interval(tmp_path):
     assert server.mask_pending is False
 
 
-def test_renewal_is_on_by_default_and_can_be_turned_off(tmp_path):
-    os.environ.pop("REPORTING_MASK_RENEW", None)
+def test_renewal_is_on_by_default_and_can_be_turned_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("REPORTING_MASK_RENEW", raising=False)
     assert _server(tmp_path).relay.mask_renew is True
     server = _renewing_relay(tmp_path / "off", enabled="0")
     relay = server.relay

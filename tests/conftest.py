@@ -56,6 +56,26 @@ def blocks_hybrid() -> list[bytes]:
     return load("telemetry_hybrid.json")
 
 
+# Every environment variable the relay reads. Cleared before each test so a
+# developer's shell (or a test that leaked) can't change what a test sees.
+RELAY_ENV = (
+    "CERT_DIR", "CLOUD_IDLE_AFTER", "CONTENTS_STALE_AFTER", "CONTENTS_STALE_HEATING_AFTER",
+    "DATA_DIR", "DEBUG_REQUESTS", "DEVICE_DSN", "DNS_ANSWER", "DNS_PORT", "DNS_REWRITE",
+    "DNS_SERVER", "DNS_UPSTREAM", "DSN_LAN_REWRITE", "FIRMWARE_UPDATES", "FREEZE_RECONNECT",
+    "LAN_MODE", "LAN_PORT", "LAN_REFRESH_INTERVAL", "LAN_STALL_AFTER", "LANIP_FILE",
+    "LANIP_KEY", "LANIP_KEY_ID", "LANIP_PUSH", "LISTEN_PORT", "MAX_HEATERS", "MODULE_IP",
+    "OFFLINE_FALLBACK", "QUEUE_FILE", "QUEUE_MAX_AGE_S", "RELAY_CERT", "RELAY_DHPARAMS",
+    "RELAY_IP", "RELAY_KEY", "REPORTING_MASK_RENEW", "REPORTING_MASK_RENEW_AFTER",
+    "STATE_HOST", "STATE_PORT", "TRUSTED_PEERS", "UPSTREAM",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_relay_env(monkeypatch) -> None:
+    for key in RELAY_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture
 def openssl_available() -> None:
     if shutil.which("openssl") is None:
