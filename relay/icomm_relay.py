@@ -515,6 +515,11 @@ class Relay:
         exception: a command poll may carry a locally queued write instead of
         (never in addition to) whatever Ayla had queued for it.
         """
+        if transform is None and "commands.xml" in request.path:
+            # FIRMWARE_UPDATES=hold covers every command poll that passes
+            # through, trusted or not: an untrusted peer or a heater no engine
+            # owns (hub) is still a module that would install an OTA command.
+            transform = self.firmware.filter
         body = await request.read()
         headers = {
             k: v for k, v in request.headers.items()
