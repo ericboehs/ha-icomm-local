@@ -1,0 +1,7 @@
+# The Home Assistant test harness for tests_ha/, pinned so a new Home Assistant
+# release can't change a CI run without a commit (Dependabot proposes bumps).
+# It pins Home Assistant itself (0.13.374 -> homeassistant 2026.10.3), pytest
+# and its plugins. Not hash-locked: that would be all of Home Assistant.
+#   uv pip install -r requirements-ha.txt
+pytest-homeassistant-custom-component==0.13.374
+pytest-cov==7.1.0

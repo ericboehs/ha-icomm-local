@@ -398,11 +398,13 @@ Add-on options, or environment variables when running the relay directly:
 
 ```bash
 pip install --require-hashes -r relay/requirements.txt   # the add-on's exact lock
-pip install -r requirements-dev.txt                      # test and lint tools
+pip install --require-hashes -r requirements-dev.txt    # test and lint tools (locked)
 ruff check . && python -m pytest                         # relay + unit tests
-pip install pytest-homeassistant-custom-component
+pip install -r requirements-ha.txt                       # pinned HA test harness
 python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto   # inside real HA
 ```
+
+Releasing: see [docs/RELEASING.md](docs/RELEASING.md).
 
 Add-on builds are reproducible. The Dockerfile pins the base image by tag and
 digest, and `relay/requirements.txt` pins every package with hashes. To change

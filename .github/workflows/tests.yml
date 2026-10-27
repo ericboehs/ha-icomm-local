@@ -6,6 +6,8 @@ on:
   pull_request:
   schedule:
     - cron: "0 6 * * 1"      # weekly: catch dependency drift early
+  # release.yml runs this whole workflow against the tag before publishing.
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,6 +24,8 @@ jobs:
         python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -32,13 +36,15 @@ jobs:
       - name: Install
         run: |
           pip install --require-hashes -r relay/requirements.txt
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.txt
       - name: Lint
         run: ruff check .
-      - name: Test (coverage gate 95%)
+      # Line and branch coverage; the gate sits about a point under what the
+      # suite reaches (99.5% on 2026-10-26), so a real drop fails.
+      - name: Test (coverage gate 98.5%, branches included)
         run: |
-          python -m pytest --cov=relay --cov-report=term-missing \
-            --cov-report=markdown:coverage.md --cov-fail-under=95
+          python -m pytest --cov=relay --cov-branch --cov-report=term-missing \
+            --cov-report=markdown:coverage.md --cov-fail-under=98.5
       - name: Coverage summary
         if: always() && matrix.python-version == '3.15'
         run: |
@@ -53,13 +59,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The image is Alpine (busybox sh, no bash): every script must be POSIX.
       - name: Scripts are POSIX sh
         run: shellcheck -s sh relay/*.sh
+      # alpine:3 pinned by digest (3.24, the image's Alpine); refresh by hand:
+      #   docker buildx imagetools inspect alpine:3
       - name: Scripts run under busybox sh, as in the image
         run: |
-          docker run --rm -v "$PWD/relay:/r" -e CERT_DIR=/tmp/c alpine:3 \
-            sh -c 'apk add -q --no-cache openssl && cp /r/dhparams-default.pem /tmp/dh.pem 2>/dev/null; mkdir -p /tmp/c && cp /tmp/dh.pem /tmp/c/dhparams.pem 2>/dev/null; /r/gen-cert.sh && openssl x509 -in /tmp/c/aylanetworks.com.crt -noout -subject'
+          docker run --rm -v "$PWD/relay:/r" -e CERT_DIR=/tmp/c \
+            alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
+            sh -c 'apk add -q --no-cache openssl && mkdir -p /tmp/c && cp /r/dhparams-default.pem /tmp/c/dhparams.pem && /r/gen-cert.sh && openssl x509 -in /tmp/c/aylanetworks.com.crt -noout -subject'
       - name: Validate the add-on configuration
         uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
         with:
@@ -69,27 +80,93 @@ jobs:
   # other test could see (`timeout_seconds=` is not an aiohttp keyword) would have
   # broken the very first refresh on a real install.
   ha-integration:
+    name: ha-integration (${{ matrix.ha }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The harness pinned in requirements-ha.txt (Dependabot bumps it).
+          - ha: latest
+            python-version: "3.14"
+            install: -r requirements-ha.txt
+            pytest-args: >-
+              -W error::Warning --cov=custom_components/icomm_local --cov-branch
+              --cov-report=term-missing --cov-report=markdown:coverage.md
+              --cov-fail-under=98.5
+          # The oldest Home Assistant hacs.json promises (2024.1): the last
+          # harness for it (0.13.91 -> homeassistant 2024.1.5) on its Python,
+          # plus the recorder's requirements, which that harness didn't pull
+          # in. Pinned here, not in a requirements file, so Dependabot leaves
+          # it alone. No -W error or coverage gate: 2024.1 warns about its own
+          # code, and the compat branches differ.
+          - ha: "2024.1"
+            python-version: "3.12"
+            install: >-
+              pytest-homeassistant-custom-component==0.13.91
+              SQLAlchemy==2.0.23 fnv-hash-fast==0.5.0 psutil-home-assistant==0.0.1
+            pytest-args: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       # uv and its cache: the harness pulls in all of Home Assistant, which took
       # pip ~100 s of a ~110 s job.
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: .github/workflows/tests.yml
+          cache-dependency-glob: |
+            requirements-ha.txt
+            .github/workflows/tests.yml
       - name: Install Home Assistant test harness
-        run: uv pip install --system pytest-homeassistant-custom-component pytest-cov
-      - name: Test (coverage gate 95%)
+        env:
+          INSTALL: ${{ matrix.install }}
         run: |
-          python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto \
-            --cov=custom_components/icomm_local --cov-report=term-missing \
-            --cov-report=markdown:coverage.md --cov-fail-under=95
+          # Word splitting of $INSTALL is intended: it is a list of arguments.
+          # shellcheck disable=SC2086
+          uv pip install --system $INSTALL
+      - name: Test
+        env:
+          PYTEST_ARGS: ${{ matrix.pytest-args }}
+        run: |
+          # shellcheck disable=SC2086
+          python -m pytest tests_ha -p no:cacheprovider -o asyncio_mode=auto -o addopts="" \
+            $PYTEST_ARGS
       - name: Coverage summary
-        if: always()
+        if: always() && matrix.ha == 'latest'
         run: |
           echo "### Integration coverage" >> "$GITHUB_STEP_SUMMARY"
           cat coverage.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+  # The Supervisor installs the add-on from relay/config.yaml on main, so a
+  # version bump ships the moment it merges, release.yml or not
+  # (docs/RELEASING.md). A PR that changes the version must already be
+  # releasable: tag, add-on, integration and changelog agree.
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0          # the base branch, to compare versions
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15"
+      - name: A changed add-on version is ready to release
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          version() { sed -n 's/^version:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p'; }
+          old=$(git show "origin/$BASE_REF:relay/config.yaml" | version)
+          new=$(version < relay/config.yaml)
+          if [ "$old" = "$new" ]; then
+            echo "add-on version unchanged ($new)"
+            exit 0
+          fi
+          echo "add-on version $old -> $new: checking it as release v$new"
+          python scripts/release_check.py versions "v$new"
+          python scripts/release_check.py mirror

@@ -10,8 +10,10 @@ updates:
     groups:
       relay-runtime:
         patterns: ["*"]
-  # Dev and test tools (requirements-dev.txt). relay/ is excluded so this scan
-  # and the uv one never open competing PRs for the same lock.
+  # Dev and test tools (requirements-dev.in -> hash-locked requirements-dev.txt)
+  # and the Home Assistant test harness (requirements-ha.txt). relay/ is
+  # excluded so this scan and the uv one never open competing PRs for the same
+  # lock. The oldest-HA harness is pinned in tests.yml, out of its reach.
   - package-ecosystem: pip
     directory: /
     exclude-paths: ["relay/**"]

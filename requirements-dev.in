@@ -1,0 +1,14 @@
+# Dev and test tools, pinned exactly. requirements-dev.txt is compiled from this
+# file with every transitive package pinned and hash-checked (the same way as
+# relay/requirements.txt), so CI and the in-image test run install exactly what
+# was reviewed. Regenerate after editing:
+#   uv pip compile requirements-dev.in --universal --python-version 3.12 \
+#     --generate-hashes -o requirements-dev.txt
+# Runtime packages come from relay/requirements.txt, installed in a separate
+# pip run:
+#   pip install --require-hashes -r relay/requirements.txt
+#   pip install --require-hashes -r requirements-dev.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+ruff==0.17.2
