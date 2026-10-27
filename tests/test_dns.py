@@ -87,9 +87,9 @@ async def tcp_query(port: int, packet: bytes) -> bytes:
 
 
 def server(monkeypatch, **env) -> DnsServer:
-    for key in ("DNS_SERVER", "DNS_PORT", "DNS_HOST", "DNS_UPSTREAM", "DNS_ANSWER",
-                "DNS_REWRITE"):
+    for key in ("DNS_SERVER", "DNS_PORT", "DNS_UPSTREAM", "DNS_ANSWER", "DNS_REWRITE"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DNS_HOST", "127.0.0.1")         # loopback only in tests
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return DnsServer()
@@ -257,18 +257,29 @@ async def test_a_truncated_upstream_reply_is_passed_through(monkeypatch):
         transport.close()
 
 
-@pytest.mark.xfail(strict=True, reason="forward() always asks upstream over UDP, so a "
-                   "TCP client that retried after TC=1 gets TC=1 again (no full answer)")
 async def test_a_tcp_client_never_gets_a_truncated_reply(monkeypatch):
+    """UDP upstream says TC=1; the relay re-asks over TCP on the same port."""
     transport, _, up = await upstream(truncated=True)
+
+    async def full_answer(reader, writer):
+        size = struct.unpack(">H", await reader.readexactly(2))[0]
+        data = await reader.readexactly(size)
+        out = answer(data, parse_question(data)[3], "203.0.113.9")
+        writer.write(struct.pack(">H", len(out)) + out)
+        await writer.drain()
+        writer.close()
+
+    tcp_up = await asyncio.start_server(full_answer, "127.0.0.1", up)
     dns = server(monkeypatch, DNS_SERVER="1", DNS_PORT="0", DNS_UPSTREAM=f"127.0.0.1:{up}")
     await dns.start()
     try:
         reply = await tcp_query(ports(dns)[1], query("big.example"))
-        assert not reply[2] & 0x02
+        assert not reply[2] & 0x02 and answers(reply)[2] == "203.0.113.9"
     finally:
         await dns.stop()
         transport.close()
+        tcp_up.close()
+        await tcp_up.wait_closed()
 
 
 async def test_a_reply_with_another_transaction_id_is_ignored(monkeypatch):

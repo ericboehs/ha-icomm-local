@@ -61,7 +61,7 @@ def blocks_hybrid() -> list[bytes]:
 # developer's shell (or a test that leaked) can't change what a test sees.
 RELAY_ENV = (
     "CERT_DIR", "CLOUD_IDLE_AFTER", "CONTENTS_STALE_AFTER", "CONTENTS_STALE_HEATING_AFTER",
-    "DATA_DIR", "DEBUG_REQUESTS", "DEVICE_DSN", "DNS_ANSWER", "DNS_PORT", "DNS_REWRITE",
+    "DATA_DIR", "DEBUG_REQUESTS", "DEVICE_DSN", "DNS_ANSWER", "DNS_HOST", "DNS_PORT", "DNS_REWRITE",
     "DNS_SERVER", "DNS_UPSTREAM", "DSN_LAN_REWRITE", "FIRMWARE_UPDATES", "FREEZE_RECONNECT",
     "LAN_MODE", "LAN_PORT", "LAN_REFRESH_INTERVAL", "LAN_STALL_AFTER", "LANIP_FILE",
     "LANIP_KEY", "LANIP_KEY_ID", "LANIP_PUSH", "LISTEN_PORT", "MAX_HEATERS", "MODULE_IP",
@@ -75,6 +75,9 @@ RELAY_ENV = (
 def _clean_relay_env(monkeypatch) -> None:
     for key in RELAY_ENV:
         monkeypatch.delenv(key, raising=False)
+    # A DNS server started by a test listens on loopback only, never on every
+    # interface of a dev machine or CI runner.
+    monkeypatch.setenv("DNS_HOST", "127.0.0.1")
 
 
 def require_openssl() -> None:
