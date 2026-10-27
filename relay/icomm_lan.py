@@ -164,6 +164,9 @@ class LanServer:
         self.module_ip_observed = False
         self.module_dsn: str | None = None
         self.advertise_ip = os.environ.get("RELAY_IP", "") or None
+        # The module_ip a derived advertise_ip was worked out for; None while
+        # it is RELAY_IP's (or not derived yet), which is never re-derived.
+        self._advertised_for: str | None = None
         self.key_id = int(os.environ.get("LANIP_KEY_ID", "1"))
         # LANIP_FILE pins the key somewhere fixed (development); otherwise it
         # follows the heater's directory, which may be renamed once its DSN is known.
@@ -466,12 +469,16 @@ class LanServer:
 
     # -- registration: the app's heartbeat, from libada's client side -----
     def _registration_body(self) -> dict:
-        if not self.advertise_ip and self.module_ip:
+        derived_stale = (self._advertised_for is not None
+                         and self._advertised_for != self.module_ip)
+        if self.module_ip and (not self.advertise_ip or derived_stale):
             # The address the module should call back on: ours, on its subnet.
+            # Worked out again when the module moves (a new VLAN, DHCP).
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
                 sock.connect((self.module_ip, 80))
                 self.advertise_ip = sock.getsockname()[0]
+                self._advertised_for = self.module_ip
             finally:
                 sock.close()
         return {"local_reg": {"ip": self.advertise_ip, "port": self.port,

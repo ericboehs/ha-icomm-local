@@ -65,3 +65,39 @@ async def test_a_well_formed_update_still_verifies_the_session(lan):
 async def test_ingest_lan_update_tolerates_any_shape(lan, update):
     await lan.relay.ingest_lan_update(update)      # no exception
     assert "controller_firmware" not in lan.relay.device.facts
+
+
+# -- #15: the advertised callback address follows the module --------------------
+class _RouteSocket:
+    """socket.socket stand-in: our address toward a module, per its subnet."""
+
+    routes = {"10.0.1.187": "10.0.1.113", "10.0.20.187": "10.0.20.113"}
+
+    def __init__(self, *args) -> None:
+        self.peer = None
+
+    def connect(self, addr) -> None:
+        self.peer = addr[0]
+
+    def getsockname(self):
+        return (self.routes[self.peer], 5555)
+
+    def close(self) -> None:
+        pass
+
+
+def test_advertise_ip_is_recomputed_when_the_module_moves(lan, monkeypatch):
+    monkeypatch.setattr("icomm_lan.socket.socket", _RouteSocket)
+    lan.module_ip = "10.0.1.187"
+    assert lan._registration_body()["local_reg"]["ip"] == "10.0.1.113"
+    lan.module_ip = "10.0.20.187"                      # moved to its own VLAN
+    assert lan._registration_body()["local_reg"]["ip"] == "10.0.20.113"
+    assert lan._registration_body()["local_reg"]["ip"] == "10.0.20.113"
+
+
+def test_a_configured_callback_address_is_never_recomputed(lan, monkeypatch):
+    monkeypatch.setattr("icomm_lan.socket.socket", _RouteSocket)
+    lan.advertise_ip = "10.9.9.9"                       # as the add-on option sets it
+    for module in ("10.0.1.187", "10.0.20.187"):
+        lan.module_ip = module
+        assert lan._registration_body()["local_reg"]["ip"] == "10.9.9.9"
