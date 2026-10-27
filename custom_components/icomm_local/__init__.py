@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import timedelta
@@ -28,6 +29,8 @@ from .const import (
     FROZEN_WITH_POWER_S,
     POLL_SECONDS,
     TIMEOUT_SECONDS,
+    as_dict,
+    as_number,
     is_stale,
 )
 from .heaters import (
@@ -73,9 +76,12 @@ def firmware_issue_id(entry_id: str, key: str) -> str:
 
 def _firmware_issues(hass: HomeAssistant, entry_id: str, data: dict, raised: set[str]) -> None:
     """One fixable repair per update the relay is holding; gone once it isn't."""
-    firmware = data.get("firmware") or {}
+    firmware = as_dict(data.get("firmware"))
+    held = firmware.get("held")
     current: set[str] = set()
-    for offer in firmware.get("held") or []:
+    for offer in held if isinstance(held, list) else []:
+        if not isinstance(offer, dict):
+            continue
         key = str(offer.get("key"))
         issue_id = firmware_issue_id(entry_id, key)
         current.add(issue_id)
@@ -101,7 +107,7 @@ def _firmware_issues(hass: HomeAssistant, entry_id: str, data: dict, raised: set
 def _tls_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
     """Ayla's certificate fails the relay's check: cloud sync is down, quietly."""
     issue_id = f"upstream_certificate_{entry_id}"
-    tls = data.get("upstream_tls") or {}
+    tls = as_dict(data.get("upstream_tls"))
     if not tls.get("failing"):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
@@ -136,10 +142,10 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None =
                   heater: str = "iCOMM Water Heater") -> None:
     """Reports arrive, but their contents haven't changed: the data is frozen."""
     issue_id = issue_id or f"telemetry_frozen_{entry.entry_id}"
-    unchanged = data.get("contents_unchanged_s")
+    unchanged = as_number(data.get("contents_unchanged_s"))
     power = _power_w(hass, entry.options.get(CONF_POWER_ENTITY))
     running = (power is not None and power > FROZEN_POWER_W
-               and isinstance(unchanged, (int, float)) and unchanged >= FROZEN_WITH_POWER_S)
+               and unchanged is not None and unchanged >= FROZEN_WITH_POWER_S)
     if not data.get("fresh") or not (data.get("contents_stale") or running):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
@@ -151,7 +157,7 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None =
             "minutes": str(round((unchanged or 0) / 60)),
             "power": (f" Meanwhile your power sensor shows the heater drawing {round(power)} W."
                       if running else ""),
-            "fix": _frozen_fix(data.get("reporting_mask") or {}),
+            "fix": _frozen_fix(as_dict(data.get("reporting_mask"))),
         })
 
 
@@ -159,11 +165,11 @@ def _cloud_idle_issue(hass: HomeAssistant, data: dict, issue_id: str,
                       heater: str = "iCOMM Water Heater") -> None:
     """The relay says the heater's cloud side stopped (health code cloud_idle):
     HA is fine over Local Connect, Ayla and the app get nothing."""
-    health = data.get("health") or {}
+    health = as_dict(data.get("health"))
     if health.get("code") != "cloud_idle":
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
-    quiet = (health.get("evidence") or {}).get("cloud_quiet_s") or 0
+    quiet = as_number(as_dict(health.get("evidence")).get("cloud_quiet_s")) or 0
     ir.async_create_issue(
         hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
         severity=ir.IssueSeverity.WARNING, translation_key="cloud_idle",
@@ -174,12 +180,12 @@ def _frozen_fix(mask: dict) -> str:
     """What to do about frozen data: the relay re-arms it itself, or the app."""
     if mask.get("renew"):
         return ("The relay tries to re-arm reporting itself: after "
-                f"{round((mask.get('after_s') or 1800) / 60)} minutes frozen it re-sends the "
-                "app's reporting request over the local connection "
-                f"({mask.get('sent', 0)} sent since the relay started). That has brought live "
-                "data back within minutes, but not every time. Until then, power and operating "
-                "state show as unknown. If this warning stays, **open the A.O. Smith app** "
-                "and view the water heater.")
+                f"{round((as_number(mask.get('after_s')) or 1800) / 60)} minutes frozen it "
+                "re-sends the app's reporting request over the local connection "
+                f"({as_number(mask.get('sent')) or 0} sent since the relay started). That has "
+                "brought live data back within minutes, but not every time. Until then, power "
+                "and operating state show as unknown. If this warning stays, **open the A.O. "
+                "Smith app** and view the water heater.")
     return ("To fix it now, **open the A.O. Smith app** and view the water heater: that "
             "re-arms reporting within seconds. To have the relay do it automatically, turn on "
             "the add-on's `reporting_mask_renew` option.")
@@ -188,7 +194,7 @@ def _frozen_fix(mask: dict) -> str:
 def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
     """dns_server is on but can't steer: port 53 or 443 is taken on the host."""
     issue_id = f"dns_server_failed_{entry_id}"
-    dns = data.get("dns") or {}
+    dns = as_dict(data.get("dns"))
     problem = dns.get("error") or dns.get("https_error") if dns.get("enabled") else None
     if not problem:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
@@ -197,6 +203,28 @@ def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:
         hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
         severity=ir.IssueSeverity.ERROR, translation_key="dns_server_failed",
         translation_placeholders={"problem": str(problem)})
+
+
+def _guarded(listener):
+    """HA's coordinator calls its listeners in turn with nothing around them,
+    and these (registered before the entities) would otherwise stop every later
+    listener, entities included, on one malformed field. Logged by type only."""
+    def run() -> None:
+        try:
+            listener()
+        except Exception as err:  # noqa: BLE001 - anything, so the others still run
+            _LOGGER.error("%s failed on the relay's state (%s)", listener.__name__,
+                          type(err).__name__)
+            _LOGGER.debug("%s traceback", listener.__name__, exc_info=True)
+    run.__name__ = listener.__name__
+    return run
+
+
+def _coordinator_entry(entry) -> dict:
+    """config_entry=, where DataUpdateCoordinator takes it (HA 2024.11+); newer HA
+    wants it passed explicitly, and older HA would raise on the keyword."""
+    params = inspect.signature(DataUpdateCoordinator.__init__).parameters
+    return {"config_entry": entry} if "config_entry" in params else {}
 
 
 def _migrate_entity_ids(hass: HomeAssistant) -> None:
@@ -212,16 +240,20 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     session = async_get_clientsession(hass)
 
     async def fetch() -> dict:
+        # `async with` releases the connection on every path, a non-200 included.
         try:
-            resp = await session.get(f"{url}/state", timeout=ClientTimeout(total=TIMEOUT_SECONDS))
+            async with session.get(f"{url}/state",
+                                   timeout=ClientTimeout(total=TIMEOUT_SECONDS)) as resp:
+                if resp.status != 200:
+                    raise UpdateFailed(f"relay returned {resp.status}")
+                try:
+                    data = await resp.json(content_type=None)
+                except ValueError as err:
+                    raise UpdateFailed(f"relay returned a non-JSON reply: {err}") from err
         except (TimeoutError, ClientError) as err:
             raise UpdateFailed(f"relay unreachable: {err}") from err
-        if resp.status != 200:
-            raise UpdateFailed(f"relay returned {resp.status}")
-        try:
-            data = await resp.json(content_type=None)
-        except ValueError as err:
-            raise UpdateFailed(f"relay returned a non-JSON reply: {err}") from err
+        if not isinstance(data, dict):
+            raise UpdateFailed(f"relay returned {type(data).__name__}, not a JSON object")
         # A stale-but-reachable relay is not a failure: entities keep their
         # last-known values and a Repairs warning says the data is old.
         await _fetch_heaters(data)
@@ -229,9 +261,9 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     async def _fetch_one(dsn: str) -> dict | None:
         try:
-            resp = await session.get(f"{url}/heaters/{dsn}/state",
-                                     timeout=ClientTimeout(total=TIMEOUT_SECONDS))
-            body = await resp.json(content_type=None) if resp.status == 200 else None
+            async with session.get(f"{url}/heaters/{dsn}/state",
+                                   timeout=ClientTimeout(total=TIMEOUT_SECONDS)) as resp:
+                body = await resp.json(content_type=None) if resp.status == 200 else None
         except (TimeoutError, ClientError, ValueError):
             return None
         return body if isinstance(body, dict) else None
@@ -283,10 +315,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
 
     coordinator = DataUpdateCoordinator(
         hass,
-        logger=__import__("logging").getLogger(__name__),
+        logger=_LOGGER,
         name="icomm_local",
         update_method=fetch,
         update_interval=timedelta(seconds=POLL_SECONDS),
+        **_coordinator_entry(entry),
     )
     # The services need to know where the relay is; keeping this on the coordinator
     # avoids a second lookup path that could disagree with this one.
@@ -334,28 +367,33 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     coordinator.ready = True
     heater_issues: set[str] = set()
 
+    # While the relay is unreachable (last_update_success False) the repairs
+    # below are left as they were, not cleared: the relay's view hasn't changed
+    # as far as HA knows, and each one is re-evaluated on the first good poll.
+    # The stale-data repair is the exception: it describes a reachable relay.
     def _each_heater():
         for dsn in list(coordinator.order) or [None]:
             data = (coordinator.data if dsn in (None, coordinator.primary)
                     else coordinator.heaters.get(dsn)) or {}
             yield dsn, data, heater_name(coordinator, dsn)
 
+    @_guarded
     def _update_stale_issue() -> None:
         current: set[str] = set()
         for dsn, data, name in _each_heater():
             issue_id = _heater_issue_id("stale_telemetry", entry.entry_id, dsn,
                                         coordinator.primary)
             if coordinator.last_update_success and is_stale(data):
-                lan = data.get("lan") or {}
+                lan = as_dict(data.get("lan"))
                 current.add(issue_id)
                 ir.async_create_issue(
                     hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
                     severity=ir.IssueSeverity.WARNING, translation_key="stale_telemetry",
                     translation_placeholders={
                         "heater": name,
-                        "age": str(round((data.get("last_telemetry_age") or 0) / 60)),
+                        "age": str(round((as_number(data.get("last_telemetry_age")) or 0) / 60)),
                         "lan": "up" if lan.get("session") else "down",
-                        "health": str((data.get("health") or {}).get("state")),
+                        "health": str(as_dict(data.get("health")).get("state")),
                     })
             else:
                 ir.async_delete_issue(hass, DOMAIN, issue_id)
@@ -372,12 +410,14 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     _update_stale_issue()
     firmware_issues: set[str] = set()
 
+    @_guarded
     def _update_firmware_issues() -> None:
         if coordinator.last_update_success:
             _firmware_issues(hass, entry.entry_id, coordinator.data or {}, firmware_issues)
 
     entry.async_on_unload(coordinator.async_add_listener(_update_firmware_issues))
 
+    @_guarded
     def _update_tls_issue() -> None:
         if coordinator.last_update_success:
             _tls_issue(hass, entry.entry_id, coordinator.data or {})
@@ -385,6 +425,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_on_unload(coordinator.async_add_listener(_update_tls_issue))
     _update_tls_issue()
 
+    @_guarded
     def _update_frozen_issue() -> None:
         if not coordinator.last_update_success:
             return
@@ -399,6 +440,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_on_unload(coordinator.async_add_listener(_update_frozen_issue))
     _update_frozen_issue()
 
+    @_guarded
     def _update_cloud_idle_issue() -> None:
         if not coordinator.last_update_success:
             return
@@ -412,6 +454,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     entry.async_on_unload(coordinator.async_add_listener(_update_cloud_idle_issue))
     _update_cloud_idle_issue()
 
+    @_guarded
     def _update_dns_issue() -> None:
         if coordinator.last_update_success:
             _dns_issue(hass, entry.entry_id, coordinator.data or {})
@@ -432,6 +475,7 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         await async_setup_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    @_guarded
     def _update_device_registry() -> None:
         if coordinator.last_update_success:
             update_device_pages(hass, coordinator, entry.entry_id)

@@ -18,18 +18,21 @@ STEP_SCHEMA = vol.Schema(
 )
 
 
+def normalize_url(url: str) -> str:
+    """The same relay however it was typed: no trailing slash, any case."""
+    return url.strip().rstrip("/").lower()
+
+
 async def _relay_reachable(hass: HomeAssistant, url: str) -> dict | None:
     """The relay answers /health with {"ok": true} when it is running."""
     session = async_get_clientsession(hass)
     try:
-        resp = await session.get(f"{url.rstrip('/')}/health", timeout=ClientTimeout(total=5))
-    except (ClientError, TimeoutError):
-        return None
-    if resp.status != 200:
-        return None
-    try:
-        data = await resp.json(content_type=None)
-    except ValueError:
+        async with session.get(f"{url.rstrip('/')}/health",
+                               timeout=ClientTimeout(total=5)) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json(content_type=None)
+    except (ClientError, TimeoutError, ValueError):
         return None
     return data if isinstance(data, dict) and data.get("ok") else None
 
@@ -45,6 +48,13 @@ class IcommLocalConfigFlow(config_entries.ConfigFlow, domain="icomm_local"):
     async def async_step_user(self, user_input: dict | None = None):
         errors: dict[str, str] = {}
         if user_input is not None:
+            url = normalize_url(user_input[CONF_URL])
+            # Entries from before unique IDs have none: match them by URL too.
+            if any(normalize_url(e.data.get(CONF_URL) or "") == url
+                   for e in self._async_current_entries()):
+                return self.async_abort(reason="already_configured")
+            await self.async_set_unique_id(url)
+            self._abort_if_unique_id_configured()
             if await _relay_reachable(self.hass, user_input[CONF_URL]):
                 return self.async_create_entry(
                     title="iCOMM relay", data=user_input
@@ -66,7 +76,10 @@ class IcommLocalOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict | None = None):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
-        current = self.config_entry.options.get(CONF_POWER_ENTITY)
+        # Not self.config_entry: HA sets that itself only from 2024.11, and
+        # setting it on newer HA is deprecated. The handler is the entry ID.
+        entry = self.hass.config_entries.async_get_entry(self.handler)
+        current = entry.options.get(CONF_POWER_ENTITY) if entry else None
         schema = vol.Schema({
             vol.Optional(CONF_POWER_ENTITY, description={"suggested_value": current}):
                 selector.EntitySelector(selector.EntitySelectorConfig(

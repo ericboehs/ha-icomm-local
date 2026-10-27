@@ -10,6 +10,9 @@
     },
     "error": {
       "cannot_connect": "Could not reach the relay at that URL."
+    },
+    "abort": {
+      "already_configured": "This relay is already set up."
     }
   },
   "entity": {

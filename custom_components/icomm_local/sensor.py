@@ -8,6 +8,8 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    MAJOR_VERSION,
+    MINOR_VERSION,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
@@ -21,17 +23,22 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import slugify
 
-from .const import DOMAIN, FAULTS, MODES, has_telemetry, is_stale
+from .const import DOMAIN, FAULTS, MODES, as_dict, as_number, has_telemetry, is_stale
 from .heaters import HeaterEntity, add_heaters, heater_name, unique_id
 
 F = UnitOfTemperature.FAHRENHEIT
+# Icon translations (icons.json) arrived in HA 2024.2. Before that, the state
+# icons below stand in; on newer HA an entity icon would override icons.json.
+ICON_TRANSLATIONS = (MAJOR_VERSION, MINOR_VERSION) >= (2024, 2)
 
 # field on the relay's state, display name, unit, device class, state class
 SPECS = [
     # Relay keys predate knowing what they are: "water_mid" is the bottom
     # thermistor; "water_bottom" is the blend (TankAverageSensor, below).
-    ("water_top", "Water, tank top", F, SensorDeviceClass.TEMPERATURE, None),
-    ("water_mid", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE, None),
+    ("water_top", "Water, tank top", F, SensorDeviceClass.TEMPERATURE,
+     SensorStateClass.MEASUREMENT),
+    ("water_mid", "Water, tank bottom", F, SensorDeviceClass.TEMPERATURE,
+     SensorStateClass.MEASUREMENT),
     ("hot_water_availability", "Hot water available", PERCENTAGE, None,
      SensorStateClass.MEASUREMENT),
     ("setpoint", "Setpoint", F, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT),
@@ -95,13 +102,16 @@ class IcommSensor(HeaterEntity, SensorEntity):
             self._attr_device_class = device_class
         if state_class is not None:
             self._attr_state_class = state_class
+        # HA raises on a non-number for a sensor with a unit or state class.
+        self._numeric = unit is not None or state_class is not None
 
     @property
     def native_value(self):
         data = self._state
         if not has_telemetry(data):
             return None
-        return data.get(self._field)
+        value = data.get(self._field)
+        return as_number(value) if self._numeric else value
 
     @property
     def available(self) -> bool:
@@ -144,11 +154,11 @@ class FirmwareSensor(_RelaySensor):
 
     @property
     def native_value(self):
-        return (self._state.get("device") or {}).get(self._key)
+        return as_dict(self._state.get("device")).get(self._key)
 
     @property
     def extra_state_attributes(self):
-        device = self._state.get("device") or {}
+        device = as_dict(self._state.get("device"))
         return {key: device.get(key) for key in self._extras if device.get(key)}
 
 
@@ -161,13 +171,13 @@ class RelayHealthSensor(_RelaySensor):
 
     @property
     def native_value(self):
-        return (self._state.get("health") or {}).get("state")
+        return as_dict(self._state.get("health")).get("state")
 
     @property
     def extra_state_attributes(self):
         data = self._state
-        health = data.get("health") or {}
-        evidence = health.get("evidence") or {}
+        health = as_dict(data.get("health"))
+        evidence = as_dict(health.get("evidence"))
         return {
             "reasons": health.get("reasons"),
             "remediation": health.get("remediation"),
@@ -192,18 +202,20 @@ class PendingWriteSensor(_RelaySensor):
 
     @property
     def native_value(self):
-        pending = self._state.get("pending") or {}
+        pending = as_dict(self._state.get("pending"))
         if not pending:
             return "none"
         # e.g. "setpoint 140.0: acknowledged". Only telemetry ever says confirmed.
-        return ", ".join(f"{kind} {w.get('value')}: {w.get('status', 'queued')}"
-                         for kind, w in sorted(pending.items()))
+        return ", ".join(
+            f"{kind} {as_dict(w).get('value')}: {as_dict(w).get('status', 'queued')}"
+            for kind, w in sorted(pending.items()))
 
     @property
     def extra_state_attributes(self):
         data = self._state
-        pending = data.get("pending") or {}
-        return {"status": {kind: w.get("status") for kind, w in pending.items()} or None,
+        pending = as_dict(data.get("pending"))
+        return {"status": {kind: as_dict(w).get("status")
+                           for kind, w in pending.items()} or None,
                 "pending": pending or None, "last_write": data.get("last_write"),
                 "writes_confirmed": data.get("writes_confirmed")}
 
@@ -221,7 +233,7 @@ class LastAppWriteSensor(_RelaySensor):
 
     @property
     def native_value(self):
-        last = self._state.get("last_cloud_write")
+        last = as_dict(self._state.get("last_cloud_write"))
         if not last:
             return "none"
         return f"{last.get('kind')} {last.get('value')}"
@@ -231,9 +243,13 @@ class LastAppWriteSensor(_RelaySensor):
         from datetime import UTC, datetime
 
         data = self._state
-        last = data.get("last_cloud_write") or {}
-        at = last.get("at")
-        return {"at": datetime.fromtimestamp(at, UTC).isoformat() if at else None,
+        last = as_dict(data.get("last_cloud_write"))
+        try:
+            at = datetime.fromtimestamp(last["at"], UTC).isoformat() if as_number(
+                last.get("at")) else None
+        except (OverflowError, OSError, ValueError):
+            at = None
+        return {"at": at,
                 "frame": last.get("frame"),
                 "replaced_by_local": last.get("replaced_by_local"),
                 "cloud_writes": data.get("cloud_writes")}
@@ -250,7 +266,7 @@ class TankAverageSensor(IcommSensor):
 
     def __init__(self, coordinator, dsn: str | None = None) -> None:
         super().__init__(coordinator, "water_bottom", "Water, tank average", F,
-                         SensorDeviceClass.TEMPERATURE, dsn=dsn)
+                         SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, dsn=dsn)
 
     @property
     def extra_state_attributes(self):
@@ -268,6 +284,15 @@ class TankAverageSensor(IcommSensor):
 
 
 ELEMENTS = ["upper", "lower", "off"]
+# HA before 2024.2 only: icons.json's state icons (keep the two in step).
+ELEMENT_ICONS = {"upper": "mdi:arrow-up-bold-box", "lower": "mdi:arrow-down-bold-box"}
+MODE_ICONS = {"heat_pump": "mdi:heat-pump", "hybrid": "mdi:leaf",
+              "electric": "mdi:lightning-bolt", "vacation": "mdi:airplane"}
+
+
+def _legacy_icon(icons: dict, value, default: str) -> str | None:
+    """None where icons.json applies; otherwise its icon for the state."""
+    return None if ICON_TRANSLATIONS else icons.get(value, default)
 
 
 class HeatingElementSensor(IcommSensor):
@@ -289,6 +314,10 @@ class HeatingElementSensor(IcommSensor):
     def native_value(self):
         value = super().native_value
         return value if value in ELEMENTS else None
+
+    @property
+    def icon(self):
+        return _legacy_icon(ELEMENT_ICONS, self.native_value, "mdi:heating-coil")
 
     @property
     def extra_state_attributes(self):
@@ -347,7 +376,13 @@ class EnergySensor(IcommSensor):
     """The heater's lifetime energy (Block 27 params 7-9, research phase 49): a
     running Wh total of the power it reports, so it can go in HA's Energy
     dashboard. It counts the nominal 356 W / 4500 W, not a measurement, so it
-    reads above a meter on the circuit."""
+    reads above a meter on the circuit.
+
+    TOTAL_INCREASING fits: the relay passes the controller's own 48-bit counter
+    through as decoded (icomm_relay.lifetime_energy), with no relay-side total
+    that could restart at 0, and all ones (no value) as None. Before the first
+    report the entity is unavailable, not 0. A controller-side reset is HA's
+    meter-reset case."""
 
     _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_suggested_display_precision = 1
@@ -402,7 +437,7 @@ class FaultSensor(_RelaySensor):
 
     def _code(self) -> int | None:
         try:
-            return int((self._state.get("device") or {}).get("fault_code"))
+            return int(as_dict(self._state.get("device")).get("fault_code"))
         except (TypeError, ValueError):
             return None
 
@@ -415,7 +450,7 @@ class FaultSensor(_RelaySensor):
 
     @property
     def extra_state_attributes(self):
-        device = self._state.get("device") or {}
+        device = as_dict(self._state.get("device"))
         history = self._state.get("fault_history")
         attrs = {"code": self._code(), "source": device.get("fault_source")}
         if isinstance(history, list):
@@ -449,6 +484,10 @@ class ModeSensor(IcommSensor):
     def native_value(self):
         value = super().native_value
         return value if value in MODES else None
+
+    @property
+    def icon(self):
+        return _legacy_icon(MODE_ICONS, self.native_value, "mdi:water-boiler")
 
     @property
     def extra_state_attributes(self):

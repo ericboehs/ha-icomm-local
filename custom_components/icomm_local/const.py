@@ -13,6 +13,17 @@ VACATION_DEFAULT_DAYS = 1
 MAX_VACATION_DAYS = 99
 
 
+def as_dict(value) -> dict:
+    """A nested object from the relay's JSON, or {} if it isn't one: a relay
+    bug or a proxy must not raise inside a coordinator listener."""
+    return value if isinstance(value, dict) else {}
+
+
+def as_number(value) -> int | float | None:
+    """An int or float from the relay's JSON (not a bool), else None."""
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def has_telemetry(data: dict | None) -> bool:
     """Tank entities stay available while the relay answers and has *ever* decoded
     a report. Live finding: tying availability to `fresh` made an idle tank go
