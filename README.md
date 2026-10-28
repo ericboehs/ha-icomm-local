@@ -64,10 +64,9 @@ Settings → Add-ons → Add-on Store → ⋮ → **Repositories** → add
 Pick one:
 
 - **DNS (easiest, works with most routers):** turn on the add-on's
-  `dns_server` option, then set your router's DHCP DNS server to Home
-  Assistant's IP address, with no secondary. Follow
-  [docs/DNS_STEERING.md](docs/DNS_STEERING.md#built-in-dns_server): it has
-  a quick check to run before step 3.
+  `dns_server` option and set your router's DHCP DNS server to Home
+  Assistant. Follow the 3-step
+  [quick start](docs/DNS_STEERING.md#quick-start), which covers step 3 too.
 - **NAT rules on the router:** give the heater a fixed IP address, then add
   the two rules in [docs/STEERING.md](docs/STEERING.md). Tested on UniFi;
   recipes for other routers are included.

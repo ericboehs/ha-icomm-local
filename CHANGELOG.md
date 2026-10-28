@@ -22,6 +22,9 @@ dialog reads it from the add-on folder. CI fails if the two differ.
   - [docs/CONFIGURATION.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/CONFIGURATION.md): every option, and running without the add-on;
   - [docs/HOW_IT_WORKS.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/HOW_IT_WORKS.md): the design and security;
   - [docs/DEVELOPMENT.md](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/DEVELOPMENT.md).
+- **DNS_STEERING.md opens with a 3-step quick start:** turn on
+  `dns_server`, point the router's DHCP DNS at Home Assistant and check it,
+  then power-cycle the heater. The README links straight to it.
 - **STEERING.md** gains *Before you start* (find and reserve the heater's IP)
   and the log lines that show Local Connect is armed.
 - **Dropped:** the README's old release steps, superseded by

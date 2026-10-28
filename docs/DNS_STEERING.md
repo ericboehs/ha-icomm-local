@@ -6,6 +6,41 @@ with DNS instead: a local DNS server answers the module's cloud hostname with
 the relay's address, so the module connects to the relay on port 443 by
 itself.
 
+## Quick start
+
+Using the add-on's built-in DNS server:
+
+1. **Turn it on.** In the add-on's **Configuration** tab, turn on
+   `dns_server`, save, and restart the add-on. The log shows
+   `DNS: serving on :53 …`. If Home Assistant instead raises a repair saying
+   port 53 or 443 is taken, use [your own resolver](#your-own-resolver).
+2. **Point your router at it.** Set the router's **DHCP DNS server** to your
+   Home Assistant host's IP address, and leave the secondary DNS empty. Then
+   check from any computer (`nslookup` works too):
+
+   ```console
+   $ dig +short @<ha-ip> iCOMMNextGenHP-71538015-device.aylanetworks.com
+   <ha-ip>
+   $ dig +short @<ha-ip> example.com
+   <some address>
+   ```
+
+   The first name must come back as Home Assistant's IP. If the second
+   doesn't resolve, set the add-on's `dns_upstream` to `1.1.1.1` or your
+   ISP's resolver, and restart the add-on.
+3. **Power-cycle the water heater.** Switch its breaker off for about 30
+   seconds, then on. Within a minute or two the add-on log shows
+   `LAN mode: registered with the module`. That's it: continue with the
+   README's [step 4](../README.md#4-add-the-integration).
+
+**Good to know:**
+- **Every device on your network** now looks up names through Home Assistant,
+  so while it's down, lookups fail.
+- **To undo it,** set the router's DNS back *before* removing the add-on.
+- **Heater on its own VLAN?** Set `relay_ip` too (below).
+
+The rest of this page has the details behind each step.
+
 There are two ways to run the DNS side:
 
 - **Built in (0.5.5+):** turn on the add-on's `dns_server` option. The relay
