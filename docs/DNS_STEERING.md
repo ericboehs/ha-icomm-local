@@ -123,7 +123,7 @@ verified Local Connect session took about 30 seconds. Details are under
 |---|---|
 | A DNS server you control | the AdGuard Home add-on, Pi-hole, dnsmasq, or your router's own local DNS records if it has them |
 | The water heater using it | the module uses whatever DNS server **DHCP** hands it, so point your router's DHCP DNS setting at your DNS server (this usually applies to every device on the network, which is fine: only one hostname is changed) |
-| Port 443 free on the relay host | the module only dials 443. On Home Assistant, check that no other add-on owns it (the NGINX SSL proxy add-on, and some device bridges, do). If it's taken, run the relay on another host ([README](../README.md#without-the-add-on-ha-container-core-or-another-host)) |
+| Port 443 free on the relay host | the module only dials 443. On Home Assistant, check that no other add-on owns it (the NGINX SSL proxy add-on, and some device bridges, do). If it's taken, run the relay on another host ([CONFIGURATION.md](CONFIGURATION.md#without-the-add-on-ha-container-core-or-another-host)) |
 | The relay and heater on the same subnet | Local Connect calls back to the relay directly. Across VLANs the gateway needs a DNAT and an SNAT rule for Local Connect, `relay_ip`, and firewall policies; see [NETWORK_ISOLATION.md](NETWORK_ISOLATION.md) |
 | A DHCP reservation for the heater | recommended: the relay follows a move, but a stable address is easier to firewall |
 
@@ -141,7 +141,7 @@ turn on your DNS server's query log, power-cycle the heater, and look for the
 `-device.aylanetworks.com` lookup from its IP. The built-in `dns_server`
 rewrites any `<model>-71538015-device.aylanetworks.com` name. If your model's
 name doesn't match that, set the `DNS_REWRITE` environment variable to a
-regular expression that does (see the README's *Configuration*).
+regular expression that does (see [CONFIGURATION.md](CONFIGURATION.md)).
 
 **Don't rewrite anything else:**
 

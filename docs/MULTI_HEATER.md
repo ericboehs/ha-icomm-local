@@ -99,8 +99,7 @@ entities: each heater's write goes to that heater.
 [dashboard-multi.yaml](dashboard-multi.yaml) is a **Water Heaters** view
 for two heaters. Each heater gets a column with its thermostat, mode buttons,
 tank temperatures and power, and a shared graph compares the two tanks.
-Add it the same way as the single-heater dashboard (README, *A ready-made
-dashboard*). The *Relay health* badge is per heater: it describes that
+Add it the same way as the single-heater dashboard ([USING.md](USING.md#a-ready-made-dashboard)). The *Relay health* badge is per heater: it describes that
 heater's connection through the shared relay.
 - **A third heater:** copy a column and change `_2` to `_3`.
 - **Renamed entities:** change the YAML to match.
