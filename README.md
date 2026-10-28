@@ -109,10 +109,11 @@ For a dashboard, see
 
 ## Good to know
 
-- **After updating or restarting the add-on,** the A.O. Smith app can go
-  stale. Home Assistant keeps working. If Home Assistant shows the repair
-  *Water heater isn't reaching Ayla*, power-cycle the heater
-  ([why](docs/USING.md#the-relay-is-the-water-heaters-route-to-the-cloud)).
+- **After a reboot of the Home Assistant host,** the A.O. Smith app can go
+  stale. Home Assistant keeps working, and raises *Water heater isn't reaching
+  Ayla*. Turn the heater's network access off for 90 seconds, then on, or let
+  Home Assistant do it: choose a network switch under the integration's
+  **Configure** ([details](docs/USING.md#the-relay-is-the-water-heaters-route-to-the-cloud)).
 - **Firmware updates are held** until you allow each one from a repair in
   Home Assistant.
 - **If A.O. Smith's cloud is down,** local control keeps working.

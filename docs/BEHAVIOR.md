@@ -44,6 +44,7 @@ That makes silence ambiguous, and the relay's health model refuses to guess:
 | a write queued and the appliance not asking for commands | `degraded` — wait or reconnect |
 | one request per dial, minutes apart, no polls | `degraded` — the researched signature |
 | Local Connect delivering changing reports, no cloud request for 30+ min | `degraded` (`code: cloud_idle`) — power-cycle; HA raises a repair |
+| the cloud-echo probe: a LAN reporting-mask write acked with no cloud request since | `degraded` (`code: cloud_down`) — network off 90 s, or power-cycle; HA raises a repair, and can toggle a network switch |
 
 An earlier version of this file claimed a relay restart costs 20+ minutes of
 silence. That was wrong as stated: the silence was the module being idle, and the

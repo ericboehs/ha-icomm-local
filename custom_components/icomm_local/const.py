@@ -68,3 +68,12 @@ CONF_NUMBERS = "heater_numbers"
 CONF_POWER_ENTITY = "power_entity"
 FROZEN_POWER_W = 150          # above this the heater is running (heat pump ~260 W)
 FROZEN_WITH_POWER_S = 1800    # unchanged this long while drawing power: frozen
+
+# Options: a switch that cuts the heater's network access while off (the UniFi
+# integration's block-client switch). When the relay says the cloud side is
+# down, it's turned off this long and on again (research phase 53).
+CONF_NETWORK_SWITCH = "network_switch"
+NETWORK_OFF_SECONDS = 90
+NETWORK_RESET_COOLDOWN = 6 * 3600   # at most one reset this often
+NETWORK_ON_RETRIES = 5
+NETWORK_ON_RETRY_SECONDS = 30

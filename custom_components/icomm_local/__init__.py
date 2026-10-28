@@ -22,6 +22,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     CONF_DSN,
+    CONF_NETWORK_SWITCH,
     CONF_NUMBERS,
     CONF_POWER_ENTITY,
     DOMAIN,
@@ -44,6 +45,7 @@ from .heaters import (
     update_device_pages,
     valid_dsn,
 )
+from .network_reset import NetworkReset
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -162,10 +164,32 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None =
 
 
 def _cloud_idle_issue(hass: HomeAssistant, data: dict, issue_id: str,
-                      heater: str = "iCOMM Water Heater") -> None:
-    """The relay says the heater's cloud side stopped (health code cloud_idle):
-    HA is fine over Local Connect, Ayla and the app get nothing."""
+                      heater: str = "iCOMM Water Heater",
+                      reset: NetworkReset | None = None) -> None:
+    """The relay says the heater's cloud side stopped (health code cloud_idle,
+    or cloud_down from its echo probe): HA is fine over Local Connect, Ayla and
+    the app get nothing."""
     health = as_dict(data.get("health"))
+    if health.get("code") == "cloud_down":
+        down = as_number(as_dict(health.get("evidence")).get("cloud_down_s")) or 0
+        if reset is not None:
+            fix = (f"Home Assistant is fixing this itself: it turns **{reset.switch}** off for "
+                   "90 seconds, then on again, so the water heater rejoins the network and "
+                   "reconnects (at most once every 6 hours). If this warning is still here "
+                   "afterwards, flip the water heater's breaker off for about 30 seconds, "
+                   "then on.")
+        else:
+            fix = ("To fix it, turn the water heater's network access off for about 90 "
+                   "seconds, then on (for example by blocking it in your router's client "
+                   "list), or flip its breaker off for about 30 seconds, then on. To have "
+                   "Home Assistant do this automatically, choose a network switch for it "
+                   "under the iCOMM Local integration's **Configure**.")
+        ir.async_create_issue(
+            hass, DOMAIN, issue_id, is_fixable=False, is_persistent=False,
+            severity=ir.IssueSeverity.WARNING, translation_key="cloud_down",
+            translation_placeholders={"heater": heater, "minutes": str(round(down / 60)),
+                                      "fix": fix})
+        return
     if health.get("code") != "cloud_idle":
         ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
@@ -326,6 +350,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
     coordinator.relay_url = url
     coordinator.options = dict(entry.options)
     coordinator.ready, coordinator.replaced = False, None
+    coordinator.network_reset = None
+    if entry.options.get(CONF_NETWORK_SWITCH):
+        coordinator.network_reset = NetworkReset(hass, entry.entry_id,
+                                                 entry.options[CONF_NETWORK_SWITCH])
+        await coordinator.network_reset.async_load()
 
     def reload_once() -> None:
         """One reload, which migrates or re-keys before any entity is added."""
@@ -448,7 +477,11 @@ async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
         for dsn, data, name in _each_heater():
             issue_id = _heater_issue_id("cloud_idle", entry.entry_id, dsn, coordinator.primary)
             current.add(issue_id)
-            _cloud_idle_issue(hass, data, issue_id, name)
+            primary = dsn in (None, coordinator.primary)
+            reset = coordinator.network_reset if primary else None
+            _cloud_idle_issue(hass, data, issue_id, name, reset)
+            if reset is not None:
+                reset.check(as_dict(data.get("health")))
         _forget(current, "cloud_idle")
 
     entry.async_on_unload(coordinator.async_add_listener(_update_cloud_idle_issue))
@@ -590,6 +623,9 @@ async def _options_updated(hass: HomeAssistant, entry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
     unload = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload:
+        coordinator = hass.data[DOMAIN].get(entry.entry_id)
+        if getattr(coordinator, "network_reset", None) is not None:
+            await coordinator.network_reset.async_unload()
         ir.async_delete_issue(hass, DOMAIN, f"stale_telemetry_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"upstream_certificate_{entry.entry_id}")
         ir.async_delete_issue(hass, DOMAIN, f"telemetry_frozen_{entry.entry_id}")

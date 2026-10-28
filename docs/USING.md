@@ -134,20 +134,33 @@ While the steering is active (NAT rules or DNS), the relay is the water heater's
 updating, the app shows the heater offline and cloud commands wait. The tank
 keeps heating to its last setpoint regardless.
 
-**After an add-on update or restart, or a reboot of the Home Assistant host,**
-the heater's cloud side may not come back by itself.
-- **What happens:** its Wi-Fi module gives up on the cloud after a failed
-  connection and doesn't retry while Local Connect works (seen live: over 80
-  minutes, until a power cycle).
+**After a reboot of the Home Assistant host** (or any relay outage of a few
+minutes), the heater's cloud side may not come back by itself. A quick add-on
+restart or update is usually fine.
+- **What happens:** its Wi-Fi module stops connecting to the cloud. It still
+  looks up the cloud's name, but opens no connection, for hours, until its
+  network connection drops (seen live: 8.5 hours).
 - **What still works:** Home Assistant keeps live data and control.
 - **What doesn't:** the A.O. Smith app shows stale data, and app changes don't
   arrive.
-- **How you'll know:** after 30 minutes the relay's health turns `degraded`
-  ("cloud side idle"), and Home Assistant raises the repair *Water heater isn't
-  reaching Ayla*.
-- **The fix:** flip the heater's breaker off for about 30 seconds, then on.
-- **To avoid it:** if you use the app, update the add-on when a power cycle is
-  convenient, and check the repair afterwards.
+- **How you'll know:** the relay checks. When the cloud has been quiet a while
+  (5 minutes after the relay starts, then 30), it sends the heater the
+  reporting request the app sends. A healthy heater passes it on to the cloud
+  before it confirms it locally; one that confirms it without passing it on
+  has lost its cloud side. Health turns `degraded` (`cloud_down`), and Home
+  Assistant raises the repair *Water heater isn't reaching Ayla*.
+- **The fix:** turn the heater's network access off for about 90 seconds, then
+  on. It rejoins and reconnects to the cloud, just as after a power cycle. A
+  quick "reconnect" isn't enough: the module has to notice it was gone.
+  Flipping its breaker off for about 30 seconds also works.
+- **Automatic fix:** under the integration's **Configure**, choose a *network
+  switch*: a switch that cuts the heater's network access while it's off. With
+  UniFi, add the heater to the UniFi integration's *block client* list (its
+  options, *Client controls*) and pick the switch that creates. Home Assistant
+  then turns it off for 90 seconds and on again whenever the cloud side is
+  down, at most once every 6 hours. If Home Assistant restarts mid-way, it
+  turns the switch back on when it starts. With several heaters, the switch
+  is used for the first heater only.
 
 ## Uninstalling, in detail
 

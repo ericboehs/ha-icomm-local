@@ -87,15 +87,20 @@
     "cloud_idle": {
       "title": "Water heater isn't reaching Ayla",
       "description": "**{heater}**: Local Connect is working, so Home Assistant has live data and control, but the water heater hasn't contacted Ayla's cloud for {minutes} minutes. The A.O. Smith app won't show current data, and app changes won't reach the heater. This can follow a relay restart or a reboot of the Home Assistant host: the heater's Wi-Fi module gives up on the cloud after a failed connection and doesn't retry while Local Connect works.\n\nTo fix it, flip the water heater's breaker off for about 30 seconds, then on. It signs in to Ayla again within a minute; nothing is lost. This warning clears by itself once it does."
+    },
+    "cloud_down": {
+      "title": "Water heater isn't reaching Ayla",
+      "description": "**{heater}**: Local Connect is working, so Home Assistant has live data and control, but the water heater has stopped talking to Ayla's cloud: about {minutes} minutes ago it accepted a local change without passing it on. The A.O. Smith app won't show current data, and app changes won't reach the heater. This follows a relay outage such as a reboot of the Home Assistant host: the heater's Wi-Fi module stops connecting to the cloud until its network connection drops.\n\n{fix} This warning clears by itself once the heater reaches Ayla again."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Optional power sensor",
-        "description": "A power sensor on the water heater's own circuit (for example an Emporia or smart-plug channel). It lets Home Assistant spot frozen water heater data sooner: unchanged for 30 minutes while this sensor shows the heater running.",
+        "title": "Optional helpers",
+        "description": "Both are optional.\n\n**Power sensor:** a sensor on the water heater's own circuit (for example an Emporia or smart-plug channel). It lets Home Assistant spot frozen water heater data sooner: unchanged for 30 minutes while this sensor shows the heater running.\n\n**Network switch:** a switch that cuts the water heater's network access while it's off, such as the UniFi integration's switch for blocking the water heater as a client. When the water heater stops reaching Ayla (which can follow a reboot of the Home Assistant host), Home Assistant turns it off for 90 seconds, then on, so the heater reconnects, at most once every 6 hours.",
         "data": {
-          "power_entity": "Water heater power sensor"
+          "power_entity": "Water heater power sensor",
+          "network_switch": "Water heater network switch"
         }
       }
     }

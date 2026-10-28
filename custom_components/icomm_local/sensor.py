@@ -190,7 +190,17 @@ class RelayHealthSensor(_RelaySensor):
             "last_telemetry_age_s": data.get("last_telemetry_age"),
             "upstream_errors": data.get("upstream_errors"),
             "lan": data.get("lan"),
+            # The cloud-echo probe (relay 0.7.8+) and, for the primary heater,
+            # the network-switch recovery when one is configured.
+            "cloud_probe": data.get("cloud_probe"),
+            "network_reset": self._network_reset(),
         }
+
+    def _network_reset(self) -> dict | None:
+        reset = getattr(self.coordinator, "network_reset", None)
+        if reset is None or self._dsn not in (None, self.coordinator.primary):
+            return None
+        return reset.status()
 
 
 class PendingWriteSensor(_RelaySensor):
