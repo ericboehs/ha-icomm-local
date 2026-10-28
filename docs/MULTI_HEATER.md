@@ -113,7 +113,8 @@ The *stale data*, *data frozen* and *isn't reaching Ayla* (cloud idle)
 repairs are per heater. They name the
 heater by its number ("iCOMM Water Heater 2"), even if you've renamed the
 device. The relay's own repairs are relay-wide: firmware hold, upstream
-certificate, and port in use.
+certificate, and port in use. The optional network switch (for the
+*isn't reaching Ayla* repair) is used for the first heater only.
 
 The power-sensor option (the integration's **Configure**) is shared by all
 heaters, so it only helps the frozen-data check if every heater is on that

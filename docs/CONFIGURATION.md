@@ -19,6 +19,8 @@ Add-on options, or environment variables when running the relay directly:
 | `trusted_peers` / `TRUSTED_PEERS` | — | extra addresses allowed on the module-facing ports; `*` disables the check |
 | `device_dsn` / `DEVICE_DSN` | — | shown in `/state`; with DNS steering, only this DSN's module is pinned (otherwise the first one seen). Primary heater only |
 | `CONTENTS_STALE_AFTER` | 5400 | seconds of byte-identical reports before `/state` says `contents_stale` |
+| `CLOUD_PROBE` | on | the cloud-echo probe: when the cloud has been quiet (5 min after start, then `CLOUD_PROBE_AFTER`), send the reporting mask over LAN; acked with no cloud request since means the heater's cloud side is down (health `cloud_down`). `0` turns it off |
+| `CLOUD_PROBE_AFTER` | 1800 | seconds of cloud quiet before a probe, and the minimum time between probes |
 | `CLOUD_IDLE_AFTER` | 1800 | seconds with no cloud request from the module, while Local Connect still delivers changing reports, before health turns `degraded` (`cloud_idle`) |
 | `dns_server` / `DNS_SERVER` | off | serve DNS on the host's port 53: the heater's cloud name resolves to this host (the relay also listens on 443), everything else is forwarded. See [DNS_STEERING.md](DNS_STEERING.md) |
 | `dns_upstream` / `DNS_UPSTREAM` | the gateway | where `dns_server` forwards other queries (`ip` or `ip:port`) |

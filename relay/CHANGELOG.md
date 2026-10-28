@@ -10,6 +10,40 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-10-28
+
+### Added
+- **The relay notices when the heater has stopped talking to Ayla, within
+  minutes.**
+  - **The problem:** after a relay outage of a few minutes (a reboot of the
+    Home Assistant host), the heater's Wi-Fi module stops connecting to
+    the cloud. It still looks up the cloud's name but opens no connection,
+    until its network connection drops. Seen live for 8.5 hours, while health
+    said `unknown: too few dials observed yet` and no repair appeared.
+  - **The probe:** a healthy heater passes a local reporting-mask write on to
+    the cloud about 100 ms before it confirms it locally; a broken one
+    confirms it with nothing sent to the cloud. The relay sends the mask
+    when the cloud has been quiet (5 minutes after start, then every 30), and
+    every routine renewal counts too.
+  - **Result:** health `degraded` with code `cloud_down`, and the repair
+    *Water heater isn't reaching Ayla*. `/state` has `cloud_probe`, and the
+    *Relay health* sensor shows it as an attribute. `CLOUD_PROBE=0` turns it
+    off; `CLOUD_PROBE_AFTER` sets the interval.
+- **Optional automatic fix: a network switch** (the integration's
+  **Configure**).
+  - **What it does:** when the cloud side is down, Home Assistant turns the
+    switch off for 90 seconds, then on, so the heater rejoins the network and
+    reconnects, as after a power cycle. At most once every 6 hours; turning it
+    back on is retried, and a Home Assistant restart mid-way turns it back on
+    at the next start.
+  - **Which switch:** anything that cuts the heater's network access while
+    it's off. With UniFi, add the heater to the UniFi integration's *block
+    client* list and pick that switch. A quick Wi-Fi "reconnect" doesn't
+    work: the heater rejoins in seconds without resetting.
+  - **Measured:** a 90-second block, then unblock, brought the cloud side
+    back at once (connection, config fetch, Local Connect re-registered).
+  - With several heaters, the switch is used for the first heater only.
+
 ### Docs
 - **"Open in Home Assistant" buttons** in the install steps: one adds the
   repository and opens the add-on, one opens the integration in HACS, one

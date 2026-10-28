@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_POWER_ENTITY
+from .const import CONF_NETWORK_SWITCH, CONF_POWER_ENTITY
 
 STEP_SCHEMA = vol.Schema(
     {vol.Required(CONF_URL, default="http://127.0.0.1:8124"): cv.string}
@@ -66,11 +66,14 @@ class IcommLocalConfigFlow(config_entries.ConfigFlow, domain="icomm_local"):
 
 
 class IcommLocalOptionsFlow(config_entries.OptionsFlow):
-    """Optional: a power sensor on the heater's circuit (Emporia, a smart plug).
+    """Optional helpers, each an existing entity:
 
-    The module can keep reporting the same snapshot while the heater runs. An
-    independent power reading shows the heater working while the data stands
-    still, so the frozen-telemetry repair can be raised sooner.
+    - a power sensor on the heater's circuit (Emporia, a smart plug). The module
+      can keep reporting the same snapshot while the heater runs; an independent
+      power reading shows it working, so the frozen-data repair comes sooner;
+    - a switch that cuts the heater's network access while off (the UniFi
+      integration's block-client switch). When the relay says the heater's
+      cloud side is down, it's turned off for 90 s and on again.
     """
 
     async def async_step_init(self, user_input: dict | None = None):
@@ -79,10 +82,14 @@ class IcommLocalOptionsFlow(config_entries.OptionsFlow):
         # Not self.config_entry: HA sets that itself only from 2024.11, and
         # setting it on newer HA is deprecated. The handler is the entry ID.
         entry = self.hass.config_entries.async_get_entry(self.handler)
-        current = entry.options.get(CONF_POWER_ENTITY) if entry else None
+        options = entry.options if entry else {}
         schema = vol.Schema({
-            vol.Optional(CONF_POWER_ENTITY, description={"suggested_value": current}):
+            vol.Optional(CONF_POWER_ENTITY,
+                         description={"suggested_value": options.get(CONF_POWER_ENTITY)}):
                 selector.EntitySelector(selector.EntitySelectorConfig(
                     domain="sensor", device_class="power")),
+            vol.Optional(CONF_NETWORK_SWITCH,
+                         description={"suggested_value": options.get(CONF_NETWORK_SWITCH)}):
+                selector.EntitySelector(selector.EntitySelectorConfig(domain="switch")),
         })
         return self.async_show_form(step_id="init", data_schema=schema)

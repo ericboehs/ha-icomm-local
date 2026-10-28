@@ -43,6 +43,7 @@ async def test_a_requested_mask_rides_the_next_poll_once(tmp_path):
     prop = _decrypt(server, await server._commands(POLL))["data"]["properties"][0]["property"]
     assert prop["name"] == "periodicParameterSetting"
     assert prop["value"] == APP_REPORTING_MASK and prop["base_type"] == "string"
+    assert prop["id"] == server.mask_id and len(prop["id"]) == 8
     assert server.masks_sent == 1 and server.status()["last_mask_sent_age"] is not None
     assert _decrypt(server, await server._commands(POLL))["data"] != {"properties": [prop]}
 
@@ -107,3 +108,15 @@ def test_renewal_is_on_by_default_and_can_be_turned_off(tmp_path, monkeypatch):
     relay.contents_changed -= 7200
     relay._ingest_blocks(telemetry_blocks(_telemetry_body()))
     assert server.mask_pending is False
+
+
+async def test_the_poll_sends_a_cloud_probe_and_its_ack_is_matched(tmp_path):
+    """Phase 53: nothing heard from the cloud 5 min after start, so the next
+    LAN poll carries the mask; its ack (by ID) is what the verdict reads."""
+    server = _server(tmp_path)
+    server.session_verified = True
+    server.relay.started -= 301
+    prop = _decrypt(server, await server._commands(POLL))["data"]["properties"][0]["property"]
+    assert prop["name"] == "periodicParameterSetting" and server.relay.cloud_probes == 1
+    await server.relay.ingest_lan_update({"data": {"ack_status": 200, "id": prop["id"]}})
+    assert server.mask_acked >= server.last_mask_sent > 0

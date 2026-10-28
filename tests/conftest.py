@@ -60,7 +60,7 @@ def blocks_hybrid() -> list[bytes]:
 # Every environment variable the relay reads. Cleared before each test so a
 # developer's shell (or a test that leaked) can't change what a test sees.
 RELAY_ENV = (
-    "CERT_DIR", "CLOUD_IDLE_AFTER", "CONTENTS_STALE_AFTER", "CONTENTS_STALE_HEATING_AFTER",
+    "CERT_DIR", "CLOUD_IDLE_AFTER", "CLOUD_PROBE", "CLOUD_PROBE_AFTER", "CONTENTS_STALE_AFTER", "CONTENTS_STALE_HEATING_AFTER",
     "DATA_DIR", "DEBUG_REQUESTS", "DEVICE_DSN", "DNS_ANSWER", "DNS_HOST", "DNS_PORT", "DNS_REWRITE",
     "DNS_SERVER", "DNS_UPSTREAM", "DSN_LAN_REWRITE", "FIRMWARE_UPDATES", "FREEZE_RECONNECT",
     "LAN_MODE", "LAN_PORT", "LAN_REFRESH_INTERVAL", "LAN_STALL_AFTER", "LANIP_FILE",

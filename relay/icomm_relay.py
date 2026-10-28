@@ -143,6 +143,15 @@ IDLE_INTERVAL_DEFAULT = 6 * 3600
 # No cloud request for this long while Local Connect delivers changing reports:
 # the module's cloud side has stopped (health: degraded, code cloud_idle).
 CLOUD_IDLE_AFTER = int(os.environ.get("CLOUD_IDLE_AFTER", "1800"))
+# The cloud-echo probe (phase 53). A healthy module passes every LAN
+# reporting-mask write on to the cloud (POST periodicParameterSetting?echo=true)
+# about 100 ms before it acks it over LAN. After a long relay outage (a host
+# reboot) it acks with no echo: its cloud side is down until its Wi-Fi drops or
+# it's power-cycled. So: send the mask when the cloud has been quiet a while,
+# and an ack with no cloud request since the send means the cloud side is down.
+CLOUD_PROBE_FIRST_S = 300            # after start, if no cloud request has come yet
+CLOUD_PROBE_GRACE_S = 15             # after the ack, for a late echo
+CLOUD_PROBE_ACK_WAIT_S = 120         # an unacked probe blocks the next one this long
 REPORTING_INTERVAL = re.compile(
     r"<name>\s*superBlockDynDataUpdateRate\s*</name>\s*<value>\s*(\d+)\s*</value>")
 
@@ -380,6 +389,14 @@ class Relay:
         # live data within 11 min, while 5 renewals were not; 0 of 17 relay
         # reconnects outside a freeze started one (phase 50). One trial.
         self.freeze_reconnect = os.environ.get("FREEZE_RECONNECT", "0") == "1"
+        # The cloud-echo probe: on by default; CLOUD_PROBE_AFTER is both the
+        # cloud quiet time that triggers one and the minimum spacing.
+        self.cloud_probe = os.environ.get("CLOUD_PROBE", "1") != "0"
+        self.cloud_probe_after = float(os.environ.get("CLOUD_PROBE_AFTER", "1800"))
+        self.cloud_probes = 0
+        self.cloud_down_since: float | None = None
+        self.cloud_down_count = 0
+        self.cloud_probe_result: str | None = None     # "echoed" or "missing"
         self.freeze_masks = 0            # renewals since the contents last changed
         self.freeze_reconnected = False  # at most one reconnect per freeze
         self.freeze_reconnects = 0
@@ -776,6 +793,9 @@ class Relay:
 
     def _record_ack(self, command_id, status) -> None:
         """Attach a LAN ack to the write it answers (matched by property id)."""
+        if command_id and command_id == self.lan.mask_id:
+            self.lan.mask_acked = time.time()
+            return
         for write in self.pending.values():
             if command_id and write.command_id == command_id:
                 write.acked = time.time()
@@ -1290,6 +1310,15 @@ class Relay:
         out["reporting_mask"] = {"renew": self.mask_renew,
                                  "after_s": self.renew_after(),
                                  "sent": self.lan.masks_sent}
+        now = time.time()
+        self._update_cloud_down(now)
+        out["cloud_probe"] = {
+            "enabled": self.cloud_probe, "after_s": self.cloud_probe_after,
+            "probes": self.cloud_probes, "result": self.cloud_probe_result,
+            "down": self.cloud_down_since is not None,
+            "down_s": (round(now - self.cloud_down_since)
+                       if self.cloud_down_since is not None else None),
+            "times_down": self.cloud_down_count}
         out["freeze_reconnect"] = {"enabled": self.freeze_reconnect,
                                    "reconnects": self.freeze_reconnects,
                                    "last": self.last_freeze_reconnect}
@@ -1447,6 +1476,22 @@ class Relay:
                 f"{self.state.get('water_top')} F water)",
                 breaker, {"calling_for_heat": True})
 
+        # The cloud-echo probe caught it directly: the module acked a LAN write
+        # and passed nothing on to the cloud.
+        self._update_cloud_down(now)
+        if self.cloud_down_since is not None:
+            down = now - self.cloud_down_since
+            return degraded(
+                "cloud side down: the water heater acked a local write but didn't "
+                f"pass it on to Ayla ({down / 60:.0f} min ago)",
+                "Home Assistant is unaffected (Local Connect), but Ayla and the "
+                "A.O. Smith app get no updates. Turn the water heater's network "
+                "access off for about 90 seconds, then on (the integration can do "
+                "this for you with a network switch), or flip its breaker off for "
+                "~30 seconds, then on. This can follow a relay outage such as a "
+                "host reboot.",
+                {"cloud_down_s": round(down)}, code="cloud_down")
+
         # The cloud side stopped while Local Connect carries on. Seen after the
         # relay was unreachable (a host reboot, an add-on restart): libada drops
         # the cloud as a destination after a failed connect and, with its UDP
@@ -1513,6 +1558,53 @@ class Relay:
 
         return {"state": "healthy", "reasons": [], "evidence": evidence,
                 "unobservable": unobservable}
+
+    def _last_cloud_request(self) -> float:
+        return max([d["last"] for d in self._dial_shape()], default=0.0)
+
+    def maybe_probe_cloud(self) -> None:
+        """Called on every LAN poll: send the mask as a cloud-echo probe when
+        the cloud has been quiet long enough (5 min after start with nothing
+        heard, then CLOUD_PROBE_AFTER), at most once per CLOUD_PROBE_AFTER."""
+        if not self.cloud_probe or not self.lan.session_verified or self.lan.mask_pending:
+            return
+        now = time.time()
+        self._update_cloud_down(now)
+        sent = self.lan.last_mask_sent
+        if sent and self.lan.mask_acked < sent and now - sent < CLOUD_PROBE_ACK_WAIT_S:
+            return                                  # one still in flight
+        if sent and now - sent < self.cloud_probe_after:
+            return
+        last = self._last_cloud_request()
+        quiet = now - max(last, self.started)
+        wait = CLOUD_PROBE_FIRST_S if last < self.started else self.cloud_probe_after
+        if quiet >= wait and self.lan.request_mask():
+            self.cloud_probes += 1
+            _LOGGER.info("cloud probe: no cloud request for %d min; sending the reporting "
+                         "mask to see whether the heater passes it on", quiet // 60)
+
+    def _update_cloud_down(self, now: float) -> None:
+        """Turn the last mask's ack (or its echo) into a verdict."""
+        sent, acked = self.lan.last_mask_sent, self.lan.mask_acked
+        last = self._last_cloud_request()
+        if self.cloud_down_since is not None:
+            if last >= self.cloud_down_since:       # any request since: it's back
+                down = now - self.cloud_down_since
+                self.cloud_down_since = None
+                self.cloud_probe_result = "echoed"
+                _LOGGER.warning("cloud probe: the heater is reaching the cloud again "
+                                "(after %d min)", down // 60)
+            return
+        if not sent or acked < sent:
+            return
+        if last >= sent:
+            self.cloud_probe_result = "echoed"
+        elif now - acked >= CLOUD_PROBE_GRACE_S:
+            self.cloud_probe_result = "missing"
+            self.cloud_down_since = acked
+            self.cloud_down_count += 1
+            _LOGGER.warning("cloud probe: the heater acked the reporting mask but didn't "
+                            "pass it on to the cloud; its cloud side is down")
 
     def _cloud_history(self, now: float) -> dict:
         """Cloud dials over the last 24 h, the time since the last request, and

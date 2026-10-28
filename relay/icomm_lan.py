@@ -233,6 +233,10 @@ class LanServer:
         self.unanswered_deliveries = 0
         self.suspected_desyncs = 0
         self.last_mask_sent = 0.0
+        # The last mask's property ID and when its ack came back: the relay
+        # uses the pair as its cloud-echo probe (phase 53).
+        self.mask_id: str | None = None
+        self.mask_acked = 0.0
 
     @property
     def key_file(self) -> Path:
@@ -599,6 +603,7 @@ class LanServer:
         self.last_poll = time.time()
         self.seq_no += 1
         data: dict = {}
+        self.relay.maybe_probe_cloud()
         write = self.relay.take_pending_for_lan()
         if write is not None:
             write.command_id = "".join(secrets.choice(_ALNUM) for _ in range(8))
@@ -613,10 +618,10 @@ class LanServer:
             self.mask_pending = False
             self.masks_sent += 1
             self.last_mask_sent = time.time()
+            self.mask_id = "".join(secrets.choice(_ALNUM) for _ in range(8))
             data = {"properties": [{"property": {
                 "base_type": "string", "name": "periodicParameterSetting",
-                "value": self.reporting_mask,
-                "id": "".join(secrets.choice(_ALNUM) for _ in range(8))}}]}
+                "value": self.reporting_mask, "id": self.mask_id}}]}
             _LOGGER.warning("LAN mode: sending the reporting mask (renewal %d)",
                             self.masks_sent)
         elif self.refresh_pending or self._refresh_due():

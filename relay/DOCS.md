@@ -27,10 +27,13 @@ Keys are generated on first start and never leave the box:
 - the TLS certificate and key in `/data/certs`;
 - each heater's LAN key in `/data/heaters/<DSN>/lanip.json`.
 
-**Updating or restarting this add-on** can leave the water heater's cloud side
-idle afterwards.
+**A reboot of the Home Assistant host** (a relay outage of a few minutes) can
+leave the water heater's cloud side down afterwards.
 - **Home Assistant is unaffected,** but the A.O. Smith app goes stale.
-- **After 30 minutes** Home Assistant raises *Water heater isn't reaching Ayla*.
-- **The fix:** flip the heater's breaker off for about 30 seconds, then on.
+- **Within minutes** the relay notices, and Home Assistant raises *Water
+  heater isn't reaching Ayla*.
+- **The fix:** turn the heater's network access off for about 90 seconds, then
+  on, or flip its breaker. The integration can do the first for you: choose a
+  network switch under its **Configure**.
 
 See [*The relay is the water heater's route to the cloud*](https://github.com/ericboehs/ha-icomm-local/blob/main/docs/USING.md#the-relay-is-the-water-heaters-route-to-the-cloud).
