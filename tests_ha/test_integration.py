@@ -107,6 +107,23 @@ async def test_pending_value_is_shown_until_confirmed(hass: HomeAssistant, aiocl
     assert wh.attributes["write_status"] == {"setpoint": "acknowledged"}
 
 
+async def test_state_is_not_rewritten_when_only_the_age_moves(
+        hass: HomeAssistant, aioclient_mock) -> None:
+    """Older frontends reset the card's target on every state change, so a
+    ticking attribute made +/- fight the user every 10 s poll."""
+    entry = await _setup(hass, aioclient_mock)
+    before = hass.states.get("water_heater.icomm_water_heater")
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{URL}/state", json={**STATE, "last_telemetry_age": 42.0})
+    await hass.data["icomm_local"][entry.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    after = hass.states.get("water_heater.icomm_water_heater")
+    assert "last_telemetry_age_s" not in after.attributes
+    assert after.last_updated == before.last_updated
+    health = hass.states.get("sensor.icomm_water_heater_relay_health")
+    assert health.attributes["last_telemetry_age_s"] == 42.0
+
+
 async def test_stale_tank_warns_but_stays_writable(hass: HomeAssistant, aioclient_mock) -> None:
     """Live finding: stale -> unavailable made HA silently drop service calls.
 
