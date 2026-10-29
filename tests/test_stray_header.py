@@ -33,8 +33,8 @@ STRAY = b"Content-Length: 0\r\n\r\n"
 PING = [b"GET /ping HTTP/1.1\r\n" + HOST + b"\r\n", STRAY]
 DSNS = [b"GET /dsns/AC000W019949045.xml HTTP/1.1\r\n" + HOST + KEY, STRAY]
 POLL = [b"GET /devices/29689890/commands.xml?signal=-45 HTTP/1.1\r\n" + HOST + KEY, STRAY]
-POST = [b"POST /devices/29689890/properties/firmwareUpdateConsent/datapoints.xml HTTP/1.1\r\n"
-        + HOST + KEY,
+POST_PATH = b"/devices/29689890/properties/firmwareUpdateConsent/datapoints.xml"
+POST = [b"POST " + POST_PATH + b" HTTP/1.1\r\n" + HOST + KEY,
         b"Transfer-Encoding: chunked\r\n\r\n27\r\n<datapoint><value>1</value></datapoint>",
         b"\r\n0\r\n\r\n"]
 
@@ -87,8 +87,7 @@ async def test_the_reconnect_conversation_is_answered(split):
         b"HTTP/1.1 200 OK GET /ping 0",
         b"HTTP/1.1 200 OK GET /dsns/AC000W019949045.xml 0",
         b"HTTP/1.1 200 OK GET /devices/29689890/commands.xml 0",
-        b"HTTP/1.1 200 OK POST /devices/29689890/properties/firmwareUpdateConsent/"
-        b"datapoints.xml 39"]
+        b"HTTP/1.1 200 OK POST " + POST_PATH + b" 39"]
     assert relay.stray_headers == 1
     state = json.loads((await relay.state_handler(None)).text)
     assert state["stray_headers"] == 1
