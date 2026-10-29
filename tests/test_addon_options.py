@@ -53,3 +53,14 @@ def test_experimental_freeze_reconnect(tmp_path, value, exported):
 def test_it_ships_off():
     assert _section("options")["experimental_freeze_reconnect"] == "false"
     assert _section("schema")["experimental_freeze_reconnect"] == "bool?"
+
+
+@pytest.mark.parametrize(("value", "exported"), [(True, True), (False, False), (None, False)])
+def test_debug_tls_keylog(tmp_path, value, exported):
+    options = {} if value is None else {"debug_tls_keylog": value}
+    assert ("export TLS_KEYLOG=1" in _exports(tmp_path, options)) is exported
+
+
+def test_debug_tls_keylog_is_hidden_and_optional():
+    assert "debug_tls_keylog" not in _section("options")
+    assert _section("schema")["debug_tls_keylog"] == "bool?"

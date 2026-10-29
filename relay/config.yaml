@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.7.11"
+version: "0.7.12"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -79,5 +79,10 @@ schema:
   # How many water heaters this relay serves. Each new heater is added when
   # Ayla accepts its config fetch; past the limit it works through Ayla only.
   max_heaters: int(1,8)?
+  # Debugging only, off and hidden by default. Writes the TLS session keys of
+  # the water heater's connections to /data/tls-keylog.txt (0600), so a packet
+  # capture of them can be decrypted. Anyone with the file and a capture can
+  # read that traffic: turn it off and delete the file afterwards.
+  debug_tls_keylog: bool?
 map:
   - share:ro

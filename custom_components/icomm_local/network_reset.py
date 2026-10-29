@@ -61,6 +61,7 @@ class NetworkReset:
     async def async_load(self) -> None:
         data = as_dict(await self.store.async_load())
         self.last = as_number(data.get("last")) or 0.0
+        self.resets = int(as_number(data.get("resets")) or 0)
         if data.get("off"):
             # Home Assistant stopped during a reset: never leave the heater offline.
             _LOGGER.warning("%s was left off by an interrupted network reset; turning it on",
@@ -115,7 +116,8 @@ class NetworkReset:
         return True
 
     async def _save(self) -> None:
-        await self.store.async_save({"last": self.last, "off": self.off})
+        await self.store.async_save({"last": self.last, "off": self.off,
+                                     "resets": self.resets})
 
     async def async_unload(self) -> None:
         """Unloading mid-reset: turn the switch back on now."""

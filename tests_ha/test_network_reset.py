@@ -64,6 +64,7 @@ async def test_off_for_90_seconds_then_on(hass, aioclient_mock, calls, freezer, 
                          a={**STATE_A, "health": DOWN})
     assert [c.data["entity_id"] for c in calls["off"]] == [SWITCH] and not calls["on"]
     assert hass_storage["icomm_local.network_reset.net1"]["data"]["off"] is True
+    assert hass_storage["icomm_local.network_reset.net1"]["data"]["resets"] == 1
     issue = _issue(hass, f"cloud_idle_{entry.entry_id}")
     assert issue.translation_key == "cloud_down"
     assert SWITCH in issue.translation_placeholders["fix"]
@@ -208,3 +209,23 @@ async def test_options_flow_offers_the_switch(hass, aioclient_mock, calls):
     coordinator = hass.data["icomm_local"][entry.entry_id]
     assert coordinator.network_reset is not None and coordinator.network_reset.switch == SWITCH
     assert entry.state == config_entries.ConfigEntryState.LOADED
+
+
+async def test_the_reset_count_survives_a_restart(hass, aioclient_mock, calls, hass_storage):
+    """10-29: `resets` read 0 after an HA restart though `last` was kept."""
+    hass_storage["icomm_local.network_reset.net1"] = {
+        "version": 1, "minor_version": 1, "key": "icomm_local.network_reset.net1",
+        "data": {"last": dt_util.utcnow().timestamp() - 3600, "off": False, "resets": 3}}
+    entry = await _setup(hass, aioclient_mock, entry=_entry(hass),
+                         a={**STATE_A, "health": HEALTHY})
+    reset = hass.data["icomm_local"][entry.entry_id].network_reset
+    assert reset.status()["resets"] == 3 and not calls["on"] and not calls["off"]
+
+
+async def test_an_old_store_without_a_count(hass, aioclient_mock, calls, hass_storage):
+    hass_storage["icomm_local.network_reset.net1"] = {
+        "version": 1, "minor_version": 1, "key": "icomm_local.network_reset.net1",
+        "data": {"last": 0, "off": False}}
+    entry = await _setup(hass, aioclient_mock, entry=_entry(hass),
+                         a={**STATE_A, "health": HEALTHY})
+    assert hass.data["icomm_local"][entry.entry_id].network_reset.status()["resets"] == 0

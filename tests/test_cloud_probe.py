@@ -176,3 +176,31 @@ def test_an_answered_probe_still_waits_the_interval(relay, _clock):
     _clock["now"] += 60
     relay.maybe_probe_cloud()
     assert not relay.lan.mask_pending and relay.cloud_probes == 1
+
+
+# -- loopback isn't the heater ----------------------------------------------------
+
+async def test_a_curl_on_the_relays_host_is_not_a_cloud_request(tmp_path, monkeypatch, _clock):
+    """10-29 07:55: `curl https://127.0.0.1:443/ping` cleared cloud_down."""
+    from test_proxy import FakeClient, _relay, _request
+    relay = _relay(tmp_path, monkeypatch)
+    relay.client = FakeClient(200, b"pong")
+    relay.cloud_down_since = _clock["now"] - 60
+    _clock["now"] += 1
+    for remote in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+        reply = await relay._route(_request("GET", "/ping").clone(remote=remote))
+        assert reply.status == 200                          # still answered
+    assert relay._last_cloud_request() == 0.0
+    relay._update_cloud_down(_clock["now"])
+    assert relay.cloud_down_since is not None               # still down
+    await relay._route(_request("GET", "/ping").clone(remote="10.0.20.187"))
+    assert relay._last_cloud_request() == _clock["now"]
+    relay._update_cloud_down(_clock["now"])
+    assert relay.cloud_down_since is None                   # the heater: back
+
+
+def test_loopback_helper():
+    from icomm_relay import _is_loopback
+    assert _is_loopback("127.0.0.5") and _is_loopback("::1") and _is_loopback("::ffff:127.0.0.1")
+    assert not _is_loopback("10.0.20.187") and not _is_loopback(None)
+    assert not _is_loopback("not-an-ip")

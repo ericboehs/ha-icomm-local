@@ -167,3 +167,40 @@ def test_missing_certificates_fail_loudly(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("RELAY_KEY", str(tmp_path / "absent.key"))
     with pytest.raises(SystemExit):
         Relay().tls_context()
+
+
+@pytest.mark.parametrize("setting", ["1", "custom"])
+def test_tls_keylog_writes_session_keys(tmp_path, monkeypatch, openssl_available, setting,
+                                        caplog) -> None:
+    """debug_tls_keylog: the keys of a real handshake land in a 0600 file."""
+    import socket
+    import threading
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    path = tmp_path / ("tls-keylog.txt" if setting == "1" else "elsewhere.txt")
+    monkeypatch.setenv("TLS_KEYLOG", setting if setting == "1" else str(path))
+    server_ctx = _server_context(tmp_path, monkeypatch)
+    assert "TLS key log ON" in caplog.text
+    assert path.exists() and path.stat().st_mode & 0o777 == 0o600
+    client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client_ctx.check_hostname, client_ctx.verify_mode = False, ssl.CERT_NONE
+    client_ctx.set_ciphers("AES128-SHA")
+    left, right = socket.socketpair()
+
+    def serve():
+        with server_ctx.wrap_socket(right, server_side=True) as tls:
+            tls.recv(1)
+    thread = threading.Thread(target=serve)
+    thread.start()
+    with client_ctx.wrap_socket(left) as tls:
+        tls.sendall(b"x")
+    thread.join(5)
+    assert "\nCLIENT_RANDOM " in path.read_text()
+
+
+def test_tls_keylog_off_and_unwritable(tmp_path, monkeypatch, openssl_available, caplog):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TLS_KEYLOG", "0")
+    assert _server_context(tmp_path, monkeypatch).keylog_filename is None
+    monkeypatch.setenv("TLS_KEYLOG", str(tmp_path / "missing" / "keys.txt"))
+    assert _server_context(tmp_path, monkeypatch).keylog_filename is None
+    assert "TLS key log: can't write" in caplog.text
