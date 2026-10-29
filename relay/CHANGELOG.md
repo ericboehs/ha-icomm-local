@@ -10,6 +10,15 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-10-29
+
+### Fixed
+- **Reverted 0.7.10's stray-header guard: it stopped the heater reaching the
+  cloud after a reconnect.** With the guard, the heater's `GET /ping` was no
+  longer answered, so its cloud side never came back after a network drop. The
+  relay is back to 0.7.9's behaviour: a harmless `BadHttpMethod` error in the
+  log after `/ping`. The `stray_headers` count is gone from `/state`.
+
 ## [0.7.10] - 2026-10-29
 
 ### Fixed
