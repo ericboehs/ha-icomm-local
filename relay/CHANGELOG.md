@@ -10,6 +10,23 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-10-29
+
+### Fixed
+- **No more lost request and `BadHttpMethod` error after the heater's
+  `GET /ping`.** This time the fix is based on a decrypted capture.
+  - **How the heater sends requests:** each request's headers go in two
+    TLS records. The second holds the last header and the blank line;
+    for a `GET` that's `Content-Length: 0`, which completes the request.
+  - **The quirk:** only `/ping` already ends its first record with a blank
+    line, so the second record arrives after a complete request. The relay
+    answered it 400 and closed the connection, and the heater retried 16
+    seconds later.
+  - **Now:** the relay drops that record only when it follows a complete
+    request, and counts it in `/state` as `stray_headers`.
+  - **Why 0.7.10 failed:** it dropped the record always, which cut the
+    end off every normal request.
+
 ## [0.7.12] - 2026-10-29
 
 ### Fixed
