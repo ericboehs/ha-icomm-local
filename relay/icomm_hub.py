@@ -63,6 +63,76 @@ HEATER_POSTS = {"/write": "write_handler", "/write/cancel": "write_cancel_handle
                 "/nudge": "nudge_handler"}
 
 
+# libada sends each request's headers in two TLS records: the headers, then
+# the last header line and the blank line ("Content-Length: 0\r\n\r\n" for a
+# GET) on their own. Only GET /ping already ends its first record with a blank
+# line, which makes that second record a stray: aiohttp took it for the next
+# request's method (BadHttpMethod), answered 400 and closed the connection,
+# losing the request queued behind it; the module retried ~16 s later. Seen in
+# a decrypted capture (10-29 11:26). So the record is dropped only when the
+# bytes before it already ended a request. 0.7.10 dropped it always, which cut
+# the end off every normal request (reverted in 0.7.11).
+_STRAY_HEADER = b"Content-Length: 0\r\n\r\n"
+_END = b"\r\n\r\n"
+
+
+class StrayHeaderGuard(asyncio.Protocol):
+    """Wraps aiohttp's request handler for the module's listeners and drops
+    the stray record when it follows a complete request; all else goes through."""
+
+    def __init__(self, inner: asyncio.Protocol, relay: Relay) -> None:
+        self._inner, self._relay = inner, relay
+        self._tail = b""            # the last bytes passed on, to see a request's end
+
+    def connection_made(self, transport) -> None:
+        self._inner.connection_made(transport)
+
+    def data_received(self, data: bytes) -> None:
+        if data == _STRAY_HEADER and self._tail.endswith(_END):
+            self._drop()
+            return
+        if data.endswith(_END + _STRAY_HEADER):
+            # Both records in one read: keep the request, drop the stray.
+            data = data[:-len(_STRAY_HEADER)]
+            self._drop()
+        self._tail = (self._tail + data)[-4:]
+        self._inner.data_received(data)
+
+    def _drop(self) -> None:
+        self._relay.stray_headers += 1
+        _LOGGER.info("module quirk: dropped a stray 'Content-Length: 0' after a "
+                     "request (%d so far)", self._relay.stray_headers)
+
+    def eof_received(self):
+        return self._inner.eof_received()
+
+    def connection_lost(self, exc) -> None:
+        self._inner.connection_lost(exc)
+
+    def pause_writing(self) -> None:
+        self._inner.pause_writing()
+
+    def resume_writing(self) -> None:
+        self._inner.resume_writing()
+
+
+class ModuleRunner(web.AppRunner):
+    """The module's AppRunner: sites build each connection's protocol from
+    `runner.server`, so this hands them aiohttp's handler wrapped in
+    StrayHeaderGuard. Shutdown still uses aiohttp's own server."""
+
+    def __init__(self, app: web.Application, *, relay: Relay) -> None:
+        super().__init__(app)
+        self._relay = relay
+
+    @property
+    def server(self):
+        inner, relay = super().server, self._relay
+        if inner is None:
+            return None
+        return lambda: StrayHeaderGuard(inner(), relay)
+
+
 class Hub:
     def __init__(self, primary: Relay | None = None) -> None:
         self.primary = primary or Relay()
@@ -450,7 +520,7 @@ class Hub:
             runners.append(runner_state)
             await web.TCPSite(runner_state, primary.state_host, primary.state_port).start()
 
-            runner_module = web.AppRunner(module_app)
+            runner_module = ModuleRunner(module_app, relay=primary)
             await runner_module.setup()
             runners.append(runner_module)
             # No keep-alive timeout tuning: the module holds connections for ~26 s
