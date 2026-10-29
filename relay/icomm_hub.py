@@ -37,6 +37,7 @@ import contextlib
 import ipaddress
 import logging
 import os
+import re
 import signal
 import time
 
@@ -61,6 +62,63 @@ HEATER_GETS = {"/state": "state_handler", "/raw": "raw_handler"}
 HEATER_POSTS = {"/write": "write_handler", "/write/cancel": "write_cancel_handler",
                 "/lan/reporting-mask": "reporting_mask_handler",
                 "/nudge": "nudge_handler"}
+
+
+# The module sends GET /ping, then a stray "Content-Length: 0" line in a TLS
+# record of its own, after the request has already ended. aiohttp parsed it as
+# the next request's method, answered 400 and closed the connection, losing
+# the request the module had queued behind it; the module retried ~16 s later
+# on a new connection (seen at every reconnect, 10-28 and 10-29). A chunk that
+# is only this line can't be a request or a plausible body, so it's dropped.
+_STRAY_HEADER = re.compile(rb"(?:Content-Length: *0\r\n)+(?:\r\n)?")
+
+
+class StrayHeaderGuard(asyncio.Protocol):
+    """Wraps aiohttp's request handler for the module's listener and drops a
+    chunk consisting only of the stray header; everything else goes through."""
+
+    def __init__(self, inner: asyncio.Protocol, relay: Relay) -> None:
+        self._inner, self._relay = inner, relay
+
+    def connection_made(self, transport) -> None:
+        self._inner.connection_made(transport)
+
+    def data_received(self, data: bytes) -> None:
+        if _STRAY_HEADER.fullmatch(data):
+            self._relay.stray_headers += 1
+            _LOGGER.info("module quirk: dropped a stray 'Content-Length: 0' after a "
+                         "request (%d so far)", self._relay.stray_headers)
+            return
+        self._inner.data_received(data)
+
+    def eof_received(self):
+        return self._inner.eof_received()
+
+    def connection_lost(self, exc) -> None:
+        self._inner.connection_lost(exc)
+
+    def pause_writing(self) -> None:
+        self._inner.pause_writing()
+
+    def resume_writing(self) -> None:
+        self._inner.resume_writing()
+
+
+class ModuleRunner(web.AppRunner):
+    """The module's AppRunner: sites build each connection's protocol from
+    `runner.server`, so this hands them aiohttp's handler wrapped in
+    StrayHeaderGuard. Shutdown still uses aiohttp's own server."""
+
+    def __init__(self, app: web.Application, *, relay: Relay) -> None:
+        super().__init__(app)
+        self._relay = relay
+
+    @property
+    def server(self):
+        inner, relay = super().server, self._relay
+        if inner is None:
+            return None
+        return lambda: StrayHeaderGuard(inner(), relay)
 
 
 class Hub:
@@ -450,7 +508,7 @@ class Hub:
             runners.append(runner_state)
             await web.TCPSite(runner_state, primary.state_host, primary.state_port).start()
 
-            runner_module = web.AppRunner(module_app)
+            runner_module = ModuleRunner(module_app, relay=primary)
             await runner_module.setup()
             runners.append(runner_module)
             # No keep-alive timeout tuning: the module holds connections for ~26 s

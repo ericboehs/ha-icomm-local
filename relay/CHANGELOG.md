@@ -10,6 +10,19 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-10-29
+
+### Fixed
+- **The heater's first requests after a reconnect are no longer lost.**
+  - **The quirk:** after `GET /ping`, the heater sends a stray
+    `Content-Length: 0` line on its own, after the request has already ended.
+  - **What it cost:** the relay took that line for the start of a new request,
+    logged `BadHttpMethod … Invalid method encountered`, answered 400 and
+    closed the connection. That lost the request queued behind it, and the
+    heater retried about 16 seconds later on a new connection.
+  - **Now:** the relay drops a chunk that is only that line, and counts it in
+    `/state` as `stray_headers`.
+
 ## [0.7.9] - 2026-10-28
 
 ### Fixed

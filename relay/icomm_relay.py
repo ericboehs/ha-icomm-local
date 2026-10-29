@@ -372,6 +372,7 @@ class Relay:
         self._last_active_fault: int | None = None
         self.decode_errors = 0
         self.ingest_errors = 0
+        self.stray_headers = 0      # the module's "Content-Length: 0" after GET /ping
         self.contents_stale_after = float(os.environ.get("CONTENTS_STALE_AFTER", "5400"))
         # Heating changes tank temperatures within minutes: the longest healthy
         # gap between controller pushes while heating was 10 min (n=115); idle
@@ -1329,6 +1330,7 @@ class Relay:
                      if self.contents_changed else None)
         out["decode_errors"] = self.decode_errors
         out["ingest_errors"] = self.ingest_errors
+        out["stray_headers"] = self.stray_headers
         out["contents_unchanged_s"] = unchanged
         out["contents_stale_after_s"] = self.stale_after()
         out["contents_stale"] = bool(out["fresh"] and unchanged is not None
