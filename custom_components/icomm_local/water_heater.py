@@ -152,10 +152,12 @@ class IcommWaterHeater(HeaterEntity, WaterHeaterEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self):
+        # Nothing here may change on every poll (an age, a counter): each state
+        # change makes HA's frontend before 2026.11 reset the card's target
+        # while +/- is being pressed. The age is on the Relay health sensor.
         data = self._data
         return {
             "stale": is_stale(data),
-            "last_telemetry_age_s": data.get("last_telemetry_age"),
             "confirmed_setpoint": data.get("setpoint"),
             "active_setpoint": data.get("active_setpoint"),
             "confirmed_mode": data.get("mode"),

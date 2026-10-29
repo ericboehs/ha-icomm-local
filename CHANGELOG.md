@@ -10,6 +10,16 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-10-28
+
+### Fixed
+- **Pressing + or − repeatedly on the water heater card no longer jumps back.**
+  The water heater's state changed on every 10-second poll (its
+  `last_telemetry_age_s` attribute ticked), and Home Assistant's frontend
+  before 2026.11 resets the card's target on every state change, so a run of
+  presses was undone partway. The attribute is gone from the water heater;
+  the *Relay health* sensor still has it.
+
 ## [0.7.8] - 2026-10-28
 
 ### Added
