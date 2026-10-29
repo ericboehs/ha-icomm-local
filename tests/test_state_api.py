@@ -183,6 +183,7 @@ def test_tls_keylog_writes_session_keys(tmp_path, monkeypatch, openssl_available
     assert path.exists() and path.stat().st_mode & 0o777 == 0o600
     client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     client_ctx.check_hostname, client_ctx.verify_mode = False, ssl.CERT_NONE
+    client_ctx.minimum_version = client_ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     client_ctx.set_ciphers("AES128-SHA")
     left, right = socket.socketpair()
 
