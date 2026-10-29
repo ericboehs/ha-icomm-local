@@ -41,6 +41,7 @@ Add-on options, or environment variables when running the relay directly:
 | `LANIP_KEY` | generated | development only: use this LAN key instead of the saved one. Nothing is written to disk |
 | `DSN_LAN_REWRITE` | off | flip `lan-enabled` and `local-access-enabled` in the config reply even with `lan_mode` off. An experiment switch; with `lan_mode` on it changes nothing |
 | `DEBUG_REQUESTS` | off | log every module request path |
+| `debug_tls_keylog` / `TLS_KEYLOG` | off | debugging only, and not shown in the add-on's options until you add it in YAML mode. Writes the TLS session keys of the water heater's connections to `/data/tls-keylog.txt` (0600; or `TLS_KEYLOG=<path>`), so a packet capture can be decrypted, e.g. `tshark -o tls.keylog_file:tls-keylog.txt -r capture.pcap`. Anyone with the file and a capture can read that traffic: turn it off and delete the file afterwards |
 | `CERT_DIR`, `RELAY_CERT`, `RELAY_KEY`, `RELAY_DHPARAMS` | add-on: `/data/certs/...`; run directly: `./certs/...` | TLS material locations. `run.sh` (the add-on) sets `CERT_DIR` to `$DATA_DIR/certs`; the relay and `gen-cert.sh` default to `certs` in the working directory |
 
 ## Without the add-on (HA Container, Core, or another host)

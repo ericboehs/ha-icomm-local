@@ -48,6 +48,8 @@ if opts.get("offline_fallback") is False:
     print("export OFFLINE_FALLBACK=0")
 if opts.get("dns_server") is True:
     print("export DNS_SERVER=1")
+if opts.get("debug_tls_keylog") is True:
+    print("export TLS_KEYLOG=1")
 for key, env in (("listen_port", "LISTEN_PORT"), ("state_port", "STATE_PORT"),
                  ("upstream", "UPSTREAM"), ("device_dsn", "DEVICE_DSN"),
                  ("lan_port", "LAN_PORT"), ("module_ip", "MODULE_IP"),

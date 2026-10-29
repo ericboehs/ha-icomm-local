@@ -10,6 +10,23 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-10-29
+
+### Fixed
+- **A request from the relay's own host no longer counts as the heater
+  reaching the cloud.** A `curl` to the relay's `/ping` from Home Assistant's
+  host cleared `cloud_down` and looked like a dial. Loopback requests are still
+  answered, just not counted.
+- **The network switch's reset count survives a Home Assistant restart.** It
+  read 0 after a restart, though the 6-hour cooldown (from the saved time of
+  the last reset) was kept.
+
+### Added
+- **`debug_tls_keylog`, a hidden debugging option.** It writes the TLS session
+  keys of the water heater's connections to `/data/tls-keylog.txt` (0600), so a
+  packet capture can be decrypted. It logs a warning while on. Turn it off
+  and delete the file afterwards.
+
 ## [0.7.11] - 2026-10-29
 
 ### Fixed

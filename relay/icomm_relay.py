@@ -130,6 +130,13 @@ class PendingWrite:
 MODE_PAIRS = {(100, 1): "electric", (0, 4): "hybrid", (0, 5): "heat_pump"}
 
 
+def _is_loopback(remote: str | None) -> bool:
+    try:
+        return ipaddress.ip_address(normalize(remote)).is_loopback
+    except ValueError:
+        return False
+
+
 def mode_name(pair: tuple[int, int]) -> str:
     """The mode register pair as a name. Vacation is (days, 2)."""
     if pair in MODE_PAIRS:
@@ -1364,7 +1371,27 @@ class Relay:
         ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         if Path(dhparams).exists():
             ctx.load_dh_params(dhparams)
+        self._keylog(ctx)
         return ctx
+
+    def _keylog(self, ctx: ssl.SSLContext) -> None:
+        """TLS_KEYLOG: write session keys (NSS key log format) for decrypting a
+        capture of the module's traffic. "1" means $DATA_DIR/tls-keylog.txt."""
+        setting = os.environ.get("TLS_KEYLOG", "")
+        if setting in ("", "0"):
+            return
+        path = self.data_dir / "tls-keylog.txt" if setting == "1" else Path(setting)
+        try:
+            # Created 0600 before ssl appends to it with the default umask.
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
+            os.chmod(path, 0o600)
+        except OSError as err:
+            _LOGGER.error("TLS key log: can't write %s: %s", path, err.strerror or err)
+            return
+        ctx.keylog_filename = str(path)
+        _LOGGER.warning("TLS key log ON: session keys for the module's connections go to "
+                        "%s. Anyone with it and a capture can read them; turn "
+                        "debug_tls_keylog off and delete the file when done.", path)
 
     # -- degraded-state detection --------------------------------------
     def _note_request(self, path: str) -> None:
@@ -1698,7 +1725,10 @@ class Relay:
             # Not the module or the gateway: forward untouched, with none of
             # the local behavior (the key, telemetry, writes, DSN rewrite).
             return await self.proxy(request)
-        self._note_request(request.path)
+        if not _is_loopback(request.remote):
+            # A curl on the relay's host isn't the heater: counted, it would
+            # clear cloud_down and look like a dial (seen 10-29 07:55).
+            self._note_request(request.path)
         found = DSN_PATH_RE.search(request.path)
         if found:
             self.heater.adopt(found.group(1))
