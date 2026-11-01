@@ -14,13 +14,14 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
-  { key: "heat_pump", icon: "mdi:heat-wave", label: "Heat pump" },
+  { key: "heat_pump", icon: "mdi:heat-pump", label: "Heat pump" },
   { key: "eco", icon: "mdi:leaf", label: "Hybrid" },
   { key: "electric", icon: "mdi:flash", label: "Electric" },
+  { key: "vacation", icon: "mdi:palm-tree", label: "Vacation" },
 ];
 const MODE_LABEL = { heat_pump: "Heat pump", eco: "Hybrid", hybrid: "Hybrid",
   electric: "Electric", vacation: "Vacation" };
@@ -51,6 +52,8 @@ class IcommWaterHeaterCard extends HTMLElement {
     this._sending = false;     // the service call is out, the integration hasn't queued it yet
     this._sentAt = 0;          // until the pending write shows up (or 5 s)
     this._mode = null;         // a mode tap, until the pending write shows it
+    this._vacOpen = false;     // the vacation days row
+    this._days = 7;
     if (this._root) this._render();
   }
 
@@ -123,6 +126,14 @@ class IcommWaterHeaterCard extends HTMLElement {
           <button class="mode" data-mode="${m.key}" aria-label="${m.label}" title="${m.label}">
             <ha-icon icon="${m.icon}"></ha-icon><span class="spin" hidden></span></button>`).join("")}
         </div>
+        <div class="vac" hidden>
+          <span class="vlabel">Vacation</span>
+          <button class="round sm vminus" aria-label="Fewer days"><ha-icon icon="mdi:minus"></ha-icon></button>
+          <span class="vdays"></span>
+          <button class="round sm vplus" aria-label="More days"><ha-icon icon="mdi:plus"></ha-icon></button>
+          <button class="go">Start</button>
+          <button class="x" aria-label="Cancel"><ha-icon icon="mdi:close"></ha-icon></button>
+        </div>
       </ha-card>`;
     const $ = (s) => this._root.querySelector(s);
     this.$ = $;
@@ -136,6 +147,10 @@ class IcommWaterHeaterCard extends HTMLElement {
     for (const b of this._root.querySelectorAll(".mode")) {
       b.addEventListener("click", () => this._setMode(b.dataset.mode));
     }
+    $(".vminus").addEventListener("click", () => { this._days = Math.max(1, this._days - 1); this._render(); });
+    $(".vplus").addEventListener("click", () => { this._days = Math.min(99, this._days + 1); this._render(); });
+    $(".x").addEventListener("click", () => { this._vacOpen = false; this._render(); });
+    $(".go").addEventListener("click", () => this._startVacation());
     this._loadSlider();
   }
 
@@ -203,18 +218,40 @@ class IcommWaterHeaterCard extends HTMLElement {
 
   _setMode(key) {
     const a = this._hass.states[this._config.entity]?.attributes;
-    if (!a || (a.operation_mode === key && a.away_mode !== "on")) return;
+    if (!a) return;
+    if (key === "vacation") {
+      if (a.away_mode === "on") {       // back to the mode before vacation
+        this._vacOpen = false;
+        this._mode = { key: "off", at: Date.now() };
+        this._hass.callService("water_heater", "set_away_mode",
+          { entity_id: this._config.entity, away_mode: false });
+      } else {
+        this._vacOpen = !this._vacOpen;
+      }
+      this._render();
+      return;
+    }
+    this._vacOpen = false;
+    if (a.operation_mode === key && a.away_mode !== "on") { this._render(); return; }
     this._mode = { key, at: Date.now() };
     this._hass.callService("water_heater", "set_operation_mode",
       { entity_id: this._config.entity, operation_mode: key });
     this._render();
   }
 
+  _startVacation() {
+    this._vacOpen = false;
+    this._mode = { key: "vacation", at: Date.now() };
+    this._hass.callService("icomm_local", "set_mode",
+      { mode: "vacation", days: this._days }, { entity_id: this._config.entity });
+    this._render();
+  }
+
   // --- what's on its way ---------------------------------------------------
   _write(kind) {
     const pa = this._s("pending")?.attributes || {};
-    const p = pa.pending;
-    if (p && (p.kind === kind || (kind === "mode" && p.kind === "vacation"))) return { busy: true, w: p };
+    const p = pa.pending?.[kind];
+    if (p) return { busy: true, w: { kind, ...p } };
     const last = pa.last_write;
     if (last && last.kind === kind && FAILED[last.outcome]
         && Date.now() / 1000 - (last.delivered || last.queued) < FAIL_SHOW_S) {
@@ -301,13 +338,20 @@ class IcommWaterHeaterCard extends HTMLElement {
     // Modes.
     if (this._mode && (md.busy || Date.now() - this._mode.at > 5000)) this._mode = null;
     const want = md.busy ? (md.w.value === "hybrid" ? "eco" : md.w.value) : this._mode?.key;
+    const away = a.away_mode === "on";
     for (const b of this._root.querySelectorAll(".mode")) {
       const k = b.dataset.mode;
-      b.hidden = !(a.operation_list || []).includes(k);
-      b.classList.toggle("on", a.away_mode !== "on" && a.operation_mode === k && !want);
+      b.hidden = k === "vacation" ? a.away_mode == null : !(a.operation_list || []).includes(k);
+      b.classList.toggle("on", !want && (k === "vacation" ? away : !away && a.operation_mode === k));
+      b.classList.toggle("open", k === "vacation" && this._vacOpen);
+      b.title = k === "vacation" && away
+        ? `Vacation${a.vacation_days ? `, ${a.vacation_days} days` : ""}: tap to end` : MODES.find((m) => m.key === k).label;
       b.classList.toggle("want", want === k);
       b.querySelector(".spin").hidden = want !== k;
     }
+    $(".vac").hidden = !this._vacOpen;
+    $(".vdays").textContent = `${this._days} day${this._days === 1 ? "" : "s"}`;
+    $(".vminus").disabled = this._days <= 1;
   }
 }
 
@@ -360,6 +404,15 @@ const STYLE = `
     color: var(--primary-text-color); position: relative; }
   .mode.on { background: var(--wh-color); color: #fff; }
   .mode.want { outline: 2px dashed var(--wh-color); outline-offset: -4px; }
+  .mode.open { outline: 2px solid var(--wh-color); outline-offset: -4px; }
+  .vac { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 4px 0; }
+  .vac[hidden] { display: none; }
+  .vac .vlabel { white-space: nowrap; }
+  .vac .vdays { min-width: 56px; white-space: nowrap; text-align: center; font-weight: 500; }
+  .round.sm { width: 32px; height: 32px; --mdc-icon-size: 18px; }
+  .vac .go { margin-left: auto; padding: 8px 16px; border-radius: 18px; background: var(--wh-color);
+    color: #fff; font-weight: 500; }
+  .vac .x { width: 32px; height: 32px; display: grid; place-items: center; color: var(--secondary-text-color); }
   .mode .spin { position: absolute; top: 8px; right: 10px; width: 12px; height: 12px; }
   @media (max-width: 380px) { .stat { padding: 8px; gap: 6px; } .stat ha-icon { display: none; } }
 `;
