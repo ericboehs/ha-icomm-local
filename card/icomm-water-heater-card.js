@@ -5,26 +5,19 @@
  *   entity: water_heater.garage
  *   power_entity: sensor.vue_garage_water_heater_power   # optional: a measured meter
  *
- * What it adds over the built-in thermostat card:
- * - +/- keep your target while you tap, then send once you stop (1.5 s).
+ * HA's own thermostat card (the native dial, +/- and mode bar) on top, then
+ * what that card can't show:
  * - Write progress: queued, sent, heater got it, applied (from the tank's own
- *   telemetry), or "not applied". Shows the time of each step.
+ *   telemetry), or "not applied", with the time of each step.
  * - Live watts and what's heating (compressor or element), time to recover,
- *   tank top/bottom and hot water level.
+ *   hot water level with tank top/bottom, and vacation.
  * The sibling sensors are found on the water heater's device by their entity
  * ID suffix, so a renamed device still works.
  */
 
-const DEBOUNCE_MS = 1500;
-const HOLD_MS = 20000;            // keep the local target this long after sending
 const RECENT_WRITE_S = 600;       // show the last write's steps for 10 min
 
-const MODES = [
-  { key: "heat_pump", label: "Heat pump", icon: "mdi:heat-pump-outline" },
-  { key: "eco", label: "Hybrid", icon: "mdi:leaf" },
-  { key: "electric", label: "Electric", icon: "mdi:lightning-bolt" },
-  { key: "away", label: "Vacation", icon: "mdi:airplane" },
-];
+const MODES = ["heat_pump", "eco", "electric"];
 const MODE_LABEL = { heat_pump: "heat pump", eco: "hybrid", hybrid: "hybrid",
   electric: "electric", vacation: "vacation" };
 
@@ -35,16 +28,6 @@ const SUFFIXES = {
   health: "_relay_health", active: "_active_setpoint",
 };
 
-const fmtAgo = (ts) => {
-  if (!ts) return "";
-  const s = Math.max(0, Date.now() / 1000 - ts);
-  if (s < 60) return `${Math.round(s)} s ago`;
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  return `${(s / 3600).toFixed(1)} h ago`;
-};
-const fmtClock = (ts) => ts
-  ? new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })
-  : "";
 const fmtMin = (m) => {
   if (m <= 0) return "Full";
   if (m < 60) return `${Math.round(m)} min`;
@@ -55,17 +38,16 @@ const num = (s) => {
   return Number.isFinite(v) ? v : null;
 };
 
+const APPLIED_SHOW_S = 30;        // how long "Applied" stays up
+
 class IcommWaterHeaterCard extends HTMLElement {
   setConfig(config) {
     if (!config.entity || !config.entity.startsWith("water_heater.")) {
       throw new Error("Set entity: to a water_heater entity");
     }
     this._config = config;
-    this._target = null;        // the target while you tap, or until the heater shows it
-    this._sendTimer = null;
-    this._sentAt = 0;
-    this._modeSent = null;      // {key, at} until the entity shows it
     this._ids = null;
+    if (this._thermo) this._thermo.setConfig(this._thermoConfig());
     if (this._root) this._render();
   }
 
@@ -74,14 +56,27 @@ class IcommWaterHeaterCard extends HTMLElement {
     return { entity: wh || "water_heater.garage" };
   }
 
-  getCardSize() { return 7; }
+  getCardSize() { return 10; }
   getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
 
   set hass(hass) {
     this._hass = hass;
     if (!this._root) this._build();
     if (!this._ids) this._ids = this._findSiblings();
+    if (this._thermo) this._thermo.hass = hass;
     this._render();
+  }
+
+  _thermoConfig() {
+    const wh = this._hass?.states[this._config.entity];
+    const list = wh?.attributes.operation_list || MODES;
+    return {
+      type: "thermostat",
+      entity: this._config.entity,
+      ...(this._config.name ? { name: this._config.name } : {}),
+      features: [{ type: "water-heater-operation-modes",
+        operation_modes: MODES.filter((m) => list.includes(m)) }],
+    };
   }
 
   // --- the device's other entities --------------------------------------
@@ -112,53 +107,33 @@ class IcommWaterHeaterCard extends HTMLElement {
     this._root = this.attachShadow({ mode: "open" });
     this._root.innerHTML = `
       <style>${STYLE}</style>
-      <ha-card>
-        <div class="head">
-          <div class="title"></div>
-          <div class="pill"><span class="dot"></span><span class="pill-text"></span></div>
-        </div>
+      <div class="stack">
+        <div class="thermo"></div>
+        <div class="write" hidden></div>
         <div class="banner" hidden></div>
-        <div class="main">
-          <div class="tank" title="Tank top and bottom">
-            <div class="tank-fill"></div>
-            <div class="tank-top"></div>
-            <div class="tank-bottom"></div>
-          </div>
-          <div class="center">
-            <div class="label">Target</div>
-            <div class="target"><span class="target-num"></span><span class="unit">°F</span></div>
-            <div class="sub"></div>
-            <div class="buttons">
-              <button class="minus" aria-label="Lower target"><ha-icon icon="mdi:minus"></ha-icon></button>
-              <button class="plus" aria-label="Raise target"><ha-icon icon="mdi:plus"></ha-icon></button>
-            </div>
-          </div>
+        <div class="tiles">
+          ${tile("power", "mdi:flash", "Power")}
+          ${tile("recover", "mdi:timer-sand", "Time to recover")}
+          ${tile("water", "mdi:water-thermometer", "Hot water")}
+          ${tile("away", "mdi:airplane", "Vacation")}
         </div>
-        <div class="write"></div>
-        <div class="stats">
-          <div class="stat power"><div class="k">Power</div><div class="v"></div><div class="n"></div></div>
-          <div class="stat recover"><div class="k">Time to recover</div><div class="v"></div><div class="n"></div></div>
-          <div class="stat water"><div class="k">Hot water</div><div class="v"></div><div class="n"></div></div>
-        </div>
-        <div class="modes"></div>
-      </ha-card>`;
+      </div>`;
     const $ = (sel) => this._root.querySelector(sel);
     this.$ = $;
-    $(".minus").addEventListener("click", () => this._step(-1));
-    $(".plus").addEventListener("click", () => this._step(1));
-    $(".title").addEventListener("click", () => this._moreInfo(this._config.entity));
-    $(".power").addEventListener("click", () => this._moreInfo(this._ids.meter || this._ids.power));
-    $(".recover").addEventListener("click", () => this._moreInfo(this._ids.recover));
-    $(".water").addEventListener("click", () => this._moreInfo(this._ids.top));
-    const modes = $(".modes");
-    for (const m of MODES) {
-      const b = document.createElement("button");
-      b.className = "mode";
-      b.dataset.mode = m.key;
-      b.innerHTML = `<ha-icon icon="${m.icon}"></ha-icon><span>${m.label}</span>`;
-      b.addEventListener("click", () => this._setMode(m.key));
-      modes.appendChild(b);
-    }
+    $(".t-power").addEventListener("click", () => this._moreInfo(this._ids.meter || this._ids.power));
+    $(".t-recover").addEventListener("click", () => this._moreInfo(this._ids.recover));
+    $(".t-water").addEventListener("click", () => this._moreInfo(this._ids.top));
+    $(".t-away").addEventListener("click", () => this._toggleAway());
+    this._loadThermostat();
+  }
+
+  async _loadThermostat() {
+    // HA's own card, so the dial looks and behaves exactly like the built-in one.
+    const helpers = await window.loadCardHelpers?.();
+    if (!helpers) return;
+    this._thermo = helpers.createCardElement(this._thermoConfig());
+    if (this._hass) this._thermo.hass = this._hass;
+    this.$(".thermo").appendChild(this._thermo);
   }
 
   _moreInfo(entityId) {
@@ -167,52 +142,11 @@ class IcommWaterHeaterCard extends HTMLElement {
       { detail: { entityId }, bubbles: true, composed: true }));
   }
 
-  // --- actions --------------------------------------------------------------
-  _step(dir) {
+  _toggleAway() {
     const wh = this._hass.states[this._config.entity];
     if (!wh) return;
-    const a = wh.attributes;
-    const stepSize = a.target_temp_step || 1;
-    const from = this._target ?? a.temperature;
-    this._target = Math.min(a.max_temp, Math.max(a.min_temp, from + dir * stepSize));
-    this._sentAt = 0;
-    clearTimeout(this._sendTimer);
-    this._sendTimer = setTimeout(() => this._send(), DEBOUNCE_MS);
-    this._render();
-  }
-
-  _send() {
-    this._sendTimer = null;
-    const wh = this._hass.states[this._config.entity];
-    if (!wh || this._target == null) return;
-    if (this._target === wh.attributes.temperature) {
-      this._target = null;      // back where it was: nothing to send
-    } else {
-      this._sentAt = Date.now();
-      this._hass.callService("water_heater", "set_temperature",
-        { entity_id: this._config.entity, temperature: this._target });
-    }
-    this._render();
-  }
-
-  _setMode(key) {
-    const wh = this._hass.states[this._config.entity];
-    if (!wh) return;
-    const away = wh.attributes.away_mode === "on";
-    if (key === "away") {
-      this._hass.callService("water_heater", "set_away_mode",
-        { entity_id: this._config.entity, away_mode: !away });
-    } else {
-      if (away) {
-        this._hass.callService("water_heater", "set_away_mode",
-          { entity_id: this._config.entity, away_mode: false });
-      }
-      if (wh.attributes.operation_mode === key && !away) return;
-      this._hass.callService("water_heater", "set_operation_mode",
-        { entity_id: this._config.entity, operation_mode: key });
-    }
-    this._modeSent = { key, at: Date.now() };
-    this._render();
+    this._hass.callService("water_heater", "set_away_mode",
+      { entity_id: this._config.entity, away_mode: wh.attributes.away_mode !== "on" });
   }
 
   // --- rendering ------------------------------------------------------------
@@ -220,232 +154,120 @@ class IcommWaterHeaterCard extends HTMLElement {
     if (!this._root || !this._hass || !this._config) return;
     const $ = this.$;
     const wh = this._hass.states[this._config.entity];
-    if (!wh) {
-      $(".title").textContent = `${this._config.entity} not found`;
-      return;
-    }
+    if (!wh) return;
     const a = wh.attributes;
-    $(".title").textContent = this._config.name || a.friendly_name || "Water heater";
 
-    // The local target lasts while you tap, then until the heater shows it.
-    if (this._target != null && !this._sendTimer && this._sentAt
-        && (a.temperature === this._target || Date.now() - this._sentAt > HOLD_MS)) {
-      this._target = null;
-      this._sentAt = 0;
-    }
-    const target = this._target ?? a.temperature;
-    $(".target-num").textContent = target ?? "–";
-    $(".target").classList.toggle("editing", this._target != null);
-    $(".minus").disabled = target <= a.min_temp;
-    $(".plus").disabled = target >= a.max_temp;
-
-    // State pill: what the tank is doing right now.
     const watts = num(this._s("meter")) ?? num(this._s("power")) ?? a.power_w;
     const opState = this._s("state")?.state;
     const element = this._s("element")?.state;
     const stale = a.stale === true;
-    const unavailable = wh.state === "unavailable";
-    let pill = "Idle", tone = "idle";
-    if (unavailable) { pill = "Unavailable"; tone = "bad"; }
-    else if (stale) { pill = "Data frozen"; tone = "warn"; }
-    else if (opState === "fault") { pill = "Fault"; tone = "bad"; }
-    else if (opState === "heating" || (watts ?? 0) > 50) {
-      const by = element && element !== "off" ? `${element} element` : "heat pump";
-      pill = `Heating · ${by}`; tone = "heat";
-    }
-    $(".pill-text").textContent = pill;
-    $(".pill").className = `pill ${tone}`;
+    const heating = !stale && (opState === "heating" || (watts ?? 0) > 50);
 
     // Banner: anything that makes the numbers less trustworthy.
     const health = this._s("health")?.state;
     let banner = "";
-    if (stale) banner = "The heater has stopped sending fresh data. Values may be old; opening the A.O. Smith app usually wakes it.";
+    if (stale) banner = "The heater has stopped sending fresh data, so values may be old. Opening the A.O. Smith app usually wakes it.";
     else if (health && !["healthy", "unknown"].includes(health)) banner = `Relay: ${health}`;
     $(".banner").hidden = !banner;
     $(".banner").textContent = banner;
 
-    // Tank: top/bottom and a fill that follows the average.
-    const top = num(this._s("top"));
-    const bottom = num(this._s("bottom"));
-    $(".tank-top").textContent = top != null ? `${Math.round(top)}°` : "";
-    $(".tank-bottom").textContent = bottom != null ? `${Math.round(bottom)}°` : "";
-    const avg = a.water_average ?? a.current_temperature;
-    const fill = avg != null ? Math.max(8, Math.min(100, ((avg - 70) / (a.max_temp - 70)) * 100)) : 0;
-    $(".tank-fill").style.height = `${fill}%`;
-    $(".tank").classList.toggle("heating", tone === "heat");
+    this._renderWrite();
 
-    // Under the target: the tank's average and the controller's active setpoint.
-    const active = a.active_setpoint ?? num(this._s("active"));
-    let sub = avg != null ? `Tank ${Math.round(avg)}°F` : "";
-    if (active != null && active !== a.temperature) sub += ` · heating to ${Math.round(active)}°`;
-    $(".sub").textContent = sub;
-
-    this._renderWrite(a);
-
-    // Stats.
-    $(".power .v").textContent = watts != null ? `${Math.round(watts)} W` : "–";
-    $(".power .n").textContent = tone === "heat"
-      ? (element && element !== "off" ? `${element} element on` : "compressor running")
-      : (stale ? "may be old" : "not heating");
+    setTile($(".t-power"), watts != null && !stale ? `${Math.round(watts)} W` : "–",
+      heating ? (element && element !== "off" ? "element" : "compressor") : (stale ? "may be old" : "idle"),
+      heating ? "heat" : "");
     const recover = num(this._s("recover"));
     const deficit = num(this._s("deficit"));
-    $(".recover .v").textContent = recover != null ? fmtMin(recover) : "–";
-    $(".recover .n").textContent = deficit != null && deficit > 0
-      ? `${(deficit / 1000).toFixed(1)} kWh to target` : (recover === 0 ? "at target" : "");
+    setTile($(".t-recover"), recover != null ? fmtMin(recover) : "–",
+      deficit != null && deficit > 0 ? `${(deficit / 1000).toFixed(1)} kWh` : "", recover ? "recover" : "");
     const level = this._s("level")?.state;
-    $(".water .v").textContent = level && !["unknown", "unavailable"].includes(level)
-      ? level[0].toUpperCase() + level.slice(1) : "–";
-    $(".water .n").textContent = top != null && bottom != null
-      ? `top ${Math.round(top)}° · bottom ${Math.round(bottom)}°` : "";
-
-    // Modes.
+    const top = num(this._s("top"));
+    const bottom = num(this._s("bottom"));
+    setTile($(".t-water"), level && !["unknown", "unavailable"].includes(level)
+      ? level[0].toUpperCase() + level.slice(1) : "–",
+    top != null && bottom != null ? `${Math.round(top)}° / ${Math.round(bottom)}°` : "", "water");
     const away = a.away_mode === "on";
-    if (this._modeSent) {
-      const k = this._modeSent.key;
-      const landed = k === "away" ? away : (a.operation_mode === k && !away);
-      if (landed || Date.now() - this._modeSent.at > HOLD_MS) this._modeSent = null;
-    }
-    for (const b of this._root.querySelectorAll(".mode")) {
-      const k = b.dataset.mode;
-      const on = k === "away" ? away : (!away && a.operation_mode === k);
-      b.classList.toggle("on", on);
-      b.classList.toggle("sending", this._modeSent?.key === k && !on);
-      b.hidden = k !== "away" && !(a.operation_list || []).includes(k);
-    }
+    setTile($(".t-away"), away ? "On" : "Off",
+      away && a.vacation_days ? `${a.vacation_days} days` : "", away ? "away" : "");
   }
 
-  _renderWrite(a) {
+  _renderWrite() {
+    // One line while a change is on its way; gone 30 s after it applies.
     const el = this.$(".write");
-    const ps = this._s("pending");
-    const pa = ps?.attributes || {};
+    const pa = this._s("pending")?.attributes || {};
     const w = pa.pending || pa.last_write;
-
-    // Before the integration has it: your taps, then the service call.
-    if (this._sendTimer) {
-      el.className = "write local";
-      el.innerHTML = `<ha-icon icon="mdi:gesture-tap"></ha-icon>
-        <span>Will send <b>${this._target}°F</b> when you stop tapping…</span>`;
-      return;
-    }
-    const fresh = w && w.queued && (pa.pending || Date.now() / 1000 - w.queued < RECENT_WRITE_S);
-    if (this._sentAt && (!w || !w.queued || w.queued * 1000 < this._sentAt - 2000)) {
-      el.className = "write local";
-      el.innerHTML = `<ha-icon icon="mdi:send-clock"></ha-icon><span>Sending <b>${this._target}°F</b>…</span>`;
-      return;
-    }
-    if (!w || !w.queued) {
-      el.className = "write none";
-      el.innerHTML = "";
+    const nowS = Date.now() / 1000;
+    if (!w || !w.queued || (!pa.pending && nowS - (w.confirmed || w.delivered || w.queued) > APPLIED_SHOW_S
+        && (w.outcome || w.status) === "confirmed")
+        || (!pa.pending && nowS - w.queued > RECENT_WRITE_S)) {
+      el.hidden = true;
       return;
     }
     const what = w.kind === "setpoint" ? `${Math.round(w.value)}°F`
       : w.kind === "mode" ? (MODE_LABEL[w.value] || w.value) : `${w.kind} ${w.value}`;
     const status = w.outcome || w.status || "queued";
-    // The relay's outcomes: confirmed only from the tank's telemetry; the rest
-    // retire a write that never showed up there (icomm_relay._expire_pending).
-    const failed = ["not_applied", "rejected", "unconfirmed", "expired"].includes(status);
-    const failLabel = { not_applied: "Not applied", rejected: "Rejected",
-      unconfirmed: "Not confirmed", expired: "Expired" }[status];
-    if (!fresh) {
-      el.className = "write quiet";
-      el.innerHTML = `<span>Last change: <b>${what}</b> · ${failed ? failLabel.toLowerCase() : "applied"} ${fmtAgo(w.confirmed || w.delivered || w.queued)}</span>`;
-      return;
-    }
-    const steps = [
-      { label: "Queued", at: w.queued },
-      { label: "Sent", at: w.delivered, note: w.delivery_path === "lan" ? "local" : w.delivery_path },
-      { label: "Heater got it", at: w.acked },
-      { label: failed ? failLabel : "Applied", at: failed ? 0 : w.confirmed, failed },
-    ];
-    const current = steps.findIndex((s) => !s.at);
-    el.className = `write steps ${failed ? "failed" : status === "confirmed" ? "done" : "busy"}`;
-    el.innerHTML = `<div class="write-head">${failed ? failLabel : status === "confirmed" ? "Applied" : "Changing"}
-        <b>${what}</b>${w.attempts > 1 ? ` · try ${w.attempts}` : ""}</div>
-      <ol>${steps.map((s, i) => {
-        const cls = s.failed ? "failed"
-          : s.at ? "done" : i === current ? "now" : "";
-        return `<li class="${cls}"><span class="mark"></span><span class="sl">${s.label}</span>
-          <span class="st">${s.at ? fmtClock(s.at) : i === current && !failed ? "waiting…" : ""}</span></li>`;
-      }).join("")}</ol>
-      ${failed ? `<div class="hint">The tank's telemetry never showed it. If the data is frozen it may have applied anyway; it re-checks when fresh data arrives.</div>` : ""}`;
+    const text = {
+      queued: ["mdi:send-clock", `Sending ${what}…`, "busy"],
+      delivered: ["mdi:send-clock", `Sent ${what}, waiting for the heater…`, "busy"],
+      acknowledged: ["mdi:progress-check", `Heater got ${what}, waiting for the tank to show it…`, "busy"],
+      confirmed: ["mdi:check-circle", `${what[0].toUpperCase() + what.slice(1)} applied`, "ok"],
+      not_applied: ["mdi:alert-circle", `${what} not applied (the tank kept reporting the old value)`, "bad"],
+      rejected: ["mdi:alert-circle", `${what} rejected by the heater`, "bad"],
+      unconfirmed: ["mdi:alert-circle", `${what} not confirmed`, "bad"],
+      expired: ["mdi:alert-circle", `${what} expired before the heater took it`, "bad"],
+    }[status] || ["mdi:progress-clock", `${what}: ${status}`, "busy"];
+    el.hidden = false;
+    el.className = `write ${text[2]}`;
+    el.innerHTML = `<ha-icon icon="${text[0]}"></ha-icon><span>${text[1]}</span>`;
   }
+}
+
+function tile(key, icon, name) {
+  return `<div class="tile t-${key}" role="button" tabindex="0">
+    <div class="ic"><ha-icon icon="${icon}"></ha-icon></div>
+    <div class="tx"><div class="nm">${name}</div><div class="vl"><span class="v"></span><span class="n"></span></div></div>
+  </div>`;
+}
+
+function setTile(el, value, note, tone) {
+  el.querySelector(".v").textContent = value;
+  el.querySelector(".n").textContent = note ? ` · ${note}` : "";
+  el.dataset.tone = tone || "";
 }
 
 const STYLE = `
   :host { display: block; }
-  ha-card { padding: 16px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; overflow: hidden; }
-  button { font: inherit; color: inherit; cursor: pointer; }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .title { font-size: 1.15rem; font-weight: 500; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-    font-size: .85rem; background: var(--secondary-background-color); white-space: nowrap;
-    flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .pill .dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--disabled-text-color); }
-  .pill.heat { background: rgba(255,152,0,.15); color: var(--orange-color, #ff9800); }
-  .pill.heat .dot { background: var(--orange-color, #ff9800); animation: pulse 1.6s infinite; }
-  .pill.warn { background: rgba(255,193,7,.18); } .pill.warn .dot { background: var(--warning-color, #ffc107); }
-  .pill.bad { background: rgba(244,67,54,.15); color: var(--error-color, #f44336); }
-  .pill.bad .dot { background: var(--error-color, #f44336); }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .write { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px;
+    font-size: 14px; background: var(--card-background-color, #fff);
+    border: 1px solid var(--ha-card-border-color, var(--divider-color)); }
+  .write ha-icon { --mdc-icon-size: 20px; flex-shrink: 0; }
+  .write.busy ha-icon { color: var(--primary-color); animation: pulse 1.2s infinite; }
+  .write.ok ha-icon { color: var(--success-color, #43a047); }
+  .write.bad { border-color: var(--error-color, #f44336); }
+  .write.bad ha-icon { color: var(--error-color, #f44336); }
+  .write[hidden], .banner[hidden] { display: none; }
   @keyframes pulse { 50% { opacity: .35; } }
-  .banner { padding: 8px 12px; border-radius: 8px; font-size: .85rem;
-    background: rgba(255,193,7,.15); border-left: 3px solid var(--warning-color, #ffc107); }
-  .main { display: flex; align-items: center; gap: 20px; justify-content: center; }
-  .tank { flex-shrink: 0; position: relative; width: 56px; height: 150px; border-radius: 28px; overflow: hidden;
-    border: 2px solid var(--divider-color); background: var(--secondary-background-color); cursor: default; }
-  .tank-fill { position: absolute; bottom: 0; left: 0; right: 0; transition: height .6s;
-    background: linear-gradient(to top, #4fa3e0, #f6a04d 60%, #e8603c); opacity: .85; }
-  .tank.heating .tank-fill { animation: pulse 2.4s infinite; }
-  .tank-top, .tank-bottom { position: absolute; left: 0; right: 0; text-align: center;
-    font-size: .8rem; font-weight: 600; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
-  .tank-top { top: 12px; } .tank-bottom { bottom: 10px; }
-  .center { display: flex; flex-direction: column; align-items: center; min-width: 0; flex: 1; max-width: 240px; }
-  .label { color: var(--secondary-text-color); font-size: .9rem; }
-  .target { font-size: 3.6rem; font-weight: 400; line-height: 1.1; transition: color .2s; }
-  .target .unit { font-size: 1.2rem; vertical-align: top; margin-left: 2px; }
-  .target.editing { color: var(--primary-color); }
-  .sub { color: var(--secondary-text-color); font-size: .85rem; min-height: 1.2em; text-align: center; }
-  .buttons { display: flex; gap: 20px; margin-top: 10px; }
-  .buttons button { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
-    border: 1px solid var(--divider-color); background: none; }
-  .buttons button:active { background: var(--secondary-background-color); }
-  .buttons button:disabled { opacity: .35; cursor: default; }
-  .write { border-radius: 10px; font-size: .9rem; }
-  .write.none { display: none; }
-  .write.local, .write.quiet { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-    background: var(--secondary-background-color); color: var(--secondary-text-color); }
-  .write.local { color: var(--primary-color); }
-  .write.quiet { background: none; padding: 0 2px; font-size: .82rem; }
-  .write.steps { padding: 10px 12px; background: var(--secondary-background-color); }
-  .write.failed { background: rgba(244,67,54,.10); }
-  .write-head { margin-bottom: 8px; }
-  .write ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-  .write li { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px;
-    color: var(--secondary-text-color); font-size: .78rem; position: relative; }
-  .write li:not(:last-child)::after { content: ""; position: absolute; top: 6px; left: calc(50% + 9px);
-    right: calc(-50% + 9px); height: 2px; background: var(--divider-color); }
-  .write li.done:not(:last-child)::after { background: var(--success-color, #43a047); }
-  .mark { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--divider-color); box-sizing: border-box; }
-  .write li.done .mark { background: var(--success-color, #43a047); border-color: var(--success-color, #43a047); }
-  .write li.now .mark { border-color: var(--primary-color); animation: pulse 1s infinite; }
-  .write li.failed .mark { background: var(--error-color, #f44336); border-color: var(--error-color, #f44336); }
-  .write li.done, .write li.now { color: var(--primary-text-color); }
-  .st { font-size: .72rem; color: var(--secondary-text-color); min-height: 1em; }
-  .hint { margin-top: 8px; font-size: .78rem; color: var(--secondary-text-color); }
-  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .stat { padding: 10px; border-radius: 10px; background: var(--secondary-background-color); cursor: pointer; min-width: 0; }
-  .stat .k { font-size: .75rem; color: var(--secondary-text-color); }
-  .stat .v { font-size: 1.25rem; font-weight: 500; margin: 2px 0; }
-  .stat .n { font-size: .72rem; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; }
-  .modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-  .mode { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px;
-    border-radius: 12px; border: 1px solid var(--divider-color); background: none; font-size: .8rem; }
-  .mode.on { background: rgba(255,152,0,.15); border-color: var(--orange-color, #ff9800); color: var(--orange-color, #ff9800); }
-  .mode.sending { border-style: dashed; border-color: var(--primary-color); animation: pulse 1s infinite; }
-  .mode[hidden] { display: none; }
-  @media (max-width: 420px) {
-    .target { font-size: 3rem; } .main { gap: 14px; }
-    .stat .v { font-size: 1.1rem; }
-  }
+  .banner { padding: 10px 14px; border-radius: 12px; font-size: 14px;
+    background: rgba(255,193,7,.15); border-left: 4px solid var(--warning-color, #ffc107); }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { display: flex; align-items: center; gap: 10px; padding: 10px; min-height: 56px; box-sizing: border-box;
+    border-radius: var(--ha-card-border-radius, 12px); cursor: pointer;
+    background: var(--card-background-color, #fff);
+    border: 1px solid var(--ha-card-border-color, var(--divider-color)); }
+  .ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+    --c: var(--state-icon-color, #44739e); color: var(--c); background: color-mix(in srgb, var(--c) 20%, transparent); }
+  .ic ha-icon { --mdc-icon-size: 22px; }
+  .tile[data-tone=heat] .ic { --c: var(--orange-color, #ff9800); }
+  .tile[data-tone=recover] .ic { --c: var(--amber-color, #ffc107); }
+  .tile[data-tone=water] .ic { --c: var(--blue-color, #2196f3); }
+  .tile[data-tone=away] .ic { --c: var(--purple-color, #9c27b0); }
+  .tx { min-width: 0; }
+  .nm { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--primary-text-color);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vl { font-size: 12px; line-height: 16px; color: var(--primary-text-color);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vl .n { color: var(--secondary-text-color); }
 `;
 
 customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
@@ -453,6 +275,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "icomm-water-heater-card",
   name: "iCOMM Water Heater",
-  description: "Target, write progress, live watts, time to recover and tank detail for icomm_local.",
+  description: "HA's thermostat dial plus write status, live watts, time to recover and tank detail for icomm_local.",
   preview: true,
 });
