@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.6.4";
+const VERSION = "0.6.5";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -484,7 +484,7 @@ class IcommWaterHeaterTile extends HTMLElement {
       <style>${TILE_STYLE}</style>
       <ha-card class="tile" tabindex="0" role="button">
         <div class="shape"><ha-icon class="icon"></ha-icon><div class="badge" hidden><ha-icon></ha-icon></div></div>
-        <div class="text"><div class="primary"><span class="tt"><span class="cur"></span><span class="tgt"></span></span></div>
+        <div class="text"><div class="primary"><span class="nm"></span><span class="tt"></span></div>
           <div class="secondary">
             <ha-icon class="micon"></ha-icon>
             <span class="chip c-power"><span></span></span>
@@ -554,8 +554,8 @@ class IcommWaterHeaterTile extends HTMLElement {
     const health = this._s("health")?.state;
 
     const cur = a.current_temperature != null ? Math.round(a.current_temperature) : null;
-    $(".cur").textContent = cur != null ? `${cur}° / ` : "";
-    $(".tgt").textContent = `${to ?? t}°`;
+    $(".nm").textContent = this._config.name || "Water Heater";
+    $(".tt").textContent = cur != null ? `${cur}°` : "";
     $(".tt").title = `Currently ${cur ?? "–"} °F, target ${t} °F${to != null && to !== t ? `, changing to ${to} °F` : ""}`;
     const chip = (cls, text) => {
       const c = $(cls);
@@ -602,8 +602,7 @@ const TILE_STYLE = `
   .text { flex: 1; }
   .primary { font-size: 14px; font-weight: 500; display: flex; gap: 6px; white-space: nowrap; }
   .primary .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .primary .tt { flex-shrink: 0; }
-  .primary .cur { font-weight: 400; color: var(--secondary-text-color); }
+  .primary .tt { flex-shrink: 0; margin-left: auto; }
   .secondary { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden;
     display: flex; gap: 8px; align-items: center; }
   .chip { display: inline-flex; align-items: center; gap: 2px; }
