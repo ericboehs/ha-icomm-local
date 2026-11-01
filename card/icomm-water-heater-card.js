@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -434,12 +434,184 @@ const STYLE = `
   @media (max-width: 380px) { .stat { padding: 8px; gap: 6px; } .stat ha-icon { display: none; } }
 `;
 
+
+/*
+ * A one-row tile that opens the full card in a popup on the same page.
+ *
+ *   type: custom:icomm-water-heater-tile
+ *   entity: water_heater.garage
+ *   name: Water Heater                                   # optional
+ *   power_entity: sensor.vue_garage_water_heater_power   # optional
+ *
+ * Tap: the iCOMM card in a dialog. Long-press: HA's more-info.
+ */
+const TILE_COLORS = { orange: "var(--orange-color, #ff9800)", blue: "var(--blue-color, #2196f3)",
+  red: "var(--red-color, #f44336)", grey: "var(--disabled-text-color, #9e9e9e)" };
+
+class IcommWaterHeaterTile extends HTMLElement {
+  setConfig(config) {
+    if (!config.entity || !config.entity.startsWith("water_heater.")) {
+      throw new Error("Set entity: to a water_heater entity");
+    }
+    this._config = config;
+    this._ids = null;
+    if (this._card) this._card.setConfig(this._cardConfig());
+    if (this._root) this._render();
+  }
+
+  static getStubConfig(hass) { return IcommWaterHeaterCard.getStubConfig(hass); }
+  getCardSize() { return 1; }
+  getGridOptions() { return { columns: 6, min_columns: 4, rows: 1 }; }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._root) this._build();
+    if (!this._ids) this._ids = IcommWaterHeaterCard.prototype._findSiblings.call(this);
+    if (this._card) this._card.hass = hass;
+    this._render();
+  }
+
+  _s(key) { return IcommWaterHeaterCard.prototype._s.call(this, key); }
+
+  _cardConfig() {
+    const { type, ...rest } = this._config;
+    return { ...rest, type: "custom:icomm-water-heater-card" };
+  }
+
+  _build() {
+    this._root = this.attachShadow({ mode: "open" });
+    this._root.innerHTML = `
+      <style>${TILE_STYLE}</style>
+      <ha-card class="tile" tabindex="0" role="button">
+        <div class="shape"><ha-icon class="icon"></ha-icon><div class="badge" hidden><ha-icon></ha-icon></div></div>
+        <div class="text"><div class="primary"></div><div class="secondary"></div></div>
+      </ha-card>
+      <dialog>
+        <button class="close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button>
+        <div class="body" tabindex="-1" autofocus></div>
+      </dialog>`;
+    const tile = this._root.querySelector(".tile");
+    const dialog = this._root.querySelector("dialog");
+    this._dialog = dialog;
+    let timer = null, held = false;
+    tile.addEventListener("pointerdown", () => {
+      held = false;
+      timer = setTimeout(() => { held = true; this._moreInfo(); }, 500);
+    });
+    for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
+      tile.addEventListener(ev, () => clearTimeout(timer));
+    }
+    tile.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    tile.addEventListener("click", () => { if (!held) this._open(); });
+    tile.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") this._open(); });
+    this._root.querySelector(".close").addEventListener("click", () => dialog.close());
+    // A tap on the backdrop (outside the dialog box) closes it.
+    dialog.addEventListener("click", (ev) => {
+      const r = dialog.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) dialog.close();
+    });
+    // The card's more-info opens HA's own dialog, which would sit under this one.
+    dialog.addEventListener("hass-more-info", () => dialog.close());
+  }
+
+  _open() {
+    if (!this._card) {
+      this._card = document.createElement("icomm-water-heater-card");
+      this._card.setConfig(this._cardConfig());
+      this._root.querySelector(".body").appendChild(this._card);
+    }
+    this._card.hass = this._hass;
+    this._dialog.showModal();
+  }
+
+  _moreInfo() {
+    this.dispatchEvent(new CustomEvent("hass-more-info",
+      { detail: { entityId: this._config.entity }, bubbles: true, composed: true }));
+  }
+
+  _render() {
+    if (!this._root || !this._hass) return;
+    const $ = (q) => this._root.querySelector(q);
+    const wh = this._hass.states[this._config.entity];
+    if (!wh) { $(".primary").textContent = `${this._config.entity} not found`; return; }
+    const a = wh.attributes;
+    const pa = this._s("pending")?.attributes || {};
+    const pend = pa.pending || null;
+    const t = Math.round(a.temperature);
+    const to = pend?.setpoint?.value != null ? Math.round(pend.setpoint.value) : null;
+    $(".primary").textContent = `${this._config.name || "Water Heater"} – ${t}${to != null && to !== t ? ` → ${to}` : ""}ºF`;
+
+    const away = a.away_mode === "on";
+    const mode = away ? "Vacation" : MODE_LABEL[wh.state] || wh.state;
+    const watts = num(this._s("meter")) ?? num(this._s("power")) ?? 0;
+    const heating = this._s("state")?.state === "heating" || watts > 50;
+    const rec = num(this._s("recover"));
+    const avail = num(this._s("avail"));
+    const health = this._s("health")?.state;
+    let sub;
+    if (a.stale) sub = `${mode} · data may be old`;
+    else if (heating) sub = `${mode} · ${Math.round(watts)} W${rec > 0 ? ` · ${fmtMin(rec)} to full` : ""}`;
+    else sub = `${mode} · Idle${avail != null ? ` · ${Math.round(avail)}% hot water` : ""}`;
+    $(".secondary").textContent = sub;
+
+    const color = a.stale || (health && !["healthy", "unknown", "unavailable"].includes(health)) ? "red"
+      : away ? "blue" : heating ? "orange" : "grey";
+    this.style.setProperty("--tile-color", TILE_COLORS[color]);
+    $(".icon").setAttribute("icon", away ? "mdi:palm-tree" : "mdi:water-boiler");
+
+    const last = pa.last_write;
+    const failed = last && FAILED[last.outcome]
+      && Date.now() / 1000 - (last.delivered || last.queued) < FAIL_SHOW_S;
+    const badge = $(".badge");
+    badge.hidden = !(pend || failed);
+    badge.style.background = pend ? TILE_COLORS.blue : TILE_COLORS.red;
+    badge.querySelector("ha-icon").setAttribute("icon", pend ? "mdi:sync" : "mdi:alert");
+    badge.classList.toggle("turning", !!pend);
+  }
+}
+
+const TILE_STYLE = `
+  :host { display: block; --tile-color: var(--disabled-text-color, #9e9e9e); }
+  .tile { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer;
+    height: 100%; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  .shape { position: relative; width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center; color: var(--tile-color); --mdc-icon-size: 20px;
+    background: color-mix(in srgb, var(--tile-color) 20%, transparent); }
+  .badge { position: absolute; top: -3px; right: -3px; width: 16px; height: 16px; border-radius: 50%;
+    display: grid; place-items: center; color: #fff; --mdc-icon-size: 11px; }
+  .badge[hidden] { display: none; }
+  .badge.turning ha-icon { animation: spin 1.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .text { min-width: 0; }
+  .primary { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .secondary { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  dialog { border: none; padding: 0; border-radius: 28px; box-sizing: border-box; margin: auto;
+    width: min(420px, calc(100vw - 24px)); max-width: none; max-height: calc(100vh - 24px); overflow-x: hidden;
+    background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color);
+    box-shadow: 0 8px 32px rgba(0,0,0,.3); overflow: auto; }
+  dialog::backdrop { background: rgba(0, 0, 0, .5); }
+  dialog .body > * { display: block; width: 100%; }
+  dialog .body:focus { outline: none; }
+  dialog .body { --ha-card-box-shadow: none; --ha-card-border-width: 0; --ha-card-border-radius: 28px; }
+  dialog .close { position: absolute; top: 14px; left: 16px; z-index: 1; width: 40px; height: 40px;
+    border-radius: 50%; display: grid; place-items: center; background: none; border: none; cursor: pointer;
+    color: var(--secondary-text-color); }
+`;
+
 customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
+customElements.define("icomm-water-heater-tile", IcommWaterHeaterTile);
 console.info(`%c ICOMM-WATER-HEATER-CARD %c ${VERSION} `, "background:#ff9800;color:#fff", "background:#555;color:#fff");
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "icomm-water-heater-card",
   name: "iCOMM Water Heater",
   description: "HA's dial with a spinner until the tank confirms, plus power, time to recover and hot water for icomm_local.",
+  preview: true,
+});
+window.customCards.push({
+  type: "icomm-water-heater-tile",
+  name: "iCOMM Water Heater tile",
+  description: "One row: setpoint, mode, power and time to recover; tap for the full card in a popup.",
   preview: true,
 });
