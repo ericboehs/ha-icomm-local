@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -484,7 +484,12 @@ class IcommWaterHeaterTile extends HTMLElement {
       <style>${TILE_STYLE}</style>
       <ha-card class="tile" tabindex="0" role="button">
         <div class="shape"><ha-icon class="icon"></ha-icon><div class="badge" hidden><ha-icon></ha-icon></div></div>
-        <div class="text"><div class="primary"></div><div class="secondary"></div></div>
+        <div class="text"><div class="primary"><span class="nm"></span><span class="tt"></span></div>
+          <div class="secondary">
+            <span class="chip c-power"><ha-icon icon="mdi:flash"></ha-icon><span></span></span>
+            <span class="chip c-rec"><ha-icon icon="mdi:timer-sand"></ha-icon><span></span></span>
+            <span class="chip c-note"><span></span></span>
+          </div></div>
       </ha-card>
       <dialog>
         <button class="close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button>
@@ -539,25 +544,32 @@ class IcommWaterHeaterTile extends HTMLElement {
     const pend = pa.pending || null;
     const t = Math.round(a.temperature);
     const to = pend?.setpoint?.value != null ? Math.round(pend.setpoint.value) : null;
-    $(".primary").textContent = `${this._config.name || "Water Heater"} – ${t}${to != null && to !== t ? ` → ${to}` : ""}ºF`;
-
     const away = a.away_mode === "on";
-    const mode = away ? "Vacation" : MODE_LABEL[wh.state] || wh.state;
+    const modeKey = away ? "vacation" : wh.state;
+    const mode = MODE_LABEL[modeKey] || wh.state;
     const watts = num(this._s("meter")) ?? num(this._s("power")) ?? 0;
-    const heating = this._s("state")?.state === "heating" || watts > 50;
+    const heating = !a.stale && (this._s("state")?.state === "heating" || watts > 50);
     const rec = num(this._s("recover"));
-    const avail = num(this._s("avail"));
     const health = this._s("health")?.state;
-    let sub;
-    if (a.stale) sub = `${mode} · data may be old`;
-    else if (heating) sub = `${mode} · ${Math.round(watts)} W${rec > 0 ? ` · ${fmtMin(rec)} to full` : ""}`;
-    else sub = `${mode} · Idle${avail != null ? ` · ${Math.round(avail)}% hot water` : ""}`;
-    $(".secondary").textContent = sub;
+
+    $(".nm").textContent = this._config.name || a.friendly_name || "Water Heater";
+    $(".tt").textContent = `${t}${to != null && to !== t ? `→${to}` : ""}°`;
+    const chip = (cls, text) => {
+      const c = $(cls);
+      c.hidden = !text;
+      c.querySelector("span").textContent = text || "";
+    };
+    chip(".c-power", heating && !away ? (watts >= 1000 ? `${(watts / 1000).toFixed(1)} kW` : `${Math.round(watts)} W`) : "");
+    chip(".c-rec", heating && !away && rec > 0 ? (rec < 60 ? `${Math.round(rec)}m` : `${Math.floor(rec / 60)}h${String(Math.round(rec % 60)).padStart(2, "0")}`) : "");
+    chip(".c-note", a.stale ? "data may be old" : away ? `Vacation${a.vacation_days ? ` · ${a.vacation_days}d` : ""}`
+      : heating ? "" : `${mode} · idle`);
 
     const color = a.stale || (health && !["healthy", "unknown", "unavailable"].includes(health)) ? "red"
       : away ? "blue" : heating ? "orange" : "grey";
     this.style.setProperty("--tile-color", TILE_COLORS[color]);
-    $(".icon").setAttribute("icon", away ? "mdi:palm-tree" : "mdi:water-boiler");
+    const icon = MODES.find((m) => m.key === modeKey)?.icon || "mdi:water-boiler";
+    $(".icon").setAttribute("icon", icon);
+    $(".tile").title = `${mode}${heating ? ", heating" : ", idle"}${a.vacation_days && away ? `, ${a.vacation_days} days` : ""}`;
 
     const last = pa.last_write;
     const failed = last && FAILED[last.outcome]
@@ -583,9 +595,15 @@ const TILE_STYLE = `
   .badge.turning ha-icon { animation: spin 1.2s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .text { min-width: 0; }
-  .primary { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .text { flex: 1; }
+  .primary { font-size: 14px; font-weight: 500; display: flex; gap: 6px; white-space: nowrap; }
+  .primary .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .primary .tt { flex-shrink: 0; margin-left: auto; }
   .secondary { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; }
+    display: flex; gap: 8px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 2px; }
+  .chip[hidden] { display: none; }
+  .chip ha-icon { --mdc-icon-size: 14px; }
   dialog { border: none; padding: 0; border-radius: 28px; box-sizing: border-box; margin: auto;
     width: min(420px, calc(100vw - 24px)); max-width: none; max-height: calc(100vh - 24px); overflow-x: hidden;
     background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color);
