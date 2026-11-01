@@ -1,44 +1,42 @@
 /*
- * iCOMM Water Heater card: a Lovelace card for the icomm_local integration.
+ * iCOMM Water Heater card: one Lovelace card for the icomm_local integration.
  *
  *   type: custom:icomm-water-heater-card
  *   entity: water_heater.garage
+ *   name: Water Heater                                   # optional
  *   power_entity: sensor.vue_garage_water_heater_power   # optional: a measured meter
  *
- * HA's own thermostat card (the native dial, +/- and mode bar) on top, then
- * what that card can't show:
- * - Write progress: queued, sent, heater got it, applied (from the tank's own
- *   telemetry), or "not applied", with the time of each step.
- * - Live watts and what's heating (compressor or element), time to recover,
- *   hot water level with tank top/bottom, and vacation.
- * The sibling sensors are found on the water heater's device by their entity
- * ID suffix, so a renamed device still works.
+ * HA's own dial (ha-control-circular-slider), with:
+ * - a spinner beside "Target" from your first tap until the tank's own
+ *   telemetry shows the new value (or a red line if it never does);
+ * - power, time to recover and hot water available underneath;
+ * - the mode bar, with the same spinner on a mode that's on its way.
+ * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const RECENT_WRITE_S = 600;       // show the last write's steps for 10 min
-
-const MODES = ["heat_pump", "eco", "electric"];
-const MODE_LABEL = { heat_pump: "heat pump", eco: "hybrid", hybrid: "hybrid",
-  electric: "electric", vacation: "vacation" };
-
+const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
+const FAIL_SHOW_S = 600;           // a failed write stays visible this long
+const MODES = [
+  { key: "heat_pump", icon: "mdi:heat-wave", label: "Heat pump" },
+  { key: "eco", icon: "mdi:leaf", label: "Hybrid" },
+  { key: "electric", icon: "mdi:flash", label: "Electric" },
+];
+const MODE_LABEL = { heat_pump: "Heat pump", eco: "Hybrid", hybrid: "Hybrid",
+  electric: "Electric", vacation: "Vacation" };
 const SUFFIXES = {
   power: "_power", recover: "_time_to_recover", deficit: "_heat_deficit",
-  top: "_water_tank_top", bottom: "_water_tank_bottom", level: "_hot_water_level",
-  state: "_operating_state", element: "_heating_element", pending: "_pending_write",
-  health: "_relay_health", active: "_active_setpoint",
+  avail: "_hot_water_availability", state: "_operating_state",
+  element: "_heating_element", pending: "_pending_write", health: "_relay_health",
 };
+const FAILED = { not_applied: "not applied", rejected: "rejected by the heater",
+  unconfirmed: "not confirmed", expired: "expired" };
 
-const fmtMin = (m) => {
-  if (m <= 0) return "Full";
-  if (m < 60) return `${Math.round(m)} min`;
-  return `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`;
-};
 const num = (s) => {
   const v = parseFloat(s?.state);
   return Number.isFinite(v) ? v : null;
 };
-
-const APPLIED_SHOW_S = 30;        // how long "Applied" stays up
+const fmtMin = (m) => (m <= 0 ? "Full" : m < 60 ? `${Math.round(m)} min`
+  : `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`);
 
 class IcommWaterHeaterCard extends HTMLElement {
   setConfig(config) {
@@ -47,51 +45,37 @@ class IcommWaterHeaterCard extends HTMLElement {
     }
     this._config = config;
     this._ids = null;
-    if (this._thermo) this._thermo.setConfig(this._thermoConfig());
+    this._target = null;       // your value while tapping/dragging, before it's sent
+    this._timer = null;
+    this._sending = false;     // the service call is out, the integration hasn't queued it yet
+    this._sentAt = 0;          // until the pending write shows up (or 5 s)
+    this._mode = null;         // a mode tap, until the pending write shows it
     if (this._root) this._render();
   }
 
   static getStubConfig(hass) {
-    const wh = Object.keys(hass.states).find((e) => e.startsWith("water_heater."));
-    return { entity: wh || "water_heater.garage" };
+    return { entity: Object.keys(hass.states).find((e) => e.startsWith("water_heater."))
+      || "water_heater.garage" };
   }
 
-  getCardSize() { return 10; }
+  getCardSize() { return 8; }
   getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
 
   set hass(hass) {
     this._hass = hass;
     if (!this._root) this._build();
     if (!this._ids) this._ids = this._findSiblings();
-    if (this._thermo) this._thermo.hass = hass;
     this._render();
   }
 
-  _thermoConfig() {
-    const wh = this._hass?.states[this._config.entity];
-    const list = wh?.attributes.operation_list || MODES;
-    return {
-      type: "thermostat",
-      entity: this._config.entity,
-      ...(this._config.name ? { name: this._config.name } : {}),
-      features: [{ type: "water-heater-operation-modes",
-        operation_modes: MODES.filter((m) => list.includes(m)) }],
-    };
-  }
-
-  // --- the device's other entities --------------------------------------
   _findSiblings() {
     const ids = {};
     const reg = this._hass.entities || {};
     const device = reg[this._config.entity]?.device_id;
     const mine = device
-      ? Object.values(reg).filter((e) => e.device_id === device).map((e) => e.entity_id)
-      : [];
-    const base = this._config.entity.split(".")[1];
+      ? Object.values(reg).filter((e) => e.device_id === device).map((e) => e.entity_id) : [];
     for (const [key, suffix] of Object.entries(SUFFIXES)) {
-      ids[key] = mine.find((e) => e.startsWith("sensor.") && e.endsWith(suffix))
-        || Object.keys(this._hass.states).find(
-          (e) => e.startsWith("sensor.") && e.includes(base) && e.endsWith(suffix));
+      ids[key] = mine.find((e) => e.startsWith("sensor.") && e.endsWith(suffix));
     }
     if (this._config.power_entity) ids.meter = this._config.power_entity;
     return ids;
@@ -107,33 +91,73 @@ class IcommWaterHeaterCard extends HTMLElement {
     this._root = this.attachShadow({ mode: "open" });
     this._root.innerHTML = `
       <style>${STYLE}</style>
-      <div class="stack">
-        <div class="thermo"></div>
-        <div class="write" hidden></div>
-        <div class="banner" hidden></div>
-        <div class="tiles">
-          ${tile("power", "mdi:flash", "Power")}
-          ${tile("recover", "mdi:timer-sand", "Time to recover")}
-          ${tile("water", "mdi:water-thermometer", "Hot water")}
-          ${tile("away", "mdi:airplane", "Vacation")}
+      <ha-card>
+        <div class="head">
+          <div class="name"></div>
+          <button class="more" aria-label="More info"><ha-icon icon="mdi:dots-vertical"></ha-icon></button>
         </div>
-      </div>`;
-    const $ = (sel) => this._root.querySelector(sel);
+        <div class="banner" hidden></div>
+        <div class="dial">
+          <div class="slider"></div>
+          <div class="info">
+            <div class="label"><span>Target</span><span class="spin" hidden></span></div>
+            <div class="big"><span class="num"></span><span class="unit">°F</span></div>
+            <div class="current"></div>
+            <div class="buttons">
+              <button class="round minus" aria-label="Lower target"><ha-icon icon="mdi:minus"></ha-icon></button>
+              <button class="round plus" aria-label="Raise target"><ha-icon icon="mdi:plus"></ha-icon></button>
+            </div>
+          </div>
+        </div>
+        <div class="fail" hidden></div>
+        <div class="stats">
+          <div class="stat s-power"><ha-icon icon="mdi:flash"></ha-icon>
+            <div><div class="v"></div><div class="k">Power</div></div></div>
+          <div class="stat s-recover"><ha-icon icon="mdi:timer-sand"></ha-icon>
+            <div><div class="v"></div><div class="k">To recover</div></div></div>
+          <div class="stat s-avail"><ha-icon icon="mdi:water-percent"></ha-icon>
+            <div><div class="v"></div><div class="k">Hot water</div></div></div>
+        </div>
+        <div class="modes">${MODES.map((m) => `
+          <button class="mode" data-mode="${m.key}" aria-label="${m.label}" title="${m.label}">
+            <ha-icon icon="${m.icon}"></ha-icon><span class="spin" hidden></span></button>`).join("")}
+        </div>
+      </ha-card>`;
+    const $ = (s) => this._root.querySelector(s);
     this.$ = $;
-    $(".t-power").addEventListener("click", () => this._moreInfo(this._ids.meter || this._ids.power));
-    $(".t-recover").addEventListener("click", () => this._moreInfo(this._ids.recover));
-    $(".t-water").addEventListener("click", () => this._moreInfo(this._ids.top));
-    $(".t-away").addEventListener("click", () => this._toggleAway());
-    this._loadThermostat();
+    $(".more").addEventListener("click", () => this._moreInfo(this._config.entity));
+    $(".name").addEventListener("click", () => this._moreInfo(this._config.entity));
+    $(".minus").addEventListener("click", () => this._step(-1));
+    $(".plus").addEventListener("click", () => this._step(1));
+    $(".s-power").addEventListener("click", () => this._moreInfo(this._ids.meter || this._ids.power));
+    $(".s-recover").addEventListener("click", () => this._moreInfo(this._ids.recover));
+    $(".s-avail").addEventListener("click", () => this._moreInfo(this._ids.avail));
+    for (const b of this._root.querySelectorAll(".mode")) {
+      b.addEventListener("click", () => this._setMode(b.dataset.mode));
+    }
+    this._loadSlider();
   }
 
-  async _loadThermostat() {
-    // HA's own card, so the dial looks and behaves exactly like the built-in one.
-    const helpers = await window.loadCardHelpers?.();
-    if (!helpers) return;
-    this._thermo = helpers.createCardElement(this._thermoConfig());
-    if (this._hass) this._thermo.hass = this._hass;
-    this.$(".thermo").appendChild(this._thermo);
+  async _loadSlider() {
+    // HA lazy-loads its dial; building a thermostat card once pulls it in.
+    if (!customElements.get("ha-control-circular-slider")) {
+      const helpers = await window.loadCardHelpers?.();
+      helpers?.createCardElement({ type: "thermostat", entity: this._config.entity });
+      await Promise.race([customElements.whenDefined("ha-control-circular-slider"),
+        new Promise((r) => setTimeout(r, 5000))]);
+    }
+    if (!customElements.get("ha-control-circular-slider")) return;
+    const sl = document.createElement("ha-control-circular-slider");
+    sl.preventInteractionOnScroll = true;
+    sl.addEventListener("value-changing", (ev) => {
+      if (ev.detail?.value != null) { this._target = ev.detail.value; this._renderTarget(); }
+    });
+    sl.addEventListener("value-changed", (ev) => {
+      if (ev.detail?.value != null) this._change(ev.detail.value);
+    });
+    this._slider = sl;
+    this.$(".slider").appendChild(sl);
+    this._render();
   }
 
   _moreInfo(entityId) {
@@ -142,132 +166,200 @@ class IcommWaterHeaterCard extends HTMLElement {
       { detail: { entityId }, bubbles: true, composed: true }));
   }
 
-  _toggleAway() {
-    const wh = this._hass.states[this._config.entity];
-    if (!wh) return;
-    this._hass.callService("water_heater", "set_away_mode",
-      { entity_id: this._config.entity, away_mode: wh.attributes.away_mode !== "on" });
+  // --- actions --------------------------------------------------------------
+  _step(dir) {
+    const a = this._hass.states[this._config.entity]?.attributes;
+    if (!a) return;
+    const from = this._target ?? a.temperature;
+    this._change(Math.min(a.max_temp, Math.max(a.min_temp, from + dir * (a.target_temp_step || 1))));
+  }
+
+  _change(value) {
+    this._target = value;
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => this._send(), DEBOUNCE_MS);
+    this._render();
+  }
+
+  async _send() {
+    this._timer = null;
+    const a = this._hass.states[this._config.entity]?.attributes;
+    const value = this._target;
+    if (!a || value == null) return;
+    if (value === a.temperature) { this._target = null; this._render(); return; }
+    this._sending = true;
+    this._render();
+    try {
+      await this._hass.callService("water_heater", "set_temperature",
+        { entity_id: this._config.entity, temperature: value });
+    } finally {
+      this._sending = false;
+      this._sentAt = Date.now();
+      if (this._target === value) this._target = null;
+      this._render();
+    }
+  }
+
+  _setMode(key) {
+    const a = this._hass.states[this._config.entity]?.attributes;
+    if (!a || (a.operation_mode === key && a.away_mode !== "on")) return;
+    this._mode = { key, at: Date.now() };
+    this._hass.callService("water_heater", "set_operation_mode",
+      { entity_id: this._config.entity, operation_mode: key });
+    this._render();
+  }
+
+  // --- what's on its way ---------------------------------------------------
+  _write(kind) {
+    const pa = this._s("pending")?.attributes || {};
+    const p = pa.pending;
+    if (p && (p.kind === kind || (kind === "mode" && p.kind === "vacation"))) return { busy: true, w: p };
+    const last = pa.last_write;
+    if (last && last.kind === kind && FAILED[last.outcome]
+        && Date.now() / 1000 - (last.delivered || last.queued) < FAIL_SHOW_S) {
+      return { failed: true, w: last };
+    }
+    return {};
   }
 
   // --- rendering ------------------------------------------------------------
+  _renderTarget() {
+    const a = this._hass.states[this._config.entity]?.attributes;
+    if (!a) return;
+    const t = this._target ?? a.temperature;
+    this.$(".num").textContent = t ?? "–";
+    this.$(".minus").disabled = t <= a.min_temp;
+    this.$(".plus").disabled = t >= a.max_temp;
+    if (this._slider) this._slider.value = t;
+  }
+
   _render() {
     if (!this._root || !this._hass || !this._config) return;
     const $ = this.$;
     const wh = this._hass.states[this._config.entity];
-    if (!wh) return;
+    if (!wh) { $(".name").textContent = `${this._config.entity} not found`; return; }
     const a = wh.attributes;
+    $(".name").textContent = this._config.name || a.friendly_name || "Water heater";
 
+    const stale = a.stale === true;
     const watts = num(this._s("meter")) ?? num(this._s("power")) ?? a.power_w;
     const opState = this._s("state")?.state;
     const element = this._s("element")?.state;
-    const stale = a.stale === true;
     const heating = !stale && (opState === "heating" || (watts ?? 0) > 50);
+    const color = wh.state === "unavailable" ? "var(--disabled-color, #bdbdbd)"
+      : "var(--state-water_heater-active-color, var(--orange-color, #ff9800))";
+    this.style.setProperty("--wh-color", color);
 
-    // Banner: anything that makes the numbers less trustworthy.
+    // The dial.
+    if (this._slider) {
+      Object.assign(this._slider, { min: a.min_temp, max: a.max_temp,
+        step: a.target_temp_step || 1, current: a.current_temperature,
+        disabled: wh.state === "unavailable" });
+    }
+    this._renderTarget();
+    $(".current").textContent = a.current_temperature != null
+      ? `Currently ${Math.round(a.current_temperature)} °F` : "";
+
+    // The spinner: from the first tap until the tank shows it.
+    const sp = this._write("setpoint");
+    if (this._sentAt && (sp.busy || Date.now() - this._sentAt > 5000)) this._sentAt = 0;
+    if (this._sentAt && !this._tick) {
+      this._tick = setTimeout(() => { this._tick = null; this._render(); }, 1000);
+    }
+    const busy = this._target != null || this._sending || !!this._sentAt || sp.busy;
+    $(".label .spin").hidden = !busy;
+    $(".label").title = busy ? (sp.w ? `${sp.w.status || "queued"}` : "waiting to send") : "";
+    const md = this._write("mode");
+    const fail = sp.failed ? sp.w : md.failed ? md.w : null;
+    $(".fail").hidden = !fail;
+    if (fail) {
+      const what = fail.kind === "setpoint" ? `${Math.round(fail.value)} °F` : MODE_LABEL[fail.value] || fail.value;
+      $(".fail").innerHTML = `<ha-icon icon="mdi:alert-circle"></ha-icon><span>${what} ${FAILED[fail.outcome]}.
+        ${stale ? "The data is frozen, so it may have applied anyway." : "The tank kept reporting the old value."}</span>`;
+    }
+
+    // Anything that makes the numbers less trustworthy.
     const health = this._s("health")?.state;
-    let banner = "";
-    if (stale) banner = "The heater has stopped sending fresh data, so values may be old. Opening the A.O. Smith app usually wakes it.";
-    else if (health && !["healthy", "unknown"].includes(health)) banner = `Relay: ${health}`;
+    const banner = stale ? "The heater stopped sending fresh data, so these values may be old. Opening the A.O. Smith app usually wakes it."
+      : health && !["healthy", "unknown"].includes(health) ? `Relay: ${health}` : "";
     $(".banner").hidden = !banner;
     $(".banner").textContent = banner;
 
-    this._renderWrite();
+    // Stats.
+    const pw = $(".s-power");
+    pw.querySelector(".v").textContent = watts != null && !stale ? `${Math.round(watts)} W` : "–";
+    pw.querySelector(".k").textContent = heating
+      ? (element && element !== "off" ? "Element" : "Compressor") : "Power";
+    pw.classList.toggle("hot", heating);
+    const rec = num(this._s("recover"));
+    $(".s-recover .v").textContent = rec != null ? fmtMin(rec) : "–";
+    const avail = num(this._s("avail"));
+    $(".s-avail .v").textContent = avail != null ? `${Math.round(avail)}%` : "–";
 
-    setTile($(".t-power"), watts != null && !stale ? `${Math.round(watts)} W` : "–",
-      heating ? (element && element !== "off" ? "element" : "compressor") : (stale ? "may be old" : "idle"),
-      heating ? "heat" : "");
-    const recover = num(this._s("recover"));
-    const deficit = num(this._s("deficit"));
-    setTile($(".t-recover"), recover != null ? fmtMin(recover) : "–",
-      deficit != null && deficit > 0 ? `${(deficit / 1000).toFixed(1)} kWh` : "", recover ? "recover" : "");
-    const level = this._s("level")?.state;
-    const top = num(this._s("top"));
-    const bottom = num(this._s("bottom"));
-    setTile($(".t-water"), level && !["unknown", "unavailable"].includes(level)
-      ? level[0].toUpperCase() + level.slice(1) : "–",
-    top != null && bottom != null ? `${Math.round(top)}° / ${Math.round(bottom)}°` : "", "water");
-    const away = a.away_mode === "on";
-    setTile($(".t-away"), away ? "On" : "Off",
-      away && a.vacation_days ? `${a.vacation_days} days` : "", away ? "away" : "");
-  }
-
-  _renderWrite() {
-    // One line while a change is on its way; gone 30 s after it applies.
-    const el = this.$(".write");
-    const pa = this._s("pending")?.attributes || {};
-    const w = pa.pending || pa.last_write;
-    const nowS = Date.now() / 1000;
-    if (!w || !w.queued || (!pa.pending && nowS - (w.confirmed || w.delivered || w.queued) > APPLIED_SHOW_S
-        && (w.outcome || w.status) === "confirmed")
-        || (!pa.pending && nowS - w.queued > RECENT_WRITE_S)) {
-      el.hidden = true;
-      return;
+    // Modes.
+    if (this._mode && (md.busy || Date.now() - this._mode.at > 5000)) this._mode = null;
+    const want = md.busy ? (md.w.value === "hybrid" ? "eco" : md.w.value) : this._mode?.key;
+    for (const b of this._root.querySelectorAll(".mode")) {
+      const k = b.dataset.mode;
+      b.hidden = !(a.operation_list || []).includes(k);
+      b.classList.toggle("on", a.away_mode !== "on" && a.operation_mode === k && !want);
+      b.classList.toggle("want", want === k);
+      b.querySelector(".spin").hidden = want !== k;
     }
-    const what = w.kind === "setpoint" ? `${Math.round(w.value)}°F`
-      : w.kind === "mode" ? (MODE_LABEL[w.value] || w.value) : `${w.kind} ${w.value}`;
-    const status = w.outcome || w.status || "queued";
-    const text = {
-      queued: ["mdi:send-clock", `Sending ${what}…`, "busy"],
-      delivered: ["mdi:send-clock", `Sent ${what}, waiting for the heater…`, "busy"],
-      acknowledged: ["mdi:progress-check", `Heater got ${what}, waiting for the tank to show it…`, "busy"],
-      confirmed: ["mdi:check-circle", `${what[0].toUpperCase() + what.slice(1)} applied`, "ok"],
-      not_applied: ["mdi:alert-circle", `${what} not applied (the tank kept reporting the old value)`, "bad"],
-      rejected: ["mdi:alert-circle", `${what} rejected by the heater`, "bad"],
-      unconfirmed: ["mdi:alert-circle", `${what} not confirmed`, "bad"],
-      expired: ["mdi:alert-circle", `${what} expired before the heater took it`, "bad"],
-    }[status] || ["mdi:progress-clock", `${what}: ${status}`, "busy"];
-    el.hidden = false;
-    el.className = `write ${text[2]}`;
-    el.innerHTML = `<ha-icon icon="${text[0]}"></ha-icon><span>${text[1]}</span>`;
   }
-}
-
-function tile(key, icon, name) {
-  return `<div class="tile t-${key}" role="button" tabindex="0">
-    <div class="ic"><ha-icon icon="${icon}"></ha-icon></div>
-    <div class="tx"><div class="nm">${name}</div><div class="vl"><span class="v"></span><span class="n"></span></div></div>
-  </div>`;
-}
-
-function setTile(el, value, note, tone) {
-  el.querySelector(".v").textContent = value;
-  el.querySelector(".n").textContent = note ? ` · ${note}` : "";
-  el.dataset.tone = tone || "";
 }
 
 const STYLE = `
-  :host { display: block; }
-  .stack { display: flex; flex-direction: column; gap: 8px; }
-  .write { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px;
-    font-size: 14px; background: var(--card-background-color, #fff);
-    border: 1px solid var(--ha-card-border-color, var(--divider-color)); }
-  .write ha-icon { --mdc-icon-size: 20px; flex-shrink: 0; }
-  .write.busy ha-icon { color: var(--primary-color); animation: pulse 1.2s infinite; }
-  .write.ok ha-icon { color: var(--success-color, #43a047); }
-  .write.bad { border-color: var(--error-color, #f44336); }
-  .write.bad ha-icon { color: var(--error-color, #f44336); }
-  .write[hidden], .banner[hidden] { display: none; }
-  @keyframes pulse { 50% { opacity: .35; } }
-  .banner { padding: 10px 14px; border-radius: 12px; font-size: 14px;
+  :host { display: block; --wh-color: var(--orange-color, #ff9800); }
+  ha-card { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+  button { font: inherit; color: inherit; cursor: pointer; background: none; border: none; padding: 0; }
+  .head { display: flex; align-items: center; min-height: 40px; }
+  .name { flex: 1; text-align: center; font-size: 16px; font-weight: 500; cursor: pointer;
+    padding-left: 40px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .more { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--secondary-text-color); }
+  .banner { padding: 10px 12px; border-radius: 10px; font-size: 13px;
     background: rgba(255,193,7,.15); border-left: 4px solid var(--warning-color, #ffc107); }
-  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .tile { display: flex; align-items: center; gap: 10px; padding: 10px; min-height: 56px; box-sizing: border-box;
-    border-radius: var(--ha-card-border-radius, 12px); cursor: pointer;
-    background: var(--card-background-color, #fff);
-    border: 1px solid var(--ha-card-border-color, var(--divider-color)); }
-  .ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
-    --c: var(--state-icon-color, #44739e); color: var(--c); background: color-mix(in srgb, var(--c) 20%, transparent); }
-  .ic ha-icon { --mdc-icon-size: 22px; }
-  .tile[data-tone=heat] .ic { --c: var(--orange-color, #ff9800); }
-  .tile[data-tone=recover] .ic { --c: var(--amber-color, #ffc107); }
-  .tile[data-tone=water] .ic { --c: var(--blue-color, #2196f3); }
-  .tile[data-tone=away] .ic { --c: var(--purple-color, #9c27b0); }
-  .tx { min-width: 0; }
-  .nm { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--primary-text-color);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .vl { font-size: 12px; line-height: 16px; color: var(--primary-text-color);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .vl .n { color: var(--secondary-text-color); }
+  .banner[hidden], .fail[hidden], .spin[hidden], .mode[hidden] { display: none; }
+  .dial { position: relative; width: 100%; max-width: 320px; margin: 0 auto; aspect-ratio: 1; }
+  .slider, ha-control-circular-slider { width: 100%; height: 100%; display: block; }
+  ha-control-circular-slider {
+    --control-circular-slider-color: var(--wh-color);
+    --control-circular-slider-background: var(--wh-color);
+    --control-circular-slider-background-opacity: 0.3; }
+  .info { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; pointer-events: none; }
+  .label { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; height: 22px; }
+  .big { font-size: 57px; line-height: 64px; letter-spacing: -0.25px; display: flex; align-items: flex-start; }
+  .big .unit { font-size: 22px; line-height: 32px; margin-left: 2px; }
+  .current { font-size: 16px; font-weight: 500; min-height: 22px; }
+  .buttons { position: absolute; bottom: 4%; left: 0; right: 0; display: flex; justify-content: center;
+    gap: 24px; pointer-events: auto; }
+  .round { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+    border: 1px solid var(--outline-color, var(--secondary-text-color)); }
+  .round:active { background: var(--secondary-background-color); }
+  .round:disabled { opacity: .38; cursor: default; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; box-sizing: border-box;
+    border: 2px solid var(--wh-color); border-right-color: transparent; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .fail { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 12px;
+    border-radius: 10px; background: rgba(244,67,54,.10); }
+  .fail ha-icon { color: var(--error-color, #f44336); --mdc-icon-size: 18px; flex-shrink: 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .stat { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px;
+    background: var(--secondary-background-color); cursor: pointer; min-width: 0; }
+  .stat ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex-shrink: 0; }
+  .stat.hot ha-icon { color: var(--wh-color); }
+  .stat .v { font-size: 15px; font-weight: 500; white-space: nowrap; }
+  .stat .k { font-size: 11px; color: var(--secondary-text-color); white-space: nowrap; }
+  .modes { display: flex; gap: 0; background: var(--secondary-background-color); border-radius: 12px;
+    padding: 0; height: 56px; overflow: hidden; }
+  .mode { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 12px;
+    color: var(--primary-text-color); position: relative; }
+  .mode.on { background: var(--wh-color); color: #fff; }
+  .mode.want { outline: 2px dashed var(--wh-color); outline-offset: -4px; }
+  .mode .spin { position: absolute; top: 8px; right: 10px; width: 12px; height: 12px; }
+  @media (max-width: 380px) { .stat { padding: 8px; gap: 6px; } .stat ha-icon { display: none; } }
 `;
 
 customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
@@ -275,6 +367,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "icomm-water-heater-card",
   name: "iCOMM Water Heater",
-  description: "HA's thermostat dial plus write status, live watts, time to recover and tank detail for icomm_local.",
+  description: "HA's dial with a spinner until the tank confirms, plus power, time to recover and hot water for icomm_local.",
   preview: true,
 });
