@@ -14,6 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
+const VERSION = "0.4.0";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -240,6 +241,7 @@ class IcommWaterHeaterCard extends HTMLElement {
     if (!wh) { $(".name").textContent = `${this._config.entity} not found`; return; }
     const a = wh.attributes;
     $(".name").textContent = this._config.name || a.friendly_name || "Water heater";
+    $(".name").title = `card ${VERSION}`;
 
     const stale = a.stale === true;
     const watts = num(this._s("meter")) ?? num(this._s("power")) ?? a.power_w;
@@ -363,6 +365,7 @@ const STYLE = `
 `;
 
 customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
+console.info(`%c ICOMM-WATER-HEATER-CARD %c ${VERSION} `, "background:#ff9800;color:#fff", "background:#555;color:#fff");
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "icomm-water-heater-card",
