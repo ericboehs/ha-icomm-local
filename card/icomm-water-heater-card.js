@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.6.3";
+const VERSION = "0.6.4";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -487,7 +487,7 @@ class IcommWaterHeaterTile extends HTMLElement {
         <div class="text"><div class="primary"><span class="tt"><span class="cur"></span><span class="tgt"></span></span></div>
           <div class="secondary">
             <ha-icon class="micon"></ha-icon>
-            <span class="chip c-power"><ha-icon icon="mdi:flash"></ha-icon><span></span></span>
+            <span class="chip c-power"><span></span></span>
             <span class="chip c-rec"><ha-icon icon="mdi:timer-sand"></ha-icon><span></span></span>
             <span class="chip c-note"><span></span></span>
           </div></div>
@@ -609,7 +609,7 @@ const TILE_STYLE = `
   .chip { display: inline-flex; align-items: center; gap: 2px; }
   .chip[hidden] { display: none; }
   .chip ha-icon { --mdc-icon-size: 14px; }
-  .micon { --mdc-icon-size: 16px; flex-shrink: 0; }
+  .micon { --mdc-icon-size: 16px; flex-shrink: 0; margin-right: -4px; }
   dialog { border: none; padding: 0; border-radius: 28px; box-sizing: border-box; margin: auto;
     width: min(420px, calc(100vw - 24px)); max-width: none; max-height: calc(100vh - 24px); overflow-x: hidden;
     background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color);
