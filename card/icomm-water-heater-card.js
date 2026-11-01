@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -182,11 +182,24 @@ class IcommWaterHeaterCard extends HTMLElement {
       { detail: { entityId }, bubbles: true, composed: true }));
   }
 
+  // What the dial should show: your unsent value, else the one on its way to the
+  // tank, else what the tank reports. Without the middle step the number snaps
+  // back to the old setpoint for the ~10 s until the tank confirms, and the next
+  // tap counts from there.
+  _shown() {
+    const a = this._hass.states[this._config.entity]?.attributes || {};
+    if (this._target != null) return this._target;
+    if (this._sentAt && this._sentValue != null) return this._sentValue;
+    const sp = this._write("setpoint");
+    if (sp.busy && sp.w.value != null) return Number(sp.w.value);
+    return a.temperature;
+  }
+
   // --- actions --------------------------------------------------------------
   _step(dir) {
     const a = this._hass.states[this._config.entity]?.attributes;
     if (!a) return;
-    const from = this._target ?? a.temperature;
+    const from = this._shown();
     this._change(Math.min(a.max_temp, Math.max(a.min_temp, from + dir * (a.target_temp_step || 1))));
   }
 
@@ -202,7 +215,9 @@ class IcommWaterHeaterCard extends HTMLElement {
     const a = this._hass.states[this._config.entity]?.attributes;
     const value = this._target;
     if (!a || value == null) return;
-    if (value === a.temperature) { this._target = null; this._render(); return; }
+    const sp = this._write("setpoint");
+    const onItsWay = this._sentAt ? this._sentValue : sp.busy ? Number(sp.w.value) : a.temperature;
+    if (value === onItsWay) { this._target = null; this._render(); return; }
     this._sending = true;
     this._render();
     try {
@@ -211,6 +226,7 @@ class IcommWaterHeaterCard extends HTMLElement {
     } finally {
       this._sending = false;
       this._sentAt = Date.now();
+      this._sentValue = value;
       if (this._target === value) this._target = null;
       this._render();
     }
@@ -264,7 +280,7 @@ class IcommWaterHeaterCard extends HTMLElement {
   _renderTarget() {
     const a = this._hass.states[this._config.entity]?.attributes;
     if (!a) return;
-    const t = this._target ?? a.temperature;
+    const t = this._shown();
     this.$(".num").textContent = t ?? "–";
     this.$(".minus").disabled = t <= a.min_temp;
     this.$(".plus").disabled = t >= a.max_temp;
@@ -301,7 +317,8 @@ class IcommWaterHeaterCard extends HTMLElement {
 
     // The spinner: from the first tap until the tank shows it.
     const sp = this._write("setpoint");
-    if (this._sentAt && (sp.busy || Date.now() - this._sentAt > 5000)) this._sentAt = 0;
+    if (this._sentAt && ((sp.busy && Number(sp.w.value) === this._sentValue)
+        || Date.now() - this._sentAt > 5000)) this._sentAt = 0;
     if (this._sentAt && !this._tick) {
       this._tick = setTimeout(() => { this._tick = null; this._render(); }, 1000);
     }
