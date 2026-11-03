@@ -44,6 +44,11 @@ def _script():
     return module
 
 
+def test_card_version_matches_the_integration():
+    script = _script()
+    assert script.card_version() == script.integration_version()
+
+
 def test_current_version_passes_the_tag_check():
     import json
     version = json.loads((SCRIPT.parent.parent / "custom_components/icomm_local/manifest.json")

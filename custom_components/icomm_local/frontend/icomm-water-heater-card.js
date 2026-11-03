@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.6.5";
+const VERSION = "0.8.0";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [
@@ -622,19 +622,24 @@ const TILE_STYLE = `
     color: var(--secondary-text-color); }
 `;
 
-customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
-customElements.define("icomm-water-heater-tile", IcommWaterHeaterTile);
-console.info(`%c ICOMM-WATER-HEATER-CARD %c ${VERSION} `, "background:#ff9800;color:#fff", "background:#555;color:#fff");
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "icomm-water-heater-card",
-  name: "iCOMM Water Heater",
-  description: "HA's dial with a spinner until the tank confirms, plus power, time to recover and hot water for icomm_local.",
-  preview: true,
-});
-window.customCards.push({
-  type: "icomm-water-heater-tile",
-  name: "iCOMM Water Heater tile",
-  description: "One row: setpoint, mode, power and time to recover; tap for the full card in a popup.",
-  preview: true,
-});
+// The integration loads this file on every page; a copy added by hand as a
+// dashboard resource (from before the integration shipped it) loads it again.
+// Defining an element twice throws, so the second copy steps aside.
+if (!customElements.get("icomm-water-heater-card")) {
+  customElements.define("icomm-water-heater-card", IcommWaterHeaterCard);
+  customElements.define("icomm-water-heater-tile", IcommWaterHeaterTile);
+  console.info(`%c ICOMM-WATER-HEATER-CARD %c ${VERSION} `, "background:#ff9800;color:#fff", "background:#555;color:#fff");
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "icomm-water-heater-card",
+    name: "iCOMM Water Heater",
+    description: "HA's dial with a spinner until the tank confirms, plus power, time to recover and hot water available, for iCOMM Local.",
+    preview: true,
+  });
+  window.customCards.push({
+    type: "icomm-water-heater-tile",
+    name: "iCOMM Water Heater tile",
+    description: "One row: current temperature, mode, power and time to recover; tap for the full card in a popup.",
+    preview: true,
+  });
+}

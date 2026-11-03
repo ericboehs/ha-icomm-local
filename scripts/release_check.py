@@ -2,8 +2,8 @@
 """Release consistency checks, used by CI and the release workflow.
 
     release_check.py mirror           # relay/CHANGELOG.md == CHANGELOG.md
-    release_check.py same-version     # add-on and integration versions agree
-    release_check.py versions v0.4.6  # tag == add-on == integration; changelog has it
+    release_check.py same-version     # add-on, integration and card versions agree
+    release_check.py versions v0.4.6  # tag == add-on == integration == card; changelog has it
     release_check.py notes 0.4.6      # print that version's changelog section
 """
 
@@ -27,6 +27,13 @@ def addon_version() -> str:
 def integration_version() -> str:
     manifest = ROOT / "custom_components/icomm_local/manifest.json"
     return json.loads(manifest.read_text())["version"]
+
+
+def card_version() -> str:
+    """The Lovelace card's VERSION, shown in the browser console and its tooltip."""
+    card = ROOT / "custom_components/icomm_local/frontend/icomm-water-heater-card.js"
+    found = re.search(r'^const VERSION = "([^"]+)";', card.read_text(), re.M)
+    return found.group(1) if found else ""
 
 
 def section(version: str, text: str | None = None) -> str:
@@ -54,10 +61,11 @@ def main(argv: list[str]) -> int:
         print("changelog mirror ok")
         return 0
     if cmd == "same-version":
-        if addon_version() != integration_version():
-            print(f"::error::add-on {addon_version()} != integration {integration_version()}")
+        if not addon_version() == integration_version() == card_version():
+            print(f"::error::add-on {addon_version()}, integration {integration_version()} "
+                  f"and card {card_version()} differ")
             return 1
-        print(f"add-on and integration both {addon_version()}")
+        print(f"add-on, integration and card all {addon_version()}")
         return 0
     if cmd == "versions" and len(argv) == 3:
         tag = argv[2].removeprefix("v")
@@ -66,6 +74,8 @@ def main(argv: list[str]) -> int:
             errors.append(f"relay/config.yaml version {addon_version()} != tag {tag}")
         if integration_version() != tag:
             errors.append(f"manifest.json version {integration_version()} != tag {tag}")
+        if card_version() != tag:
+            errors.append(f"icomm-water-heater-card.js VERSION {card_version()} != tag {tag}")
         if not has_entry(section(tag)):
             errors.append(f"CHANGELOG.md has no '## [{tag}]' section with at least one bullet")
         for error in errors:

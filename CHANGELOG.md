@@ -10,6 +10,25 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-01
+
+### Added
+- **Water heater cards that come with the integration.** They load
+  themselves on every dashboard: no resource to add, and HACS updates
+  them with the integration. Details in
+  [docs/USING.md](docs/USING.md#the-water-heater-cards).
+  - **`custom:icomm-water-heater-card`:** Home Assistant's own dial, with a
+    spinner beside Target from your first tap until the tank's own data
+    shows the new value, and a red line if it never does. Also power, time
+    to recover, hot water available, the mode buttons, and Vacation with a
+    number of days.
+  - **`custom:icomm-water-heater-tile`:** one row with the current
+    temperature, the mode's icon, power and time to recover. Tap opens the
+    full card in a popup; long-press opens more-info.
+  - **Repeated taps:** taps on + or − count from the value on its way to
+    the tank, not from the old setpoint, so the number doesn't jump back
+    while a change is in flight.
+
 ## [0.7.13] - 2026-10-29
 
 ### Fixed

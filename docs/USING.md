@@ -58,6 +58,39 @@ last-known values with `stale: true`, and a warning appears under
 telemetry every 5 minutes while the LAN session is up, so this normally means
 something is wrong (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
 
+## The water heater cards
+
+The integration brings two Lovelace cards and loads them itself: there is no
+dashboard resource to add. Pick them in the card picker (search "iCOMM"), or
+add them in YAML.
+
+- **`custom:icomm-water-heater-card`**, the full card:
+  - Home Assistant's own temperature dial, with a spinner beside **Target**
+    from your first tap until the tank's own data shows the new value. A
+    change that never applies gets a red line under the dial.
+  - Power, time to recover and hot water available.
+  - Heat pump, hybrid and electric buttons, and **Vacation**, which asks for
+    a number of days (away mode always sends 1).
+  - A yellow banner when the heater stops sending fresh data.
+- **`custom:icomm-water-heater-tile`**, one row for a grid of tiles:
+  - the current temperature, the mode's icon, power and time to recover;
+  - the icon turns orange while heating, and a badge spins while a change is
+    on its way;
+  - tap opens the full card in a popup; long-press opens more-info.
+
+```yaml
+type: custom:icomm-water-heater-card   # or custom:icomm-water-heater-tile
+entity: water_heater.water_heater
+name: Water Heater                      # optional
+power_entity: sensor.my_meter_power     # optional: a measured meter instead
+                                        # of the heater's own power reading
+```
+
+The cards find the other sensors on the same device by themselves.
+
+If you added the card by hand before 0.8.0 (a `/local/` dashboard resource),
+remove that resource: the integration's copy is newer.
+
 ## A ready-made dashboard
 
 [dashboard.yaml](dashboard.yaml) is a complete **Water Heater**

@@ -19,6 +19,8 @@ the A.O. Smith app keeps working. No A.O. Smith account or password is used.
   to setpoint, time to recover, heating element, faults and more.
 - **Changes confirmed in seconds** by the tank's own data, over your LAN.
 - **The A.O. Smith app keeps working** alongside Home Assistant.
+- **Water heater cards** that load themselves: the temperature dial with a
+  spinner until the tank confirms, and a one-row tile that opens it in a popup.
 - **A ready-made dashboard,** and support for up to 4 water heaters.
 
 The full list is in [docs/USING.md](docs/USING.md).
