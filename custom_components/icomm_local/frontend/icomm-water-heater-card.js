@@ -14,7 +14,7 @@
  * The sibling sensors are found on the water heater's device by entity ID suffix.
  */
 
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 const DEBOUNCE_MS = 1000;          // the built-in dial's debounce
 const FAIL_SHOW_S = 600;           // a failed write stays visible this long
 const MODES = [

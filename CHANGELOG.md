@@ -10,6 +10,23 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-03
+
+### Fixed
+- **The water heater cards no longer show "Configuration error" after a
+  restart.**
+  - **The cause:** the cards were added to pages only once the integration
+    had started. A page opened earlier, which the phone app does as soon as
+    Home Assistant comes back, never got them until it was refreshed.
+  - **Now:** each start copies the card to
+    `www/icomm_local/icomm-water-heater-card.js` and keeps a dashboard
+    resource pointing at it, the way HACS installs cards. Home Assistant
+    serves both from the moment it starts.
+  - **Fallback:** on a first start without a `www` folder, or with YAML
+    dashboard resources, the cards load from the integration's own path
+    as before.
+  - **Cleanup:** deleting the last relay removes the resource and the copy.
+
 ## [0.8.0] - 2026-11-01
 
 ### Added
