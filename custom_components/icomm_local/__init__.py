@@ -34,6 +34,7 @@ from .const import (
     as_number,
     is_stale,
 )
+from .frontend import async_register_cards
 from .heaters import (
     heater_name,
     heater_state,
@@ -260,6 +261,7 @@ def _migrate_entity_ids(hass: HomeAssistant) -> None:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry) -> bool:
+    await async_register_cards(hass)
     url = entry.data[CONF_URL].rstrip("/")
     session = async_get_clientsession(hass)
 
