@@ -34,7 +34,7 @@ from .const import (
     as_number,
     is_stale,
 )
-from .frontend import async_register_cards
+from .frontend import async_register_cards, async_unregister_cards
 from .heaters import (
     heater_name,
     heater_state,
@@ -639,3 +639,10 @@ async def async_unload_entry(hass: HomeAssistant, entry) -> bool:
             for service in ("set_setpoint", "set_mode", "cancel_writes"):
                 hass.services.async_remove(DOMAIN, service)
     return unload
+
+
+async def async_remove_entry(hass: HomeAssistant, entry) -> None:
+    """Deleting the last relay also removes the card's resource and www copy."""
+    others = [e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id]
+    if not others:
+        await async_unregister_cards(hass)

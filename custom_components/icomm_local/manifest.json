@@ -1,7 +1,7 @@
 {
   "domain": "icomm_local",
   "name": "iCOMM Local",
-  "after_dependencies": ["frontend", "http"],
+  "after_dependencies": ["frontend", "http", "lovelace"],
   "codeowners": ["@ericboehs"],
   "config_flow": true,
   "dependencies": [],
@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/ericboehs/ha-icomm-local/issues",
   "requirements": [],
-  "version": "0.8.0"
+  "version": "0.8.1"
 }

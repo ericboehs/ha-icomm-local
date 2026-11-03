@@ -60,9 +60,9 @@ something is wrong (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)).
 
 ## The water heater cards
 
-The integration brings two Lovelace cards and loads them itself: there is no
-dashboard resource to add. Pick them in the card picker (search "iCOMM"), or
-add them in YAML.
+The integration brings two Lovelace cards and sets them up itself; there is
+nothing to install. Pick them in the card picker (search "iCOMM"), or add
+them in YAML.
 
 - **`custom:icomm-water-heater-card`**, the full card:
   - Home Assistant's own temperature dial, with a spinner beside **Target**
@@ -88,8 +88,23 @@ power_entity: sensor.my_meter_power     # optional: a measured meter instead
 
 The cards find the other sensors on the same device by themselves.
 
-If you added the card by hand before 0.8.0 (a `/local/` dashboard resource),
-remove that resource: the integration's copy is newer.
+**How the cards load:**
+- At each start the integration copies the card to
+  `www/icomm_local/icomm-water-heater-card.js`, and keeps a dashboard
+  resource pointing at it (Settings → Dashboards → ⋮ → Resources). This is
+  the same way HACS installs cards. Home Assistant serves both from the
+  moment it starts, so a phone that reloads during a restart still shows
+  the cards.
+- Leave that resource alone: the integration updates it with each release,
+  and removes it, with the copy, when you delete the integration.
+- **First start only:** if `config/www` didn't exist yet, or your dashboard
+  resources are managed in YAML, the cards load from the integration's own
+  path instead. A page opened while Home Assistant is still starting may
+  then show "Configuration error" until you refresh it. Restart Home
+  Assistant once to switch over. For YAML resources, add
+  `/local/icomm_local/icomm-water-heater-card.js` as a `module` yourself.
+- If you copied the card by hand before 0.8.0, delete that resource and
+  file: the integration's copy is newer.
 
 ## A ready-made dashboard
 
