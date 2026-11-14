@@ -72,7 +72,7 @@ jobs:
             alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
             sh -c 'apk add -q --no-cache openssl && mkdir -p /tmp/c && cp /r/dhparams-default.pem /tmp/c/dhparams.pem && /r/gen-cert.sh && openssl x509 -in /tmp/c/aylanetworks.com.crt -noout -subject'
       - name: Validate the add-on configuration
-        uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
+        uses: frenck/action-addon-linter@d51677290aef26cdfc835271dd3c7343ce502809 # v2.21.2
         with:
           path: "./relay"
 
@@ -115,7 +115,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # uv and its cache: the harness pulls in all of Home Assistant, which took
       # pip ~100 s of a ~110 s job.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: |
