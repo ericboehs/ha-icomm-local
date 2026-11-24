@@ -10,6 +10,29 @@ dialog reads it from the add-on folder. CI fails if the two differ.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-24
+
+### Added
+- **The relay unfreezes the heater's data itself, without the A.O. Smith app**
+  (`freeze_nudge`, on by default).
+  - **Why:** when the controller's reports freeze, opening the app was the
+    one sure cure, and the app's servers have been unreliable.
+  - **How:** each renewal interval while frozen, the relay climbs one step:
+    1. the reporting mask, as before;
+    2. the current setpoint re-sent over the LAN (the same value, never a
+       change), then the mask: what the app's cloud sent the one time it
+       cured a freeze;
+    3. once per freeze, the controller's own update rate written back too.
+  - **Skipped when re-sending could change anything:** a vacation, a pending
+    or newer setpoint write, or a setpoint out of range.
+  - **Evidence:** `/state` `freeze_nudge` counts the steps sent and which
+    step each freeze ended after.
+  - **Turn off:** set `freeze_nudge: false` to go back to the mask only.
+
+### Changed
+- The "Water heater data is frozen" repair says the relay nudges the
+  controller itself. Opening the app, if it's available, is now optional.
+
 ## [0.8.1] - 2026-11-03
 
 ### Fixed
