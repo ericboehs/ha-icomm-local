@@ -56,6 +56,32 @@ async def test_with_renewal_on_it_says_the_relay_is_on_it(hass: HomeAssistant, a
     fix = _issue(hass, entry).translation_placeholders["fix"]
     assert "tries to re-arm reporting itself: after 30 minutes" in fix
     assert "not every time" in fix and "(2 sent" in fix
+    assert "nudges the controller" not in fix                  # no freeze_nudge: older relay
+    assert "If the A.O. Smith app is available to you" in fix
+    assert "**open the A.O. Smith app**" not in fix
+
+
+async def test_with_the_nudge_it_says_the_relay_resends_the_setpoint(
+        hass: HomeAssistant, aioclient_mock):
+    entry = await _setup(hass, aioclient_mock, {
+        **STATE, "contents_unchanged_s": 6000, "contents_stale": True,
+        "reporting_mask": {"renew": True, "after_s": 1200, "sent": 3},
+        "freeze_nudge": {"enabled": True, "steps_sent": {"mask": 1, "pair": 1, "rate": 0}}})
+    fix = _issue(hass, entry).translation_placeholders["fix"]
+    assert "The relay nudges the controller itself" in fix and "after 20 minutes" in fix
+    assert "the current setpoint" in fix and "never a change" in fix
+    assert "(3 reporting requests sent" in fix
+    assert "If the A.O. Smith app is available to you" in fix
+
+
+async def test_with_the_nudge_turned_off_it_says_the_mask_only(
+        hass: HomeAssistant, aioclient_mock):
+    entry = await _setup(hass, aioclient_mock, {
+        **STATE, "contents_unchanged_s": 6000, "contents_stale": True,
+        "reporting_mask": {"renew": True, "after_s": 1800, "sent": 0},
+        "freeze_nudge": {"enabled": False}})
+    fix = _issue(hass, entry).translation_placeholders["fix"]
+    assert "tries to re-arm reporting itself" in fix and "setpoint" not in fix
 
 
 async def test_power_sensor_flags_it_sooner(hass: HomeAssistant, aioclient_mock):

@@ -159,6 +159,9 @@ CLOUD_IDLE_AFTER = int(os.environ.get("CLOUD_IDLE_AFTER", "1800"))
 CLOUD_PROBE_FIRST_S = 300            # after start, if no cloud request has come yet
 CLOUD_PROBE_GRACE_S = 15             # after the ack, for a late echo
 CLOUD_PROBE_ACK_WAIT_S = 120         # an unacked probe blocks the next one this long
+# The freeze nudge's steps, and how soon after one a change counts as its doing.
+NUDGE_STEPS = ("mask", "pair", "rate")
+NUDGE_CREDIT_S = 600
 REPORTING_INTERVAL = re.compile(
     r"<name>\s*superBlockDynDataUpdateRate\s*</name>\s*<value>\s*(\d+)\s*</value>")
 
@@ -397,6 +400,22 @@ class Relay:
         # live data within 11 min, while 5 renewals were not; 0 of 17 relay
         # reconnects outside a freeze started one (phase 50). One trial.
         self.freeze_reconnect = os.environ.get("FREEZE_RECONNECT", "0") == "1"
+        # The freeze nudge, on by default: the only cure seen from the A.O.
+        # Smith app (phase 42) was its cloud sending setBlockParameter = the
+        # current setpoint, then the mask. With the cloud and app possibly
+        # gone, the relay does it itself, one step per renewal interval: the
+        # mask, then that pair, then (once per freeze) the pair with the
+        # controller's own update rate written back before the mask.
+        self.freeze_nudge = os.environ.get("FREEZE_NUDGE", "1") != "0"
+        self.nudge_steps_sent = dict.fromkeys(NUDGE_STEPS, 0)
+        self.nudge_last_step: str | None = None
+        self.nudge_last_step_at: float | None = None
+        self.freezes_ended_after = dict.fromkeys((*NUDGE_STEPS, "other"), 0)
+        self._nudge_waiting: str | None = None   # the queued step, until its mask goes
+        self._freeze_steps = 0                   # ladder steps queued in this freeze
+        self._freeze_pairs = 0
+        self._freeze_rate_done = False
+        self._freeze_delivered: tuple[str, float] | None = None   # this freeze's last step
         # The cloud-echo probe: on by default; CLOUD_PROBE_AFTER is both the
         # cloud quiet time that triggers one and the minimum spacing.
         self.cloud_probe = os.environ.get("CLOUD_PROBE", "1") != "0"
@@ -667,6 +686,8 @@ class Relay:
                              "blocks": [block.hex() for block in blocks]}
             if tuple(blocks) != self._last_blocks:
                 self._last_blocks = tuple(blocks)
+                if self.freeze_nudge:
+                    self._freeze_over(time.time())
                 self.contents_changed = time.time()
                 self.freeze_masks = 0
                 self.freeze_reconnected = False
@@ -736,10 +757,106 @@ class Relay:
                             "reconnecting the LAN session (experimental_freeze_reconnect)",
                             (now - self.contents_changed) // 60, self.freeze_masks)
             return
+        if self.freeze_nudge:
+            self._nudge(now)
+            return
         if self.lan.request_mask():
             self.freeze_masks += 1
             _LOGGER.warning("telemetry unchanged for %d min: renewing the reporting mask",
                             (now - self.contents_changed) // 60)
+
+    def _nudge(self, now: float) -> None:
+        """This interval's freeze-nudge step: the mask first, then the app's
+        pair (the current setpoint, then the mask), and once per freeze, after
+        a pair has failed, the controller's own update rate as well."""
+        minutes = (now - self.contents_changed) // 60
+        frame = self._nudge_setpoint_frame() if self._freeze_steps else None
+        items: list[tuple[str, str, str | int]] = []
+        step = "mask"
+        if frame is not None:
+            step = "pair"
+            items.append(("setBlockParameter", "string", frame))
+            rate = self.reporting_interval_s
+            if self._freeze_pairs and not self._freeze_rate_done and rate:
+                step = "rate"
+                items.append(("superBlockDynDataUpdateRate", "integer", int(rate)))
+        if not self.lan.request_nudge(items):
+            return
+        self.freeze_masks += 1
+        self._freeze_steps += 1
+        self._nudge_waiting = step
+        if step == "mask":
+            _LOGGER.warning("telemetry unchanged for %d min: renewing the reporting mask",
+                            minutes)
+            return
+        self._freeze_pairs += 1
+        if step == "rate":
+            self._freeze_rate_done = True
+            _LOGGER.warning("telemetry unchanged for %d min: nudging the controller (step %d): "
+                            "the current %s F setpoint, the update rate %d s, then the "
+                            "reporting mask", minutes, self._freeze_steps,
+                            self.state.get("setpoint"), int(self.reporting_interval_s or 0))
+        else:
+            _LOGGER.warning("telemetry unchanged for %d min: nudging the controller (step %d): "
+                            "the current %s F setpoint, then the reporting mask",
+                            minutes, self._freeze_steps, self.state.get("setpoint"))
+
+    def _nudge_setpoint_frame(self) -> str | None:
+        """The setpoint frame a user write of the current setpoint would send,
+        or None when re-sending it could change anything: no setpoint known, a
+        vacation (the active target differs), or a setpoint write (queued,
+        delivered since the snapshot, or the app's) the frozen snapshot may
+        not show yet."""
+        if "setpoint" in self.pending:
+            return None
+        setpoint, active = self.state.get("setpoint"), self.state.get("active_setpoint")
+        if not _number(setpoint) or (_number(active) and abs(active - setpoint) > 0.5):
+            return None
+        ceiling = min(float(self.state.get("max_setpoint") or 150.0), frames.HARD_MAX_SETPOINT)
+        if not frames.MIN_SETPOINT <= setpoint <= ceiling:
+            return None
+        for write, at in ((self.last_write, "delivered"), (self.last_cloud_write, "at")):
+            when = (write or {}).get(at)
+            if ((write or {}).get("kind") == "setpoint" and _number(when)
+                    and when >= self.contents_changed):
+                return None
+        return frames.as_text(frames.setpoint_frame(float(setpoint)))
+
+    def nudge_item_ok(self, name: str) -> bool:
+        """At delivery: a setpoint nudge never goes once a user setpoint write waits."""
+        return name != "setBlockParameter" or "setpoint" not in self.pending
+
+    def note_mask_delivered(self) -> None:
+        """The LAN poll carried the mask: the queued nudge step is complete."""
+        step, self._nudge_waiting = self._nudge_waiting, None
+        if step is None:
+            return
+        now = time.time()
+        self.nudge_steps_sent[step] += 1
+        self.nudge_last_step, self.nudge_last_step_at = step, now
+        self._freeze_delivered = (step, now)
+
+    def _freeze_over(self, now: float) -> None:
+        """The contents changed: credit the freeze's end, reset the ladder."""
+        self.lan.drop_nudge()
+        self._nudge_waiting = None
+        if self._freeze_steps:
+            lasted = (now - self.contents_changed) // 60
+            delivered = self._freeze_delivered
+            reconnected = self.last_freeze_reconnect or 0.0
+            if (delivered and now - delivered[1] <= NUDGE_CREDIT_S
+                    and reconnected <= delivered[1]):
+                cause = delivered[0]
+                _LOGGER.info("telemetry changed again after a %d min freeze, %d s after "
+                             "the nudge's %s step", lasted, now - delivered[1], cause)
+            else:
+                cause = "other"
+                _LOGGER.info("telemetry changed again after a %d min freeze; no nudge step "
+                             "in the 10 min before it", lasted)
+            self.freezes_ended_after[cause] += 1
+        self._freeze_steps = self._freeze_pairs = 0
+        self._freeze_rate_done = False
+        self._freeze_delivered = None
 
     async def reporting_mask_handler(self, request: web.Request) -> web.Response:
         """POST /lan/reporting-mask: send the app's reporting mask once, now."""
@@ -803,6 +920,9 @@ class Relay:
         """Attach a LAN ack to the write it answers (matched by property id)."""
         if command_id and command_id == self.lan.mask_id:
             self.lan.mask_acked = time.time()
+            return
+        if command_id and command_id in self.lan.nudge_ids:
+            self.lan.nudge_acks += 1          # the freeze nudge's, not a user write's
             return
         for write in self.pending.values():
             if command_id and write.command_id == command_id:
@@ -1330,6 +1450,11 @@ class Relay:
         out["freeze_reconnect"] = {"enabled": self.freeze_reconnect,
                                    "reconnects": self.freeze_reconnects,
                                    "last": self.last_freeze_reconnect}
+        out["freeze_nudge"] = {"enabled": self.freeze_nudge,
+                               "steps_sent": dict(self.nudge_steps_sent),
+                               "last_step": self.nudge_last_step,
+                               "last_step_at": self.nudge_last_step_at,
+                               "freezes_ended_after": dict(self.freezes_ended_after)}
         # A stale tank is one that has not posted in 10 minutes: the module is
         # event-driven, and a satisfied tank goes quiet for long stretches.
         out["fresh"] = bool(self.last_telemetry) and (time.time() - self.last_telemetry) < 600

@@ -1,5 +1,5 @@
 name: iCOMM Local Relay
-version: "0.8.1"
+version: "0.8.2"
 slug: icomm_relay
 description: Transparent local relay and decoder for A.O. Smith iCOMM water heaters
 url: https://github.com/ericboehs/ha-icomm-local
@@ -23,6 +23,7 @@ options:
   trusted_peers: ""
   firmware_updates: hold
   reporting_mask_renew: true
+  freeze_nudge: true
   experimental_freeze_reconnect: false
   dns_server: false
   dns_upstream: ""
@@ -62,6 +63,12 @@ schema:
   # been frozen 30 minutes (20 while it claims to be heating), and again at
   # most that often. It has fixed a freeze in minutes, and also failed to.
   reporting_mask_renew: bool?
+  # On (default), with reporting_mask_renew: if the mask alone hasn't unfrozen
+  # the data by the next interval, do what the A.O. Smith app's cloud did the
+  # one time it cured a freeze: re-send the current setpoint (the same value,
+  # never a change), then the mask. Once per freeze, after that has failed,
+  # the controller's own update rate is written back too. Off: the mask only.
+  freeze_nudge: bool?
   # Experimental, off by default. After 2 mask renewals haven't unfrozen the
   # data, reconnect the LAN session once (a new registration and key exchange,
   # as after a heartbeat timeout), then carry on renewing. Seen to help once.

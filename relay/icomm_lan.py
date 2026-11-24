@@ -44,6 +44,7 @@ import secrets
 import socket
 import string
 import time
+from collections import deque
 from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, web
@@ -237,6 +238,13 @@ class LanServer:
         # uses the pair as its cloud-echo probe (phase 53).
         self.mask_id: str | None = None
         self.mask_acked = 0.0
+        # The freeze nudge's items (name, base_type, value), one per poll ahead
+        # of the mask that ends the step. Not writes: nothing in the user write
+        # queue, its counters or its file. Their recent IDs tell their acks apart.
+        self.nudge_queue: list[tuple[str, str, str | int]] = []
+        self.nudge_ids: deque[str] = deque(maxlen=8)
+        self.nudges_sent = 0
+        self.nudge_acks = 0
 
     @property
     def key_file(self) -> Path:
@@ -358,6 +366,19 @@ class LanServer:
         self.wake()
         return True
 
+    def request_nudge(self, items: list[tuple[str, str, str | int]]) -> bool:
+        """Queue a freeze-nudge step: `items` on consecutive polls, then the
+        mask on the next. False when there is no session to carry it."""
+        if not self.request_mask():
+            return False
+        self.nudge_queue = list(items)
+        return True
+
+    def drop_nudge(self) -> None:
+        """Undelivered nudge items are moot once the freeze is over or the
+        session they were meant for has gone."""
+        self.nudge_queue.clear()
+
     def pin_module(self, peer: str, dsn: str) -> bool:
         """Trust `peer` as the module: Ayla just accepted its config fetch.
 
@@ -435,6 +456,7 @@ class LanServer:
         if not self.registered:
             return False
         self.registered = False
+        self.drop_nudge()
         if self._wake_event is not None:
             self._wake_event.set()
         _LOGGER.warning("LAN mode: reconnecting (new registration and key exchange)")
@@ -478,6 +500,7 @@ class LanServer:
                 "last_poll_age": round(now - self.last_poll, 1) if self.last_poll else None,
                 "stall_recoveries": self.stall_recoveries,
                 "masks_sent": self.masks_sent,
+                "nudges_sent": self.nudges_sent, "nudge_acks": self.nudge_acks,
                 "unanswered_deliveries": self.unanswered_deliveries,
                 "suspected_desyncs": self.suspected_desyncs,
                 "last_mask_sent_age": round(now - self.last_mask_sent, 1)
@@ -565,6 +588,7 @@ class LanServer:
             return web.Response(status=400)
         self.session_verified = False
         self.unanswered_deliveries = 0     # a new session starts a new chain
+        self.drop_nudge()
         self.last_poll = time.time()       # a new session counts as contact
         self.request_telemetry()       # do not wait hours after a relay restart
         self.exchanges_since_update += 1
@@ -614,8 +638,17 @@ class LanServer:
             self.writes_delivered += 1
             _LOGGER.warning("LAN mode: delivering %s = %s locally",
                             write.kind, write.value)
+        elif (nudge := self._next_nudge()) is not None:
+            name, base_type, value = nudge
+            nudge_id = "".join(secrets.choice(_ALNUM) for _ in range(8))
+            self.nudge_ids.append(nudge_id)
+            self.nudges_sent += 1
+            data = {"properties": [{"property": {
+                "base_type": base_type, "name": name, "value": value, "id": nudge_id}}]}
+            _LOGGER.warning("LAN mode: freeze nudge: sending %s = %s", name, value)
         elif self.mask_pending:
             self.mask_pending = False
+            self.relay.note_mask_delivered()
             self.masks_sent += 1
             self.last_mask_sent = time.time()
             self.mask_id = "".join(secrets.choice(_ALNUM) for _ in range(8))
@@ -648,6 +681,13 @@ class LanServer:
             self._note_delivery()
         return web.json_response(self.session.app.encrypt_sign(
             {"seq_no": self.seq_no, "data": data}))
+
+    def _next_nudge(self) -> tuple[str, str, str | int] | None:
+        while self.nudge_queue:
+            item = self.nudge_queue.pop(0)
+            if self.relay.nudge_item_ok(item[0]):
+                return item
+        return None
 
     def _note_delivery(self) -> None:
         self.unanswered_deliveries += 1
