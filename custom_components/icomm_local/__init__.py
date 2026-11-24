@@ -160,7 +160,8 @@ def _frozen_issue(hass: HomeAssistant, entry, data: dict, issue_id: str | None =
             "minutes": str(round((unchanged or 0) / 60)),
             "power": (f" Meanwhile your power sensor shows the heater drawing {round(power)} W."
                       if running else ""),
-            "fix": _frozen_fix(as_dict(data.get("reporting_mask"))),
+            "fix": _frozen_fix(as_dict(data.get("reporting_mask")),
+                               as_dict(data.get("freeze_nudge"))),
         })
 
 
@@ -201,19 +202,29 @@ def _cloud_idle_issue(hass: HomeAssistant, data: dict, issue_id: str,
         translation_placeholders={"heater": heater, "minutes": str(round(quiet / 60))})
 
 
-def _frozen_fix(mask: dict) -> str:
-    """What to do about frozen data: the relay re-arms it itself, or the app."""
+def _frozen_fix(mask: dict, nudge: dict | None = None) -> str:
+    """What to do about frozen data: the relay re-arms it itself; the app can help."""
+    app = ("If the A.O. Smith app is available to you, opening it and viewing the water "
+           "heater can also help.")
     if mask.get("renew"):
+        minutes = round((as_number(mask.get("after_s")) or 1800) / 60)
+        sent = as_number(mask.get("sent")) or 0
+        if as_dict(nudge).get("enabled"):
+            return ("The relay nudges the controller itself, as the A.O. Smith app does: after "
+                    f"{minutes} minutes frozen it re-sends the app's reporting request over the "
+                    "local connection, and if the data stays frozen, the current setpoint "
+                    "with it (the same value, never a change), at most once every "
+                    f"{minutes} minutes ({sent} reporting requests sent since the relay "
+                    "started). That has brought live data back within minutes, but not every "
+                    "time. Until then, power and operating state show as unknown. " + app)
         return ("The relay tries to re-arm reporting itself: after "
-                f"{round((as_number(mask.get('after_s')) or 1800) / 60)} minutes frozen it "
+                f"{minutes} minutes frozen it "
                 "re-sends the app's reporting request over the local connection "
-                f"({as_number(mask.get('sent')) or 0} sent since the relay started). That has "
+                f"({sent} sent since the relay started). That has "
                 "brought live data back within minutes, but not every time. Until then, power "
-                "and operating state show as unknown. If this warning stays, **open the A.O. "
-                "Smith app** and view the water heater.")
-    return ("To fix it now, **open the A.O. Smith app** and view the water heater: that "
-            "re-arms reporting within seconds. To have the relay do it automatically, turn on "
-            "the add-on's `reporting_mask_renew` option.")
+                "and operating state show as unknown. " + app)
+    return ("To have the relay re-arm reporting automatically, turn on the add-on's "
+            "`reporting_mask_renew` option (and `freeze_nudge`). " + app)
 
 
 def _dns_issue(hass: HomeAssistant, entry_id: str, data: dict) -> None:

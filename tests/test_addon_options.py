@@ -55,6 +55,17 @@ def test_it_ships_off():
     assert _section("schema")["experimental_freeze_reconnect"] == "bool?"
 
 
+@pytest.mark.parametrize(("value", "exported"), [(True, False), (False, True), (None, False)])
+def test_freeze_nudge(tmp_path, value, exported):
+    options = {} if value is None else {"freeze_nudge": value}
+    assert ("export FREEZE_NUDGE=0" in _exports(tmp_path, options)) is exported
+
+
+def test_the_nudge_ships_on():
+    assert _section("options")["freeze_nudge"] == "true"
+    assert _section("schema")["freeze_nudge"] == "bool?"
+
+
 @pytest.mark.parametrize(("value", "exported"), [(True, True), (False, False), (None, False)])
 def test_debug_tls_keylog(tmp_path, value, exported):
     options = {} if value is None else {"debug_tls_keylog": value}

@@ -27,6 +27,16 @@ Keys are generated on first start and never leave the box:
 - the TLS certificate and key in `/data/certs`;
 - each heater's LAN key in `/data/heaters/<DSN>/lanip.json`.
 
+**Frozen data** (*Water heater data is frozen*): the controller's live
+reporting lapses some hours after the A.O. Smith app was last used. The relay
+re-arms it itself over the local connection, one step per renewal interval
+while the data stays frozen: first the app's reporting request
+(`reporting_mask_renew`), then, with `freeze_nudge` (on by default), what the
+app's cloud sent the one time it cured a freeze: the current setpoint (the
+same value, never a change) followed by the reporting request. Once per
+freeze it also writes back the controller's own update rate. Turn
+`freeze_nudge` off to send the reporting request only.
+
 **A reboot of the Home Assistant host** (a relay outage of a few minutes) can
 leave the water heater's cloud side down afterwards.
 - **Home Assistant is unaffected,** but the A.O. Smith app goes stale.
